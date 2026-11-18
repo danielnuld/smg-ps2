@@ -53,6 +53,7 @@
 # walker: with packs, Mario by a Kuribo, Takobo, Karikari, Butterfly in turn (-DWALKER_TEST)
 # talk: with packs, Mario before the first SignBoard, then the first Tico: A opens their talk, A turns its pages (-DTALK_TEST;
 #   XF=-DTALK_CLS=3: the first Kinopio instead, its appear switch on, Mario put before it)
+#   XF="-DTALK_CLS=3 -DREACT_TEST": no talk, NPCActor's reactions on that talker: a trample, a spin, the pointer, a star piece
 # replay: normal play (60 Hz logic with catch-up) driven by host:replay.bin from the frame Mario is first free
 #   (tools/replay.py from a tools/dolphin timeline: the same inputs as the Dolphin movie) (-DREPLAY)
 # XF=-DBRIDGE_TEST (any mode, EggStar 3): Mario held over the first PhantomShipBridge's lowered plank, its SW_A on at frame 900: MoveA

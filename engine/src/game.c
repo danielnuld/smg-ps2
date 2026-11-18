@@ -12861,7 +12861,7 @@ void game_font_init(const Scene *s) /* the FONT chunk's glyphs (also main.c's su
 }
 
 static void kinopio_reaction(const Inst *in, const float m[16]); /* NPCActor's reaction flags, Kinopio::exeReaction's voices */
-typedef struct { int c9C, c158; u8 last; } NpcReact; /* NPCActor's _9C, _158, _DD-_DF */
+typedef struct { int c9C, c158; u8 last, e5; } NpcReact; /* NPCActor's _9C, _158, _DD-_E0, _E5 */
 static int npc_react(NpcReact *s, V3 body, float rad, V3 up, V3 pos, float near, int body_off);
 static void pmaster_reaction(const Inst *in, const float m[16]);
 /* the talkers placed in the scene (SignBoard, Tico, Kinopio: their wait nerves' talk) */
@@ -13091,7 +13091,8 @@ static void update_talkers(void)
             if (rf & 1) { se_start(SE_SM_NPC_TRAMPLED, &m[12]); se_start(shop ? SE_SV_TICOSHOP_TRAMPLED : SE_SV_TICOCOMET_TRAMPLED, &m[12]); }
             if (rf & 8) { dpd_hit_sound(); se_start(shop ? SE_SV_TICOSHOP_POINT : SE_SV_TICOCOMET_POINT, &m[12]); }
             if (rf & 2) se_start(shop ? SE_SM_TICOSHOP_SPIN : SE_SM_TICOCOMET_SPIN, &m[12]);
-            if (rf & 11) printf("tico %s row %d: reaction %s" "\n", shop ? "shop" : "comet", in->row, rf & 1 ? "trampled" : rf & 2 ? "spun" : "pointed");
+            if (rf & 16) se_start(shop ? SE_SV_TICOSHOP_STAR_PIECE_HIT : SE_SV_TICOCOMET_STAR_PIECE_HIT, &m[12]);
+            if (rf & 27) printf("tico %s row %d: reaction %s" "\n", shop ? "shop" : "comet", in->row, rf & 1 ? "trampled" : rf & 2 ? "spun" : rf & 16 ? "star piece" : "pointed");
         }
         if (tico && row_step[in->row]) { /* Tico::exeMeta: Metamorphosis, at its end SE_SM_METAMORPHOSE_SMOKE and kill */
             unsigned short *ms = &row_step[in->row];
@@ -13758,6 +13759,9 @@ static void talk_draw(void)
     render_quads(tkq, ntkq);
 }
 
+#ifdef REACT_TEST
+static void tomb_test_cursor(V3 p);
+#endif
 int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in front of the first SignBoard, lets
                                 * the stick go, A opens it, A held 5 frames every 45 turns its pages */
 {
@@ -13828,6 +13832,26 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
         mario->pos = vadd(vadd(p, vmul(z, TALK_CLS == 9 ? 120.0f : 170.0f)), vmul(up, 30.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
     }
     if (phase == 0 && (TALK_CLS != 1 ? t > 360 : test_walk_to(vadd(p, vmul(z, 170.0f)), 60.0f))) { phase = 1; t = 0; }
+#ifdef REACT_TEST /* XF="-DTALK_CLS=n -DREACT_TEST": no talk; NPCActor's reactions on that talker, every 960 frames: Mario
+                   * dropped onto it (100), a spin 100 before it (400), the pointer's A on it (580), a star piece at it (820) */
+#ifndef REACT_H
+#define REACT_H 60.0f /* its body above its place */
+#endif
+    if (phase == 1) {
+        V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), body = vadd(p, vmul(up, REACT_H));
+        int c = t % 960;
+        test_r2 = 0;
+        if (c == 100) { mario->pos = vadd(p, vmul(up, REACT_H + 300.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; printf("react test f %d: dropped onto row %d\n", frame, in->row); }
+        if (c == 340) { mario->pos = vadd(vadd(p, vmul(z, 100.0f)), vmul(up, 30.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+        if (c == 400) { pad_force = PAD_SQUARE; printf("react test f %d: spin\n", frame); }
+        if (c >= 580 && c < 600) { tomb_test_cursor(body); test_r2 = 1; if (c == 580) printf("react test f %d: pointer\n", frame); }
+        if (c == 820) {
+            shots[0].pos = vadd(body, vmul(z, 300.0f)); shots[0].vel = vmul(z, -40.0f); shots[0].t = 1; shots[0].col = 0;
+            printf("react test f %d: star piece\n", frame);
+        }
+        return in->row;
+    }
+#endif
     if (phase == 1 && t > 25 && (t - 25) % 45 < 5) pad_force = PAD_CROSS;
 #ifndef TALK_NO
 #define TALK_NO 0
@@ -13866,8 +13890,7 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
  * within 2000 of Mario, ..Far beyond (updateGoods), hidden with it. Reactions (NPCActor, npc_react: body 100 at its
  * Center joint + 30, spin within _12C 1000) in Prep / Wait / Point: exeReaction's voices. Info shows InformationPlanet
  * until A. ponytail: no FullnessMeter's Shine / Flash, no item (arg0 0 / 1), no BVA eyes; the goods' bpk (frames 0 /
- * 100: their two colours) not baked (slice.py has no BPK); no Reaction nerve (its clips, AnimScaleController) and no
- * star piece reflect voice (_DB, SE_SV_TICOFAT_STAR_PIECE_HIT: NPCActor's _E5 is not sent, as for Kinopio) */
+ * 100: their two colours) not baked (slice.py has no BPK); no Reaction nerve (its clips, AnimScaleController) */
 #define MAX_FATS 4
 static struct {
     int row, nrv, t, left, total, inflight, eat, g174, g178, item, has_rail, tk1, tk0; /* mMsgCtrl, _16C */
@@ -14164,7 +14187,8 @@ static void update_ticofat(void)
                 if (rf & 1) { se_start(SE_SM_NPC_TRAMPLED, &f->m0[12]); se_start(SE_SV_TICOFAT_TRAMPLED, &f->m0[12]); }
                 if (rf & 8) { dpd_hit_sound(); se_start(SE_SV_TICOFAT_POINT, &f->m0[12]); }
                 if (rf & 2) se_start(SE_SM_TICOFAT_SPIN, &f->m0[12]);
-                if (rf & 11) printf("tico fat row %d: reaction %s" "\n", in->row, rf & 1 ? "trampled" : rf & 2 ? "spun" : "pointed");
+                if (rf & 16) se_start(SE_SV_TICOFAT_STAR_PIECE_HIT, &f->m0[12]);
+                if (rf & 27) printf("tico fat row %d: reaction %s" "\n", in->row, rf & 1 ? "trampled" : rf & 2 ? "spun" : rf & 16 ? "star piece" : "pointed");
             }
         }
         int pointing = 0;
@@ -44292,6 +44316,8 @@ static void shoot_piece(void)
 }
 
 static int butler_shot(V3 p);
+static int npc_shot(V3 p);
+static int npc_nsens;
 static int km_guard(Kuribo *k, V3 shot_vel);
 static int km_shot(V3 p);
 static void update_shots(void)
@@ -44387,6 +44413,7 @@ static void update_shots(void)
         if (!hit && jstand_star(s->pos)) hit = 1; /* JumpStand: isMsgStarPieceAttack */
         if (!hit && hhp_reflects(s->pos, 30.0f)) hit = 2; /* HammerHeadPackun: isMsgStarPieceReflect */
         if (!hit && butler_shot(s->pos)) hit = 1;
+        if (!hit && npc_shot(s->pos)) hit = 2; /* NPCActor::receiveMsgPlayerAttack: isMsgStarPieceReflect */
         if (!hit && hana_shot(s->pos)) hit = 1;
         if (!hit && dd_shot(s->pos)) hit = 1;          /* Dodoryu, its hill */
         if (!hit && bsb_shot(s->pos)) hit = 1; /* BossStinkBugBomb */
@@ -44451,6 +44478,7 @@ static void update_shots(void)
             s->t = 0;
         }
     }
+    npc_nsens = 0; /* the NPCs' sensors of this frame (npc_react lists them again) */
 }
 
 int game_cursor(float *x, float *y) { *x = cur_x; *y = cur_y; return cur_idle < 300; } /* 0: not pointing */
@@ -47701,16 +47729,29 @@ static void update_luigi(void)
  * starts (updateReaction: one a frame, trample first) play Kinopio::exeReaction's voices (mBehavior 7, asleep:
  * SE_SV_KINOPIO_POINTING_SLEEP). isPointingSe: a pointing start 60 frames after the last. ponytail: the voices at the
  * start itself (Petari: in the Reaction nerve tryStartReactionAndPushNerve pushes), no AnimScaleController
- * (startHitReaction / DpdHitVibration), no star piece reflect (_E5: STAR_PIECE_HIT), no Pickel sensor */
+ * (startHitReaction / DpdHitVibration), no Pickel sensor */
 /* NPCActor's sensors and updateReaction for one NPC: its body (rad at body, gravity -up) trampled / hip dropped
  * (receiveMsgPlayerAttack, unless body_off), his spin within near of pos (checkPlayerSwingTrigger), the pointer's A
  * on its body (isStarPointerPointing2POnPressButton). Returns the starts: 1 _D8 trampled, 2 _D9 spun, 4 _DA pointed,
- * 8 isPointingSe (pointed 60 after the last) */
+ * 8 isPointingSe (pointed 60 after the last), 16 _DB a star piece reflected (isMsgStarPieceReflect: npc_shot, from
+ * update_shots, on the body this call lists). near 0 (_12C): the spin is his spin attack on the body, not the swing
+ * trigger nearby (NPCActor.cpp:691) */
+static struct { V3 c; float r; NpcReact *s; } npc_sens[32];
+static int npc_nsens;
+static int npc_shot(V3 p) /* StarPiece's body 30 on an NPC's sensor: _E5, the piece reflects */
+{
+    for (int i = 0; i < npc_nsens; i++)
+        if (vlen(vsub(p, npc_sens[i].c)) <= npc_sens[i].r + 30.0f) { npc_sens[i].s->e5 = 1; return 1; }
+    return 0;
+}
 static int npc_react(NpcReact *s, V3 body, float rad, V3 up, V3 pos, float near, int body_off)
 {
-    u8 now = 0; /* _E2 trampled, _E3 spun, _E4 pointed */
+    u8 now = 0; /* _E2 trampled, _E3 spun, _E4 pointed, 16 _E5 */
+    if (s->e5) { now |= 16; s->e5 = 0; }
     if (!body_off) {
+        if (npc_nsens < 32) { npc_sens[npc_nsens].c = body; npc_sens[npc_nsens].r = rad; npc_sens[npc_nsens++].s = s; }
         int msg = mario_offence(NULL, body, rad, vmul(up, -1.0f));
+        if (msg == MSG_HITALL && near == 0.0f) now |= 2;
         if (msg == MSG_TRAMPLE && !s->c9C) { s->c9C = 30; now |= 1; mario_trample(); }
         else if (msg == MSG_HIPDROP) { /* sendMsgAwayJump */
             now |= 1;
@@ -47719,15 +47760,15 @@ static int npc_react(NpcReact *s, V3 body, float rad, V3 up, V3 pos, float near,
             m_power_jump(mario, vadd(vmul(vlen(a) > 1e-6f ? vnorm(a) : mario->face, 10.0f), vmul(mario->up, 25.0f)));
         }
     }
-    if (swing_perm && pad_pressed(PAD_SQUARE) && vlen(vsub(mario->pos, pos)) < near) now |= 2; /* isNearPlayer(_12C) */
+    if (near > 0.0f && swing_perm && pad_pressed(PAD_SQUARE) && vlen(vsub(mario->pos, pos)) < near) now |= 2; /* isNearPlayer(_12C) */
     if (pointer_a() && cursor_sees(body, 60.0f)) now |= 4;
-    u8 start = now & ~s->last; /* updateReaction: _D8 / _D9 / _DA, the first in that order */
-    int tr = start & 1, sp = !tr && (start & 2), pt = !tr && !sp && (start & 4);
+    u8 start = now & ~s->last; /* updateReaction: _D8 / _DB / _D9 / _DA, the first in that order */
+    int tr = start & 1, st = !tr && (start & 16), sp = !tr && !st && (start & 2), pt = !tr && !st && !sp && (start & 4);
     s->last = now;
     int pse = pt && s->c158 >= 60; /* isPointingSe */
     s->c158 = pse ? 0 : s->c158 < 1024 ? s->c158 + 1 : 1024;
     if (s->c9C) s->c9C--;
-    return tr | sp | pt | pse << 3;
+    return tr | sp | pt | pse << 3 | st;
 }
 static struct { int row; NpcReact r; } kre[16];
 static void kinopio_reaction(const Inst *in, const float m[16])
@@ -47741,20 +47782,20 @@ static void kinopio_reaction(const Inst *in, const float m[16])
     const Row *r = &sc->objs[in->row];
     V3 up = vnorm(v3(m[4], m[5], m[6])), body = vadd(v3(m[12], m[13], m[14]), vmul(up, 60.0f));
     int f = npc_react(&kre[k].r, body, 60.0f, up, v3(m[12], m[13], m[14]), 450.0f, r->arg[6] != -1); /* arg6 set: the body sensor invalidated */
-    int tr = f & 1, sp = f & 2, pse = f & 8;
+    int tr = f & 1, sp = f & 2, pse = f & 8, st = f & 16;
     int sleep = r->arg[2] == 7; /* mBehavior */
+    if (st) { if (sleep) se_start(SE_SM_NPC_TRAMPLED, &m[12]); se_start(sleep ? SE_SV_KINOPIO_POINTING_SLEEP : SE_SV_KINOPIO_STAR_PIECE_HIT, &m[12]); }
     if (tr) { se_start(SE_SM_NPC_TRAMPLED, &m[12]); se_start(sleep ? SE_SV_KINOPIO_POINTING_SLEEP : SE_SV_KINOPIO_TRAMPLED, &m[12]); }
     if (pse) { dpd_hit_sound(); se_start(sleep ? SE_SV_KINOPIO_POINTING_SLEEP : SE_SV_KINOPIO_POINTING, &m[12]); }
     if (sp) { if (sleep) se_start(SE_SM_NPC_TRAMPLED, &m[12]); se_start(sleep ? SE_SV_KINOPIO_POINTING_SLEEP : SE_SV_KINOPIO_SPIN, &m[12]); }
-    if (tr || pse || sp) printf("kinopio row %d: reaction %s\n", in->row, tr ? "trampled" : sp ? "spun" : "pointed");
+    if (tr || pse || sp || st) printf("kinopio row %d: reaction %s\n", in->row, tr ? "trampled" : st ? "star piece" : sp ? "spun" : "pointed");
 }
 /* PenguinMaster.cpp after Petari: an NPCActor without NPCActor's sensor (caps.mSensor off) but two push sensors, body
  * (150 at 100 up) and head (150 at 260 up, 100 ahead); Wait: tryTalkNearPlayerAndStartTalkAction (its row's message,
  * 350 to talk, its balloon 430 up), tryStartReactionAndPushNerve -> Reaction: SE_SV_PENGUIN_OLD_TRAMPLED and
  * SE_SM_PENGUIN_TRAMPLED trampled, SE_SV_PENGUIN_OLD_POINTED_2P and the DPD hit sound pointed (isPointingSe),
  * SE_SV_PENGUIN_OLD_SPIN_HIT spun (receiveMsgPlayerAttack's spin: _E3). 
- * ponytail: its clips Trampled / Reaction / Pointing not played (the turn table's Wait / Talk run), the voices at the reaction's start (as kinopio_reaction), no star piece voice (_DB: STAR_PIECE: the port's
- * shots do not reach NPCs' _E5), the body push sensor (only the head takes tramples here) */
+ * ponytail: its clips Trampled / Reaction / Pointing not played (the turn table's Wait / Talk run), the voices at the reaction's start (as kinopio_reaction), the body push sensor (only the head takes tramples here) */
 static struct { int row; NpcReact r; } pmre[4];
 static void pmaster_reaction(const Inst *in, const float m[16])
 {
@@ -47770,7 +47811,8 @@ static void pmaster_reaction(const Inst *in, const float m[16])
     if (f & 1) { se_start(SE_SV_PENGUIN_OLD_TRAMPLED, &m[12]); se_start(SE_SM_PENGUIN_TRAMPLED, &m[12]); }
     else if (f & 8) { se_start(SE_SV_PENGUIN_OLD_POINTED_2P, &m[12]); dpd_hit_sound(); }
     else if (f & 2) { se_start(SE_SV_PENGUIN_OLD_SPIN_HIT, &m[12]); }
-    if (f & 11) printf("penguin master row %d: reaction %s\n", in->row, f & 1 ? "trampled" : f & 2 ? "spun" : "pointed");
+    else if (f & 16) { se_start(SE_SV_PENGUIN_OLD_STAR_PIECE, &m[12]); }
+    if (f & 27) printf("penguin master row %d: reaction %s\n", in->row, f & 1 ? "trampled" : f & 2 ? "spun" : f & 16 ? "star piece" : "pointed");
 }
 static int kast_letter;
 static int kast_event(int t, u32 v)
