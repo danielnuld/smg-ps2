@@ -17066,16 +17066,13 @@ static void m_init_jump(Player *m) /* initJumpParam */
     }
 }
 
+static int m_spin_clip(void);
 static int m_jump_to_hip_drop(Player *m) /* jumpToHipDrop */
 {
     if (m->hip || m->jump_kind == 5) return 0;
     if ((m->jump_kind == 9 || m->jump_kind >= 11) && m_rising(m)) return 0;
     if (m->height < MC.mHipDropLimitHeight) return 0;
-    /* MarioActor::_3E5 (updateHitSensor): the spin2nd clip, or a one-shot running in the tornado jump / 地上ひねり /
-     * サマーソルト / 水泳スピン / 水上スピン / しゃがみスピン: the hip drop is the spin one */
-    int spin = m_clip_is("spin2nd") || (mario_anim && !mario_anim->loop && !mario_anim->done &&
-               ((m->jump_kind == 8 && m->jumping) || m_anim_on("地上ひねり") || m_anim_on("サマーソルト") ||
-                m_anim_on("水泳スピン") || m_anim_on("水上スピン") || m_anim_on("しゃがみスピン")));
+    int spin = m_spin_clip(); /* MarioActor::_3E5 (a spin's own clip on): the hip drop is the spin one */
     m->hip_homing = 0;
     if (m->jump_kind == 8) m_cancel_tornado(m);
     m->hip = HIP_START; m->hip_still = 0;
