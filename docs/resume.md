@@ -1,6 +1,6 @@
 # Where the port stands (resume notes)
 
-Last updated 2026-11-16. Short on purpose: the state, the rules, how to run things, what is next. The notes of every
+Last updated 2026-11-17. Short on purpose: the state, the rules, how to run things, what is next. The notes of every
 fix and feature (cause, test mode, what was left out) are in `docs/history.md`: search it by PR number, class or test
 mode, do not read it whole. New notes go at the top of its first list.
 
@@ -53,7 +53,10 @@ and iso.sh do. The console's log over the network: `tools/udptty.py` (UDP 18194)
 
 ## Next
 
-1. The user's test of the 2026-11-16 ISO on the console: the Terrace's door, then Good Egg.
+1. The user's console test of the 2026-11-16 ISO gave five reports (2026-11-17), all fixed on main: the sound stuck
+   through loads (#558), the save's window under the black wipe (#559), the camera's roll under a planet (#555), the
+   blue Luma's pull stars (#556), the gravity room's walls (#557). Before the next ISO: a full repack (`release.sh`,
+   every scene.bin: CAMS has the roll now), `smoke.ps1`, `iso.sh`. Then the user's test of that ISO.
 2. The opening against the Wii (the user's capture of 2026-11-10): Mario stands inside Rosalina when she appears
    (should stand apart); the save screen after the tutorial stayed black for a while; then a scene by scene
    comparison of the whole opening (prologue, Bowser's attack, Gateway, Grand Star, the Observatory's talks).

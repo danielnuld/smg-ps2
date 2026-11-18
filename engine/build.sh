@@ -24,6 +24,8 @@
 # enemy: with packs, Mario stomps the first TakoHei (120), spins by a PackunPetit (240), stands by one (360) (-DENEMY_TEST)
 # explore: with packs, Mario played through the pad: coins / star pieces, then launch stars (-DEXPLORE_TEST; videos)
 # camwalk: with packs (PeachCastleGardenGalaxy 1), Mario walked down the road to the plaza, camera changes logged (-DCAMWALK_TEST)
+# XF=-DCAMROLL_TEST=1500 (plain, EggStarGalaxy/1): Mario dropped on DiskGardenPlanet's top, then its underside: the camera's roll (#555)
+# XF=-DGROOM_TEST=1 (plain, EggStarGalaxy/2): Mario walked over MysteryGravityRoomPlanet's corner bridge onto its wall (#557)
 # overview: with packs, the camera orbits the whole galaxy (-DOVERVIEW_TEST; for pictures and videos)
 # rail: with packs, Mario dropped onto the first rail-moving map part at frame 120 (-DRAIL_TEST)
 # rotor: with packs, Mario dropped onto the first rotating map part at frame 120 (-DROTOR_TEST)

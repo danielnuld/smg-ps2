@@ -67,6 +67,7 @@ static V3 cube_up;                    /* CameraCubePlanet::mUp */
 static V3 i_eye, i_watch, i_up;       /* interpolated towards the type camera over camint frames */
 static int timer, camint;
 static V3 f_eye, f_watch, f_up;       /* final, after the 0.3 per-frame smoothing */
+static V3 pose_up;                    /* the camera man's up (CameraPoseParam::mUpVec: before the roll), what a reset reads */
 static float f_fovy = 45.0f;
 static const float *pose_m;           /* the zone frame type_pose runs in (zone_pose), NULL: the world */
 #define AREA_MAX 1024
@@ -768,7 +769,7 @@ static int ev_begin(unsigned cls, int set, int shift, V3 up, V3 front, V3 pos)
     ev_up = vnorm(up); ev_front = vnorm(vsub(front, vmul(ev_up, vdot(front, ev_up)))); ev_pos = pos;
     cur = -3; /* the camera change: blend over the event camera's camint */
     timer = 0; camint = cams[ev_first].camint; fresh = 1;
-    type_eye = f_eye; type_watch = f_watch; type_up = f_up;
+    type_eye = f_eye; type_watch = f_watch; type_up = pose_up;
     return 1;
 }
 
@@ -796,7 +797,7 @@ void camera_event_next(void) /* nextForce: the next of the set, after the last e
     if (ev_i < ev_n - 1) {
         ev_i++; ev_t = 0;
         timer = 0; camint = cams[ev_first + ev_i].camint; fresh = 1;
-        type_eye = f_eye; type_watch = f_watch; type_up = f_up;
+        type_eye = f_eye; type_watch = f_watch; type_up = pose_up;
     } else camera_event_end_now(-1);
 }
 
@@ -816,7 +817,7 @@ int camera_event_named(const char *name, int zone)
     ev_first = k; ev_n = 1;
     cur = -3;
     timer = 0; camint = cams[k].camint; fresh = 1;
-    type_eye = f_eye; type_watch = f_watch; type_up = f_up;
+    type_eye = f_eye; type_watch = f_watch; type_up = pose_up;
     return 1;
 }
 
@@ -852,7 +853,7 @@ void camera_talk_start(V3 pos, V3 up, float height, float dist)
     if (tk_on) return;
     tk_on = 1; tk_eye = f_eye; /* reset: from the camera man's position */
     cur = -3; timer = 0; camint = 120; fresh = 1; /* CameraParamChunkExParam's camint */
-    type_eye = f_eye; type_watch = f_watch; type_up = f_up;
+    type_eye = f_eye; type_watch = f_watch; type_up = pose_up;
 }
 
 void camera_talk_end(void) { if (tk_on) { tk_on = 0; cur = -3; } }
@@ -868,7 +869,7 @@ void camera_prog_start(V3 watch, V3 eye, V3 up, int frames)
     if (pr_on) return;
     pr_on = 1;
     cur = -3; timer = 0; camint = frames; fresh = 1;
-    type_eye = f_eye; type_watch = f_watch; type_up = f_up;
+    type_eye = f_eye; type_watch = f_watch; type_up = pose_up;
 }
 void camera_prog_end(int frames) { if (pr_on) { pr_on = 0; cur = -3; back_camint = frames; } }
 /* CameraDirector::endEvent: the event camera popped at once, the view interpolated back to the game camera (reset from
@@ -905,16 +906,94 @@ static int talk_pose(const CamTarget *t, V3 *eye, V3 *watch, V3 *up) /* CameraTa
     return 1;
 }
 
-static void blend_to(V3 e, V3 w, V3 u) /* CameraViewInterpolator: (timer / camint)^2, then the 0.3 smoothing */
+/* CameraViewInterpolator on the camera's matrix (CameraDirector::calcViewMtxFromPoseParam: X -side, Y up, Z -front,
+ * turned about Z by the roll), kept here as eye / watch / up (the up already rolled and square to the view) */
+typedef struct { float x, y, z, w; } Q4;
+static Q4 q_axes(V3 X, V3 Y, V3 Z) /* TPos3f::getQuat */
+{
+    Q4 q;
+    float tr = X.x + Y.y + Z.z;
+    if (tr > 0.0f) {
+        float s = sqrtf(tr + 1.0f) * 2.0f;
+        q.w = 0.25f * s; q.x = (Y.z - Z.y) / s; q.y = (Z.x - X.z) / s; q.z = (X.y - Y.x) / s;
+    } else if (X.x > Y.y && X.x > Z.z) {
+        float s = sqrtf(1.0f + X.x - Y.y - Z.z) * 2.0f;
+        q.w = (Y.z - Z.y) / s; q.x = 0.25f * s; q.y = (Y.x + X.y) / s; q.z = (Z.x + X.z) / s;
+    } else if (Y.y > Z.z) {
+        float s = sqrtf(1.0f + Y.y - X.x - Z.z) * 2.0f;
+        q.w = (Z.x - X.z) / s; q.x = (Y.x + X.y) / s; q.y = 0.25f * s; q.z = (Z.y + Y.z) / s;
+    } else {
+        float s = sqrtf(1.0f + Z.z - X.x - Y.y) * 2.0f;
+        q.w = (X.y - Y.x) / s; q.x = (Z.x + X.z) / s; q.y = (Z.y + Y.z) / s; q.z = 0.25f * s;
+    }
+    return q;
+}
+static V3 q_ydir(Q4 q) { return v3(2 * (q.x * q.y - q.w * q.z), 1 - 2 * (q.x * q.x + q.z * q.z), 2 * (q.y * q.z + q.w * q.x)); }
+static V3 q_zdir(Q4 q) { return v3(2 * (q.x * q.z + q.w * q.y), 2 * (q.y * q.z - q.w * q.x), 1 - 2 * (q.x * q.x + q.y * q.y)); }
+static Q4 q_unit(Q4 q)
+{
+    float l = sqrtf(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+    if (l < 1e-6f) { Q4 one = {0, 0, 0, 1}; return one; }
+    Q4 r = {q.x / l, q.y / l, q.z / l, q.w / l};
+    return r;
+}
+static Q4 q_slerp(Q4 a, Q4 b, float ratio) /* CameraLocalUtil::slerpCamera (not reversed), normalized */
+{
+    a = q_unit(a); b = q_unit(b);
+    float c = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w, sr;
+    int neg = c < 0.0f;
+    if (neg) c = -c;
+    if (1.0f - c <= 0.00001f) sr = 1.0f - ratio;
+    else {
+        float ang = acosf(c), sn = sinf(ang);
+        sr = sinf((1.0f - ratio) * ang) / sn;
+        ratio = sinf(ratio * ang) / sn;
+    }
+    if (neg) ratio = -ratio;
+    Q4 q = {sr * a.x + ratio * b.x, sr * a.y + ratio * b.y, sr * a.z + ratio * b.z, sr * a.w + ratio * b.w};
+    return q_unit(q);
+}
+static Q4 pose_quat(V3 e, V3 w, V3 u, float roll)
+{
+    V3 f = vnorm(vsub(w, e)), s = vcross(u, f);
+    if (near_zero(s)) s = vcross(i_up, f); /* (CameraManGame::calcSafeUpVec: the up along the view, the last one stands in) */
+    if (near_zero(s)) s = vcross(fabsf(f.y) < 0.9f ? v3(0, 1, 0) : v3(1, 0, 0), f);
+    s = vnorm(s);
+    V3 X = vmul(s, -1.0f), Y = vcross(f, s);
+    if (roll != 0.0f) { /* concat(mtx, rotZ(roll)) */
+        float c = cosf(roll), sn = sinf(roll);
+        V3 x2 = vadd(vmul(X, c), vmul(Y, sn));
+        Y = vsub(vmul(Y, c), vmul(X, sn));
+        X = x2;
+    }
+    return q_axes(X, Y, vmul(f, -1.0f));
+}
+/* interpolateCameraSwitching at rate r (1: the pose as it is): the turn slerped, the watch point and the eye's distance
+ * from it eased; then reduceOscillation (mRate 0.7) unless smooth is off (isInterpolationOff: antibluroff) */
+static void view_interp(V3 e, V3 w, V3 u, float roll, float r, int smooth)
+{
+    pose_up = u;
+    Q4 qn = pose_quat(e, w, u, roll);
+    if (r >= 1.0f) { i_eye = e; i_watch = w; i_up = q_ydir(qn); }
+    else {
+        Q4 q = q_slerp(pose_quat(i_eye, i_watch, i_up, 0.0f), qn, r);
+        float d0 = vlen(vsub(i_watch, i_eye)), d1 = vlen(vsub(w, e));
+        i_watch = vadd(i_watch, vmul(vsub(w, i_watch), r));
+        i_eye = vadd(i_watch, vmul(q_zdir(q), d0 + r * (d1 - d0)));
+        i_up = q_ydir(q);
+    }
+    if (!smooth) { f_eye = i_eye; f_watch = i_watch; f_up = i_up; return; }
+    Q4 qf = q_slerp(pose_quat(f_eye, f_watch, f_up, 0.0f), pose_quat(i_eye, i_watch, i_up, 0.0f), 0.3f);
+    f_eye = vadd(vmul(f_eye, 0.7f), vmul(i_eye, 0.3f));
+    f_up = q_ydir(qf);
+    f_watch = vsub(f_eye, vmul(q_zdir(qf), vlen(vsub(i_watch, i_eye))));
+}
+
+static void blend_to(V3 e, V3 w, V3 u, float roll) /* (timer / camint)^2, then the 0.3 smoothing */
 {
     float r = 1.0f;
     if (camint > 0 && timer < camint) { timer++; r = (float)timer / camint; r *= r; }
-    i_eye = vadd(i_eye, vmul(vsub(e, i_eye), r));
-    i_watch = vadd(i_watch, vmul(vsub(w, i_watch), r));
-    i_up = vnorm(vadd(i_up, vmul(vsub(u, i_up), r)));
-    f_eye = vadd(vmul(f_eye, 0.7f), vmul(i_eye, 0.3f));
-    f_watch = vadd(vmul(f_watch, 0.7f), vmul(i_watch, 0.3f));
-    f_up = vnorm(vadd(vmul(f_up, 0.7f), vmul(i_up, 0.3f)));
+    view_interp(e, w, u, roll, r, 1);
 }
 
 
@@ -986,6 +1065,11 @@ int camera_input(int left, int right, int reset)
     const CamParam *p = param();
     int type = p->type == 255 ? CAM_XZ_PARA : p->type;
     int el = 0, er = 0, ereset = 0;
+    if (type == CAM_FOLLOW || type == CAM_TOWER) { /* isUpsideDownByRoll (MR::isOppositeDirectionRadian(roll, -pi)): the
+                                                    * round triggers change sides */
+        float v = -PI + fmodf(p->roll + 3.0f * PI, 2.0f * PI);
+        if (v < -PI / 2 || v > PI / 2) { int s = left; left = right; right = s; }
+    }
     if (type == CAM_FOLLOW) { el = fl_valid_l; er = fl_valid_r; ereset = 1; }
     else if (type == CAM_TOWER) { el = tw_n > -tw_max; er = tw_n < tw_max; ereset = 1; }
     else if (type == CAM_XZ_PARA) el = er = ereset = p->num1 == 1;
@@ -1011,12 +1095,12 @@ static void update(const CamTarget *t)
     int want = start_cam >= 0 ? start_cam : a >= 0 && areas[a].cam != 0xFFFF ? areas[a].cam : (cur == -2 || cur == -3 ? -1 : cur);
     V3 move = vsub(t->pos, last_target);
     last_target = t->pos;
-    if (pr_on) { blend_to(pr_eye, pr_watch, pr_up); type_eye = pr_eye; type_up = pr_up; fresh = 0; return; }
+    if (pr_on) { blend_to(pr_eye, pr_watch, pr_up, 0.0f); type_eye = pr_eye; type_up = pr_up; fresh = 0; return; }
     if (tk_on) {
         V3 e, w, u;
         if (talk_pose(t, &e, &w, &u)) { type_eye = e; type_up = u; fresh = 0; }
         else { e = i_eye; w = i_watch; u = i_up; }
-        blend_to(e, w, u);
+        blend_to(e, w, u, 0.0f);
         return;
     }
     if (ev_on) { /* MultiEventCamera::update: the next one after its evfrm frames; endForceAtLanding */
@@ -1026,7 +1110,7 @@ static void update(const CamTarget *t)
             if (p->evfrm >= 0 && ev_t >= p->evfrm && ev_i < ev_n - 1) {
                 ev_i++; ev_t = 0;
                 timer = 0; camint = cams[ev_first + ev_i].camint; fresh = 1;
-                type_eye = f_eye; type_watch = f_watch; type_up = f_up;
+                type_eye = f_eye; type_watch = f_watch; type_up = pose_up;
             }
             ev_t++;
             CamTarget et = *t;
@@ -1036,7 +1120,7 @@ static void update(const CamTarget *t)
             zone_pose(&cams[ev_first + ev_i], &et, move, &e, &w, &u);
             fresh = 0;
             type_eye = e; type_up = u;
-            blend_to(e, w, u);
+            blend_to(e, w, u, cams[ev_first + ev_i].roll); /* CameraManEvent::applyParameter: setRoll */
             return;
         }
     }
@@ -1056,11 +1140,12 @@ static void update(const CamTarget *t)
             type_up = t->up;
             type_watch = t->pos;
             zone_pose(param(), t, move, &e, &w, &u);
-            i_eye = f_eye = e; i_watch = f_watch = w; i_up = f_up = u;
+            i_up = u;
+            view_interp(e, w, u, param()->roll, 1.0f, 0);
             type_eye = e; type_up = u;
         } else {
             type_eye = f_eye; type_watch = f_watch;
-            type_up = f_up;
+            type_up = pose_up;
         }
     }
     const CamParam *p = param();
@@ -1072,16 +1157,10 @@ static void update(const CamTarget *t)
     /* CameraViewInterpolator.cpp:275-327, on positions: r = (timer / camint)^2 */
     float r = 1.0f;
     if (camint > 0 && timer < camint) { timer++; r = (float)timer / camint; r *= r; }
-    i_eye = vadd(i_eye, vmul(vsub(e, i_eye), r));
-    i_watch = vadd(i_watch, vmul(vsub(w, i_watch), r));
-    i_up = vnorm(vadd(i_up, vmul(vsub(u, i_up), r)));
     float fovy = p->flags & 2 ? p->fovy : 45.0f;
-    if (p->flags & 8) { f_eye = i_eye; f_watch = i_watch; f_up = i_up; f_fovy = fovy; return; } /* antibluroff */
-    /* CameraViewInterpolator.cpp:214-241: final 0.3 smoothing (0.1 for fovy) */
-    f_eye = vadd(vmul(f_eye, 0.7f), vmul(i_eye, 0.3f));
-    f_watch = vadd(vmul(f_watch, 0.7f), vmul(i_watch, 0.3f));
-    f_up = vnorm(vadd(vmul(f_up, 0.7f), vmul(i_up, 0.3f)));
-    f_fovy = 0.9f * f_fovy + 0.1f * fovy;
+    view_interp(e, w, u, p->roll, r, !(p->flags & 8)); /* CameraManGame::applyParameter: setRoll(mExParam.mRoll) */
+    if (p->flags & 8) { f_fovy = fovy; return; } /* antibluroff */
+    f_fovy = 0.9f * f_fovy + 0.1f * fovy; /* CameraViewInterpolator.cpp:214-241: 0.1 for fovy */
 }
 
 /* CameraSubjective (MarioFpView's first-person view): 120 up from Mario's feet, his frame turned by the stick (sPadStickPlay

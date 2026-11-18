@@ -2187,7 +2187,7 @@ def placement(fs, galaxy, scenario):
                         cam_index.get((r["zone"], "c", r["args"][0] & 0xFFFF), 0xFFFF), *r["pos"], *r["rot"], *r["scale"],
                         sw16(r.get("sw_a", -1)), sw16(r.get("sw_b", -1)), int(bool(r.get("invalid")) or r.get("sw_a", -1) >= 0))
             for r in camera.areas(cubes)]
-    out.append(chunk(b"CAMS", struct.pack("<I12x", len(cams)) + b"".join(cams)))
+    out.append(chunk(b"CAMS", struct.pack("<II8x", len(cams), 136) + b"".join(cams)))
     out.append(chunk(b"CARE", struct.pack("<II8x", len(care), 48) + b"".join(care)))
     # asset names per stage, in draw order: planets first, then object types
     names = [z["name"] for z in zones]

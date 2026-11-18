@@ -288,6 +288,27 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   out/smg-ps2.iso (3315 MB, 2472 packs, ELF from 6b9035b + #318, not the boss PRs merged since); the 10-31 ISO kept as
   out/smg-ps2-prev.iso.
 - Fast release flow (feat/fast-release, #553, 2026-11-16): the 2026-11-09 release took 100 min of repack (slice_all 37, the 136 sound packs one by one 62) and a 3.5 GB upload per fix. D: (SD card, exFAT, drvfs) is the cost: a third of a repack went in file calls and disc.py wrote PACKS.BIN at ~1 MB/s. Now `tools/release.sh [Galaxy,...] [jobs]` mirrors the inputs to `~/smg-repack` (WSL disk), builds there (sound packs in parallel, xargs -P) and copies back only the packs whose content changed; `tools/iso.sh [host]` builds the ISO there (disc step ~80 s) and rsyncs it to nuld through Windows' ssh.exe (a one-galaxy fix: 63 MB sent of 3.5 GB), restarting udpfs only when its journal has been idle 5 min; `tools/smoke.ps1` runs opening / grand / route in PCSX2 before an ISO (PASS / FAIL, exit status). Measured: EggStarGalaxy + AstroGalaxy (11 scenarios) 7 min 49 s whole, of which ~5 min is the first mirror in. Traps: ext4 is case-sensitive and the WSL kernel has no casefold, the tools name some files in another case than the disc's (`LayoutData/SignBoardBalloon.arc`), so the game's files and Petari live in a FAT image (`ci.img`, wsl_mirror.sh; WSL shuts down between calls: mounted again each time); lyt.py reads `data/fs/sys/main.dol`; sound.py needs scipy for a wave not in sound_cache; do not edit a script while it runs. budget.py's yaz0 is lru_cached, sound.py writes its headers only when they change. Tried and dropped: a cache of the converted VU1 geometry across a galaxy's scenarios (no gain measured, and SoramameZone.low came out different). Seen: the conversion is not deterministic run to run even with PYTHONHASHSEED fixed (VUMD of a few zones differs, sometimes in size): not looked into; it makes the rsync deltas larger than they need be.
+- Console test of the 2026-11-16 ISO, three more (fix/555-camera-roll, #555 / #556 / #557, 2026-11-17):
+  - #555 the camera upside down under Good Egg's first planet: cameraparam.bcam's `roll` was never read. The planet's
+    underside cameras (DiskGardenZone c:002e TOWER and 20 more) carry roll pi: CameraDirector::calcViewMtxFromPoseParam
+    turns the view about its axis (CameraManGame / CameraManEvent applyParameter: setRoll). CAMS entries are 136 bytes
+    now (roll last; the chunk's header has the entry size, game.c widens the old 132-byte ones with roll 0).
+    camera.c: CameraViewInterpolator on the camera's matrix as Petari (slerpCamera on the turn, the watch point and
+    the eye's distance eased; reduceOscillation the same way): the old blend of eye / watch / up went through a zero
+    up between a rolled camera and a plain one. A camera's reset reads the camera man's up before the roll (pose_up).
+    isUpsideDownByRoll: Follow / Tower swap the round triggers. Not done: CameraDead / WaterPlanet / FooFighterPlanet's
+    own use of the roll (not ported cameras). Test: plain XF=-DCAMROLL_TEST=1500 EggStarGalaxy/1 (`camroll ... ok`).
+    Repack: every galaxy (scene.bin's CAMS).
+  - #556 the pull stars of Good Egg 2 never came: the blue Luma is a cast of 青チコ変身 (Tico::init: _15C 1 whatever its
+    arg1) and the port ran it as arg1 3 (talk, then gone). Now exeBlue0 (the talk's end: startTimeKeepDemo) and exeBlue1
+    (Fly along its rail in the 移動 part's 40 steps, then Meta); the sheet's actions bring the four GCaptureTargets.
+    Test: `talk` XF='-DTALK_CLS=2 -DTALK_ARG0=1' EggStarGalaxy/2 (`tico row 117: blue`). No repack.
+  - #557 the walls of the house's room (MysteryGravityRoomZone) could not be walked: its GlobalCubeGravity is of
+    Gravity_type Shadow, so no gravity reaches Mario there, and MarioActor::updateGravityVec then takes the ground's
+    normal turned over on the ground (-_368) and the last gravity in the air (_240); the port kept the last up always.
+    update_mario_ does it now (no sudden-turn handling while the gravity is zero, _10.turning). Not done: Mario.cpp's
+    forceKill 28000 off his last safe place in a zero gravity spot, MarioJump's _334 gravity scale. Test: plain
+    XF=-DGROOM_TEST=1 EggStarGalaxy/2 (over the corner bridge onto the wall, `groom ... ok`). No repack.
 - Console test of the 2026-11-16 ISO, two engine fixes (fix/558-559-load-sound-save-window, #558 / #559, 2026-11-17):
   the sound stuck through a load: audio_stop closed the stream but audsrv went on playing its ring's last block (now
   audsrv_stop_audio, as movie.c does; heard only on the console, not checked in PCSX2). The save's window after a

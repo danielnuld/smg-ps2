@@ -24,7 +24,8 @@ typedef struct {
     float vpanaxis[3];
     int evfrm;          /* an event camera's frames (getEventCameraFrames), -1 for good */
     unsigned evclass;   /* an event camera's class (camera.py class_hash), 0 otherwise; num = CameraSetId << 4 | NN */
-} CamParam; /* 132 bytes */
+    float roll;         /* mExParam.mRoll (radians): the view turned about its own axis (pi: the underside of a planet) */
+} CamParam; /* 136 bytes (older blobs: 132, no roll; game.c widens them) */
 
 enum { CAM_XZ_PARA, CAM_TOWER, CAM_FOLLOW, CAM_WONDER_PLANET, CAM_EYEPOS_FIX, CAM_POINT_FIX, CAM_EYEPOS_FIX_THERE,
        CAM_CHARMED_FIX, CAM_TOWER_POS, CAM_FRONT_AND_BACK, CAM_TRUNDLE, CAM_CUBE_PLANET, CAM_OBJ_PARALLEL,
