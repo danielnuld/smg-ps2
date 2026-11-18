@@ -22319,6 +22319,32 @@ static void rec_jump(Player *m) /* updateJump */
     if (vlen(vel) > 30.0f) vel = vmul(vnorm(vel), 30.0f);
     m->pos = vadd(m->pos, vadd(vel, vmul(g, vert)));
 }
+/* MarioActor::forceKill(4) / Mario::doDarkDamage / MarioDarkDamage (MarioDamage.cpp): in a DarkMatterCube Mario stops,
+ * 声沼沈み, and sinks: ダークマター沈み for 150 frames, then forceKill(3) (the game over) with him hidden (_481).
+ * ponytail: DarkMatterCube has to be in the packs (slice.py LOGIC); initDarkMask (the dark mask drawn on him), the
+ * ダークマター死亡 effect, requestStartGameOverDemo, setSeVersion(1), _3C0 and the carried actor's drop (#491) not
+ * kept; a bind is not ended first */
+static struct { int on, s14, t; } dark; /* _14, _12 */
+static void dark_start(Player *m)
+{
+    if (dark.on) return;
+    m_pad_vib(3); /* startPadVib(3) */
+    m_stop_walk(m);
+    mario_sound("声沼沈み");
+    dark.on = 1; dark.s14 = 0; dark.t = 0;
+    printf("dark matter: Mario in it
+");
+}
+static void dark_update(Player *m)
+{
+    (void)m;
+    if (dark.s14 == 0) { dark.s14 = 1; dark.t = 150; }
+    else {
+        if (dark.t) dark.t--;
+        if (!dark.t && !miss_running()) { life = 0; m_hide481 = 1; miss(); } /* forceKill(3): mHealth 0, the game over; _481 */
+    }
+    if (dark.t) mario_sound("ダークマター沈み");
+}
 static int rec_update(Player *m) /* MarioRecovery::update: 0 when it ends */
 {
     m->hvel = v3(0, 0, 0); m->vup = 0; /* clearVelocity */
@@ -22986,6 +23012,12 @@ static void update_mario_(void)
             rec.v4C = row_pos(&sc->objs[pb]); rec.v58 = vnorm(vcross(z, x)); rec.s12 = 1;
         }
         if (pb >= 0) m_do_recovery(m);
+        if (!dark.on && area_obj("DarkMatterCube", m->pos) >= 0) dark_start(m); /* forceKill(4): doDarkDamage */
+    }
+    if (dark.on) { /* MarioDarkDamage's update (actionMain): his velocity is not cleared in it (updateCubeCode) */
+        dark_update(m);
+        if (mario_anim) anim_update(mario_anim);
+        return;
     }
     if (rec.on) { /* MarioRecovery's update (actionMain) on the shadow checkMap found */
         V3 p0 = m->pos;
