@@ -2208,6 +2208,24 @@ static int kcl_line(V3 a, V3 b, V3 *hp, V3 *n, int *inst)
  * the isCameraCodeThrough filter (Camera_through, slice.py kcl_codes bit 10: such faces passed through), and
  * Collision::checkStrikeBallToMap (each face's normal and depth) */
 static int cam_gravity(V3 p, V3 *g) { return gravity_at(grav, ngrav, (const float *)&p, (float *)g); }
+/* CameraRepulsiveCylinder::getRepulsion (CameraRepulsiveArea.cpp; the sphere's is zero): the place's part across
+ * the cylinder's axis, divided by (twice its length over the radius) cubed: a camera at half the radius is pushed
+ * out to the radius, nearer the axis farther */
+static int area_obj(const char *cls, V3 p);
+static int cam_repulsion(V3 pos, V3 *rep)
+{
+    int a = area_obj("CameraRepulsiveCylinder", pos);
+    if (a < 0) { if (area_obj("CameraRepulsiveSphere", pos) < 0) return 0; *rep = v3(0, 0, 0); return 1; }
+    const Row *r = &sc->objs[a];
+    V3 x, z;
+    row_axes(r, &x, &z);
+    V3 up = vcross(z, x), ret = vsub(pos, row_pos(r));
+    ret = vsub(ret, vmul(up, vdot(up, ret)));
+    float base = vlen(vcross(ret, up)) * 2.0f / (500.0f * r->scale[0]);
+    if (base < 1e-6f) { *rep = v3(0, 0, 0); return 1; }
+    *rep = vmul(ret, 1.0f / (base * base * base));
+    return 1;
+}
 static int cam_map_poly(V3 a, V3 d, V3 *hp)
 {
     V3 b = vadd(a, d);
@@ -3231,6 +3249,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         cam_blob = blob;
         camera_rail = cam_rail;
         camera_gravity = cam_gravity; camera_map_poly = cam_map_poly; camera_map_ball = cam_map_ball;
+        camera_repulsion = cam_repulsion;
         const CamParam *cp = c ? (const CamParam *)(c + 16) : NULL;
         if (c && *(const int *)(c + 4) != (int)sizeof(CamParam)) { /* an older blob's 132-byte cameras: no roll */
             int nc = *(const int *)c;
