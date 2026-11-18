@@ -104,12 +104,15 @@ No interim ISOs: Daniel tests at the end.
   Not kept (by hand): slope-ahead data (_4DC/_4D8/_380), checkStrikePointToMap, Teresa's thick ball, hang camera,
   animated parts (leaves / Move joint) always count as moving. Pending with it: tryDrop's wall branches. SlipUp
   effect added to jpa.py (repack).
-- [ ] Mario statuses not ported (inventory 2026-10-25, checked against game.c 2026-11-18): MarioBump / MarioStep /
-  MarioFrontStep (doFrontStep needs Mario's _374, the ground's gravity of Mario.cpp:1464, which the port does not
-  keep), doCubeWarp, MarioStick, bodyClap, PlayerEvent FireDown and drawPreWipe (drawn: for an afternoon with the
-  emulator), MarioSearchLight; MarioSpin's tornado tilt / wall (the tornado jump's state is in: feat/mario-moves,
-  merged). On the branch feat/565-sink-poison (#565, not yet run in PCSX2): updateOnSand / updateOnPoison, MarioBury
-  and the MarioSukekiyo status (its start needs doLanding's landing type 1: MarioLauncher's endRush, #566). Done since: MarioSideStep, Mario2D / MarioMove2D, MarioSlider, checkSidePress /
+- [ ] Mario statuses not ported (inventory 2026-10-25, checked against game.c 2026-11-18): MarioFrontStep
+  (doFrontStep needs Mario's _374, the ground's gravity of Mario.cpp:1464, which the port does not keep), doCubeWarp
+  (WarpCube areas), MarioStick, bodyClap (the coin pull's catches in a bind), PlayerEvent FireDown and drawPreWipe
+  (drawn: for an afternoon with the emulator), MarioSearchLight; MarioSpin's tornado tilt / wall (the tornado jump's
+  state is in: feat/mario-moves, merged). MarioBump can not start as decompiled (checkAllWall's _4DC needs
+  diffAngleAbs, radians, over 30): nothing to port. Written 2026-11-18, on branches not yet run in PCSX2:
+  updateOnSand / updateOnPoison, MarioBury and the MarioSukekiyo status (#565; Sukekiyo's start needs doLanding's
+  landing type 1: MarioLauncher's endRush, #566), MarioStep with checkAllWall's _4D8 / _4DC (#571),
+  changeGameOverAnimation (#572), map_line through the exact segment test (#563). Done since: MarioSideStep, Mario2D / MarioMove2D, MarioSlider, checkSidePress /
   checkPressDamage, MarioRecovery / doPointWarp, MarioFlow, MarioActorBlackHole (exeGameOverBlackHole2), EventRaceDown
   / EventGhostRaceDown, MarioHang (see above: climb not verified). Before: Faint, Blown (but its checkWallJumpHit
   case), the damages, SwimDamage, Eye, FpView.
