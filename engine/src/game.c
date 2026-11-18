@@ -41621,17 +41621,32 @@ static void update_electric(void)
  * axis. A sensor of radius 30 at the point of a stick nearest Mario burns him. Ball k of stick j:
  * Its SE_OJ_LV_FIRE_BAR_CENTER, each ball's FireBarBall effect within 5000 (controlEmitEffect). ponytail: flat tinted
  * models, no FireBarBall BTK staggered 25 a ball (no per-ball BTK frame) */
-static V3 firebar_ball(const Inst *in, int j, int k)
+static V3 firebar_ball_at(const Inst *in, int j, int k, u32 frame)
 {
     const Row *r = &sc->objs[in->row];
     V3 x, z, c = v3(in->m[12], in->m[13], in->m[14]);
     row_axes(r, &x, &z);
     V3 y = vcross(z, x);
     int sticks = r->arg[7] > 0 ? r->arg[7] : 1;
-    float a = (0.1f * r->arg[1] * game_frame + 360.0f * (j + 1) / sticks) * 0.0174533f;
+    float a = (0.1f * r->arg[1] * frame + 360.0f * (j + 1) / sticks) * 0.0174533f;
     V3 dir = vadd(vmul(z, cosf(a)), vmul(x, sinf(a)));
     float d = (r->arg[5] >= 0 ? r->arg[5] : 140.0f) + 100.0f * k;
     return vadd(c, vadd(vmul(dir, d), vmul(y, 50.0f)));
+}
+static V3 firebar_ball(const Inst *in, int j, int k) { return firebar_ball_at(in, j, k, game_frame); }
+/* FireBarBall::initAfterPlacement (FireBar.cpp:53): MR::calcGravity once, at the place fixFireBarBall gives it (the
+ * stick's angle at frame 0); kept per ball for the scene (a rebind asks again) instead of a gravity_at for every ball
+ * in update_firebars and again in game_draw */
+static V3 firebar_up(const Inst *in, int j, int k)
+{
+    static struct { u32 seq; int row; V3 up[64]; u64 ok; } c[32];
+    const Row *r = &sc->objs[in->row];
+    int b = j * (r->arg[0] > 0 ? r->arg[0] : 5) + k;
+    if (b >= 64) return up_at(firebar_ball_at(in, j, k, 0), v3(0, 1, 0));
+    typeof(&c[0]) e = &c[(u32)in->row % 32];
+    if (e->seq != class_seq + 1 || e->row != in->row) { e->seq = class_seq + 1; e->row = in->row; e->ok = 0; }
+    if (!(e->ok >> b & 1)) { e->up[b] = up_at(firebar_ball_at(in, j, k, 0), v3(0, 1, 0)); e->ok |= 1ull << b; }
+    return e->up[b];
 }
 
 
@@ -42364,7 +42379,7 @@ static void update_firebars(void)
                 V3 p = firebar_ball(in, j, k);
                 if (vlen(vsub(mario->pos, p)) >= 5000.0f || j * balls + k >= 64) continue;
                 float m[16];
-                basis_matrix(m, p, up_at(p, v3(0, 1, 0)), v3(1, 0, 0), 0);
+                basis_matrix(m, p, firebar_up(in, j, k), v3(1, 0, 0), 0);
                 fx_named("FireBarBall", "FireBarBall", m, NULL, fb_keys + 4 * (fb * 64 + j * balls + k));
             }
         for (int j = 0; j < sticks; j++) {
@@ -55093,7 +55108,7 @@ void game_draw(void)
         for (int j = 0; j < sticks; j++)
             for (int k = 0; k < balls; k++) {
                 V3 p = firebar_ball(&insts[i], j, k);
-                basis_matrix(m, p, up_at(p, v3(0, 1, 0)), vsub(cam_pos, p), 0);
+                basis_matrix(m, p, firebar_up(&insts[i], j, k), vsub(cam_pos, p), 0);
                 render_model(m_fireball, m, 0xF0, 0x80, 0x20);
             }
     }
