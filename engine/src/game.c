@@ -48412,12 +48412,11 @@ static void ambient_effects(void)
     }
 }
 
-/* SoundEmitterCube.cpp / SoundEmitterSphere.cpp / PlayerSeArea.cpp after Petari (their movement, every frame, demos
- * too): an ambient level sound (arg0: the cube's SE_AT_LV_GRAVE / KOOPA_WIND / WIND_DESERT / WIND_ICE_MT_TOP, the
+/* SoundEmitterCube.cpp / SoundEmitterSphere.cpp after Petari (their movement, every frame, demos too): an ambient level sound (arg0: the cube's SE_AT_LV_GRAVE / KOOPA_WIND / WIND_DESERT / WIND_ICE_MT_TOP, the
  * sphere's MAGMA_AMBIENT / FLOATING_SAND / WIND_DESERT / MAGMA_WIND_VOLCANO / KOOPA_FLOAT_SAND / WIND_RABBIT_MAZE)
  * played at the camera's watch point (cube 0 / 3, sphere 1 / 2 / 4 / 5) or the microphone, moved into the area: the
- * cube's world bounding box, the sphere's surface. PlayerSeArea (arg0 0): SE_PM_LV_LONG_FALL while Mario is in it and
- * not rising in a jump. ponytail: the microphone (AudMicWrap::getMicPos) taken as the camera's eye */
+ * cube's world bounding box, the sphere's surface. (PlayerSeArea, SE_PM_LV_LONG_FALL: its placed names PlayerSeCube /
+ * Sphere / Cylinder name no area manager, nothing places them.) ponytail: the microphone (AudMicWrap::getMicPos) taken as the camera's eye */
 static struct { short row; unsigned char kind; u32 h; } snd_em[48];
 static int n_snd_em = -1;
 static const Scene *snd_em_sc;
@@ -48427,10 +48426,10 @@ static void update_sound_emitters(void)
     static const u32 sphere_se[6] = {SE_AT_LV_MAGMA_AMBIENT, SE_OJ_LV_FLOATING_SAND, SE_AT_LV_WIND_DESERT,
                                      SE_AT_LV_MAGMA_WIND_VOLCANO, SE_AT_LV_KOOPA_FLOAT_SAND, SE_AT_LV_WIND_RABBIT_MAZE};
     if (snd_em_sc != sc || n_snd_em < 0) {
-        int t[3] = {scene_type(sc, "SoundEmitterCube"), scene_type(sc, "SoundEmitterSphere"), scene_type(sc, "PlayerSeArea")};
+        int t[2] = {scene_type(sc, "SoundEmitterCube"), scene_type(sc, "SoundEmitterSphere")};
         snd_em_sc = sc; n_snd_em = 0;
         for (u32 i = 0; i < sc->nobjs && n_snd_em < 48; i++)
-            for (int k = 0; k < 3; k++)
+            for (int k = 0; k < 2; k++)
                 if (t[k] >= 0 && (int)sc->objs[i].type == t[k]) { snd_em[n_snd_em].row = (short)i; snd_em[n_snd_em].kind = (unsigned char)k; snd_em[n_snd_em++].h = 0; }
     }
     if (!n_snd_em) return;
@@ -48463,15 +48462,41 @@ static void update_sound_emitters(void)
             d = vlen(vsub(q, c));
             if (!(row_shown(snd_em[k].row) && d < rad) && d > 1e-6f) q = vadd(c, vmul(vsub(q, c), rad / d)); /* !isInVolume */
             snd_em[k].h = se_level(sphere_se[a0], &q.x, snd_em[k].h);
-        } else if (a0 == 0 && row_shown(snd_em[k].row) && area_inside(r, mario->pos) && !(mario->jumping && m_rising(mario)))
-            snd_em[k].h = se_level(SE_PM_LV_LONG_FALL, &mario->pos.x, snd_em[k].h); /* startLevelSoundPlayer */
+        }
     }
+}
+
+/* QuakeEffectGenerator.cpp after Petari (made with the scene: SceneObjHolder): with Mario in a QuakeEffectArea
+ * (placed as QuakeEffectAreaCube) every
+ * sQuakeInterval 400 frames it quakes sCamShakeFrame 120: shakeCameraInfinity(0.05, 1.5) and SE_AT_LV_EARTHQUAKE */
+static void update_quake(void)
+{
+    static const Scene *at;
+    static int nrv, step, has; /* 0 Wait, 1 WaitInArea, 2 Quaking */
+    static u32 lv;
+    if (at != sc) { at = sc; nrv = step = 0; lv = 0; has = scene_type(sc, "QuakeEffectAreaCube") >= 0; }
+    if (!has) return;
+    int in = area_obj("QuakeEffectAreaCube", mario->pos) >= 0, next = -1;
+    switch (nrv) {
+    case 0: if (in) next = 1; break;
+    case 1:
+        if (!in) next = 0;
+        else if (step != 0 && step % 400 == 0) next = 2;
+        break;
+    case 2:
+        if (step == 0) camera_shake_infinity(&nrv, 0.05f, 1.5f);
+        lv = se_level(SE_AT_LV_EARTHQUAKE, NULL, lv); /* startAtmosphereLevelSE */
+        if (step == 120) { camera_shake_stop(&nrv); next = in ? 1 : 0; }
+        break;
+    }
+    if (next >= 0) { nrv = next; step = 0; } else step++;
 }
 
 static void keep_effects(void)
 {
     ambient_effects();
     update_sound_emitters();
+    update_quake();
     float m[16];
     for (int i = 0; i < npieces; i++)
         if (pickup_shown(&pieces[i]) && vlen(vsub(pieces[i].pos, cam_pos)) < 4000.0f) {
