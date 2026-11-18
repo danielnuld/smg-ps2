@@ -22,6 +22,9 @@ def engine_classes():
     src = (ROOT / "engine/src/game.c").read_text(encoding="utf-8")
     src += "".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "engine/src").glob("*.inc")))  # game.c's .inc
     src += (ROOT / "engine/src/menu.c").read_text(encoding="utf-8")  # the sequence's classes (FileSelector...)
+    # game.c's isActionOk table ({"<class>", 0x<flags>}: what Mario may do bound to it) names classes that have no
+    # code: MarioLauncher, WaterRoad and SwingRope were counted as ported through it (2026-11-18)
+    src = re.sub(r'\{"[A-Za-z0-9]+", 0x[0-9A-Fa-f]{8}\}', "", src)
     names = set(re.findall(r'"([A-Z][A-Za-z0-9]+)"', src))  # every class name game.c spells (calls and tables)
     tab = (ROOT / "engine/src/fx_tab.h").read_text(encoding="utf-8")  # the ambient effect objects (fx_ambient)
     names |= set(re.findall(r'"([A-Z][A-Za-z0-9]+)"', tab[tab.find("fx_ambient"):]))
