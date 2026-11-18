@@ -48412,9 +48412,66 @@ static void ambient_effects(void)
     }
 }
 
+/* SoundEmitterCube.cpp / SoundEmitterSphere.cpp / PlayerSeArea.cpp after Petari (their movement, every frame, demos
+ * too): an ambient level sound (arg0: the cube's SE_AT_LV_GRAVE / KOOPA_WIND / WIND_DESERT / WIND_ICE_MT_TOP, the
+ * sphere's MAGMA_AMBIENT / FLOATING_SAND / WIND_DESERT / MAGMA_WIND_VOLCANO / KOOPA_FLOAT_SAND / WIND_RABBIT_MAZE)
+ * played at the camera's watch point (cube 0 / 3, sphere 1 / 2 / 4 / 5) or the microphone, moved into the area: the
+ * cube's world bounding box, the sphere's surface. PlayerSeArea (arg0 0): SE_PM_LV_LONG_FALL while Mario is in it and
+ * not rising in a jump. ponytail: the microphone (AudMicWrap::getMicPos) taken as the camera's eye */
+static struct { short row; unsigned char kind; u32 h; } snd_em[48];
+static int n_snd_em = -1;
+static const Scene *snd_em_sc;
+static void update_sound_emitters(void)
+{
+    static const u32 cube_se[4] = {SE_AT_LV_GRAVE, SE_AT_LV_KOOPA_WIND, SE_AT_LV_WIND_DESERT, SE_AT_LV_WIND_ICE_MT_TOP};
+    static const u32 sphere_se[6] = {SE_AT_LV_MAGMA_AMBIENT, SE_OJ_LV_FLOATING_SAND, SE_AT_LV_WIND_DESERT,
+                                     SE_AT_LV_MAGMA_WIND_VOLCANO, SE_AT_LV_KOOPA_FLOAT_SAND, SE_AT_LV_WIND_RABBIT_MAZE};
+    if (snd_em_sc != sc || n_snd_em < 0) {
+        int t[3] = {scene_type(sc, "SoundEmitterCube"), scene_type(sc, "SoundEmitterSphere"), scene_type(sc, "PlayerSeArea")};
+        snd_em_sc = sc; n_snd_em = 0;
+        for (u32 i = 0; i < sc->nobjs && n_snd_em < 48; i++)
+            for (int k = 0; k < 3; k++)
+                if (t[k] >= 0 && (int)sc->objs[i].type == t[k]) { snd_em[n_snd_em].row = (short)i; snd_em[n_snd_em].kind = (unsigned char)k; snd_em[n_snd_em++].h = 0; }
+    }
+    if (!n_snd_em) return;
+    V3 eye, watch, cu;
+    float fovy;
+    camera_pose(&eye, &watch, &cu, &fovy);
+    for (int k = 0; k < n_snd_em; k++) {
+        const Row *r = &sc->objs[snd_em[k].row];
+        int a0 = r->arg[0];
+        V3 c = row_pos(r), q;
+        if (snd_em[k].kind == 0) { /* SoundEmitterCube (a base origin cube) */
+            if (a0 < 0 || a0 > 3) continue;
+            V3 x, z, lo, hi;
+            row_axes(r, &x, &z);
+            V3 y = vcross(z, x);
+            q = a0 == 0 || a0 == 3 ? watch : eye;
+            lo = hi = vadd(vadd(c, vmul(x, -500.0f * r->scale[0])), vmul(z, -500.0f * r->scale[2]));
+            for (int n = 1; n < 8; n++) { /* the box of its eight corners */
+                V3 v = vadd(vadd(vadd(c, vmul(x, (n & 1 ? 500.0f : -500.0f) * r->scale[0])), vmul(y, (n & 2 ? 1000.0f : 0.0f) * r->scale[1])),
+                            vmul(z, (n & 4 ? 500.0f : -500.0f) * r->scale[2]));
+                lo = v3(fminf(lo.x, v.x), fminf(lo.y, v.y), fminf(lo.z, v.z));
+                hi = v3(fmaxf(hi.x, v.x), fmaxf(hi.y, v.y), fmaxf(hi.z, v.z));
+            }
+            q = v3(fminf(fmaxf(q.x, lo.x), hi.x), fminf(fmaxf(q.y, lo.y), hi.y), fminf(fmaxf(q.z, lo.z), hi.z));
+            snd_em[k].h = se_level(cube_se[a0], &q.x, snd_em[k].h);
+        } else if (snd_em[k].kind == 1) { /* SoundEmitterSphere */
+            if (a0 < 0 || a0 > 5) continue;
+            float rad = 500.0f * r->scale[0], d;
+            q = a0 == 1 || a0 == 2 || a0 == 4 || a0 == 5 ? watch : eye;
+            d = vlen(vsub(q, c));
+            if (!(row_shown(snd_em[k].row) && d < rad) && d > 1e-6f) q = vadd(c, vmul(vsub(q, c), rad / d)); /* !isInVolume */
+            snd_em[k].h = se_level(sphere_se[a0], &q.x, snd_em[k].h);
+        } else if (a0 == 0 && row_shown(snd_em[k].row) && area_inside(r, mario->pos) && !(mario->jumping && m_rising(mario)))
+            snd_em[k].h = se_level(SE_PM_LV_LONG_FALL, &mario->pos.x, snd_em[k].h); /* startLevelSoundPlayer */
+    }
+}
+
 static void keep_effects(void)
 {
     ambient_effects();
+    update_sound_emitters();
     float m[16];
     for (int i = 0; i < npieces; i++)
         if (pickup_shown(&pieces[i]) && vlen(vsub(pieces[i].pos, cam_pos)) < 4000.0f) {
