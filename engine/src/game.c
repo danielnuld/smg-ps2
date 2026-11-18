@@ -22332,8 +22332,7 @@ static void dark_start(Player *m)
     m_stop_walk(m);
     mario_sound("声沼沈み");
     dark.on = 1; dark.s14 = 0; dark.t = 0;
-    printf("dark matter: Mario in it
-");
+    printf("dark matter: Mario in it%c", 10);
 }
 static void dark_update(Player *m)
 {
