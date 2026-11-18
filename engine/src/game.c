@@ -17336,6 +17336,7 @@ static int m_wall_update(Player *m);
 /* doLanding: the landing clip by the jump, a run on (the stick full, or more than 6 forward kept as walk speed), the
  * hard landing over mHardLandingHeight */
 static void m_add_rumble_power(float power, int time);
+static int m_pullback_land; /* Mario::_10._2 (MarioRecovery's end): the next landing is _430 0xE, 引き戻し着地 */
 static void m_do_landing(Player *m)
 {
     int hard = 0, keep = 0;
@@ -17378,7 +17379,9 @@ static void m_do_landing(Player *m)
     if (m->floor != 6 && m->floor != 7 && m->floor != 8 && m->floor != 0xB && m->floor != 0x22 && /* !isSoftLandingFloor */
         vdot(vsub(m->jump_from, m->pos), m->up) > MC.mHardLandingHeight) hard = 1;
     if (hard && m_floor_sand(m)) { suke_start(m, 1); return; } /* changeStatus(mBury) */
-    if (!hard && !m->slip_poly) { /* !mDrawStates._C */
+    if (m_pullback_land) { m_pullback_land = 0; m->jump_kind = 0xE; }
+    int dive = m_anim_on("飛び込みジャンプ") || m_anim_on("後方飛び込みジャンプ");
+    if (!hard && !m->slip_poly && m->jump_kind != 0xE && !dive) { /* !mDrawStates._C (ponytail: _10._8, 水上ダメージ中 not tested) */
         if (m->jump_kind == 5 && m_check_squat(m, 0)) { m->squat = 1; m->walk = 1.0f; m_clip_stop(); return; }
         if ((m_sz > 0.9f && m->back_t == 0) || (!m->hip && m_check_squat(m, 0))) {
             m_clip_stop();
@@ -17397,13 +17400,25 @@ static void m_do_landing(Player *m)
         }
     }
     if (m->jump_kind == 4) m_front(m, vmul(m->turn_from, -1.0f));
+    if (dive) { /* the dive met the ground: 飛び込み失敗着地, on a hard landing its roll (ponytail: startSlidingTask(8, 5, 0x19) not ported) */
+        if (m_anim_on("後方飛び込みジャンプ")) m_front(m, vmul(m->face, -1.0f));
+        m_stop_walk(m);
+        if (hard) { m_anim("飛び込み失敗回転着地"); camera_shake(SHAKE_NORMAL); } /* startCamVib(0) */
+        else m_anim("飛び込み失敗着地");
+        return;
+    }
     if (!m->slip_poly) {
         static const char *land[14] = {"land", "jump2land", "jumprollland", "", "jumpturnland", "jumpbroadland",
                                        "jumpbackland", "land", "land", "land", "", "land", "land", "land"};
         int k = m->jump_kind;
         if (k == 5 && !m_check_squat(m, 0)) m->squat = 0;
         if (k == 3 || k == 10) m_clip_stop();
-        else mario_play(land[k], 1.0f, 0);
+        else if (k == 0xE) { /* the pull-back's landing */
+            mario_sound("倒れ"); mario_sound("着地"); mario_sound("声小ダメージ");
+            mario_smoke(SMOKE_PULLBACK_LAND); /* 共通引き戻し着地 */
+            m_anim("引き戻し着地");
+            hard = 0;
+        } else if (k >= 0 && k < 14) mario_play(land[k], 1.0f, 0);
         m_stop_walk(m);
         if (hard) { /* startCamVib(4) */
             mario_play("landstiffen", 1.0f, 0); m->land_timer += 16; camera_shake(SHAKE_STRONG);
@@ -22342,6 +22357,7 @@ static int rec_update(Player *m) /* MarioRecovery::update: 0 when it ends */
         break;
     }
     case 2:
+        m_pullback_land = 1; /* getPlayer()->_10._2 */
         return 0;
     case 3:
         if (rec.s16) rec.s16--;
