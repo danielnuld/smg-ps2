@@ -23259,7 +23259,7 @@ static void update_mario_(void)
  * 声最終ダメージ / 最後の一撃 (EventAbyss: 声落下死亡), at 30 (EventGameOver 90) startSubBGM BGM_MISS / BGM_GAMEOVER.
  * ponytail: EventAbyss's own timeline (its wipe after the miss layout) not split out, setSoundVolumeSetting not
  * made (no SE volume settings); no CometRetryButton, the game over
- * save not made (SaveAfterGameOver), the down clip picked from swimming only, no darkening round Mario (drawPreWipe) */
+ * save not made (SaveAfterGameOver), no darkening round Mario (drawPreWipe) */
 #if defined(CATCHUP) || defined(MISS_TEST)
 #define MISS_EVENTS 1
 #endif
@@ -23300,6 +23300,28 @@ static void miss_event_update(void)
     mev.f++;
 }
 
+/* MarioActor::changeGameOverAnimation: the down clip by what he was doing (the later test wins); none while frozen.
+ * Its race cases (_39D: レース負け / 水中レース負け) are miss()'s. ponytail: MarioStatus_FpView's close, _B90 and
+ * stopEffect(無敵中) not kept */
+#ifdef MISS_EVENTS
+static void m_game_over_anim(Player *m)
+{
+    static const char *clip[9] = {"座りダウン", "感電ダウン", "炎ダウン", "仰向けダウン", "俯せダウン", NULL, "つぶれダウン", "水泳ダウン", "埋まりダウン"};
+    int a = 0; /* (前方小ダメージ, 後方小ダメージ, ファイアラン前兆, 炎のランナー: 0 too) */
+    if (m_anim_on("電気ダメージ") || m_anim_on("電気ダメージ終了")) a = 1;
+    if (m_anim_on("炎ダメージ") || m_anim_on("ファイアダンス")) a = 2;
+    if (m_anim_on("中ダメージ") || m_anim_on("中ダメージ空中") || m_anim_on("中ダメージ着地")) a = 3;
+    if (m_anim_on("中後ダメージ") || m_anim_on("中後ダメージ空中") || m_anim_on("中後ダメージ着地")) a = 4;
+    if (m_anim_on("落下") || m_anim_on("空中ふんばり")) a = 5;
+    if (m_anim_on("つぶれ") || m_anim_on("つぶれ復帰")) a = 6;
+    if (m_anim_on("氷結") || dmg.st == DMS_FREEZE) a = -1;
+    if (swimming) a = 7; /* isSwimming */
+    if (mev.sink) a = 8; /* MarioActorNrvGameOverSink */
+    if (kari_cling && m->grounded) a = 4; /* getKarikariClingNum, _1 */
+    if (a < 0) return;
+    m_anim(a == 5 ? (m->grounded ? "座りダウン" : "奈落ダウン") : clip[a]); /* changeAnimationNonStop */
+}
+#endif
 static void miss(void)
 {
 #ifdef MISS_EVENTS
@@ -23310,10 +23332,8 @@ static void miss(void)
     mev.ghost = miss_ghost && !mev.over;
     mev.sink = miss_sink; miss_sink = 0;
     mario->hvel = v3(0, 0, 0); mario->vup = 0;
-    if (mario_anim && mev.sink) m_anim("埋まりダウン"); /* changeGameOverAnimation 8 (MarioActorNrvGameOverSink) */
-    else
     if (mario_anim && (mev.ghost || (miss_race && !mev.over))) m_anim(sy_miss_anim() ? "水中レース負け" : "レース負け"); /* EventGhostRaceDown / EventRaceDown::init (forceKill 1: changeGameOverAnimation 10) */
-    else if (mario_anim && !bh.on) mario_play(swimming ? "deathwater" : "down", 1.0f, 0); /* changeGameOverAnimation */
+    else if (mario_anim && !bh.on) m_game_over_anim(mario);
     bgm_stop(10); bgm_sub_stop(10); /* (setCubeBgmChangeInvalid, clearBgmQueue) */
     if (miss_abyss && !mev.over) mario_sound("声落下死亡"); /* EventAbyss::init */
     else { mario_sound("声最終ダメージ"); mario_sound("最後の一撃"); } /* EventDown / EventGameOver::init */
