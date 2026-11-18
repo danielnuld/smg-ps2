@@ -47435,7 +47435,9 @@ static void collect(Pickup *p, int n, float reach, int *counter, int fx, u32 se)
 /* SimpleEffectObj.cpp (the *EffectObj* classes: SnowS, LavaSparksS, AstroTorchLightRed...): a row plays its
  * AutoEffectList group at its place (fx_ambient, tools/jpa.py AMBIENT), while its SW_A is on if it has one; the
  * break / explosion ones (sEffectDataTable's rumbling SEs) play once when their SW_A comes on. Only the 12 nearest
- * within 5000 of the camera run (MAX_EMIT 128 is shared with the game's effects). ponytail: no sound, no clipping by
+ * within 5000 of the camera run (MAX_EMIT 128 is shared with the game's effects); sEffectDataTable's level sounds
+ * (exeMove: DrainPipeBubbleA / B, Steam, IcicleRockLight, UFOKinokoLandingBlackSmoke, LavaHomeVolcanoFallingRock)
+ * play at every such row that is on, near or not. ponytail: no clipping by
  * the class's own far distance, no demo casts (the once ones: exeMove's shake, SE and rumble at step 7, below) */
 static int ambient_fx(const char *name)
 {
@@ -47445,15 +47447,22 @@ static int ambient_fx(const char *name)
 /* per scene type: its ambient effect (-1 none) and whether it plays once; filled at the first frame of a scene */
 static short amb_fx[1024];
 static unsigned char amb_once[1024];
+static u32 amb_se[1024]; /* its level sound (sEffectDataTable's _8), 0 none */
+static struct { int row; u32 h; } amb_lv[48]; /* the level sounds' handles by row */
+static int amb_nlv;
 static void ambient_types(void)
 {
     static const char *const once[] = {"IceLayerBreak", "WaterLayerBreak", "StarPieceClusterBreak", "BattleShipExplosionMetal",
                                        "BattleShipExplosionRock", "LavaVolcanoEruption"};
-    amb_stale = 0;
+    amb_stale = 0; amb_nlv = 0;
     for (u32 t = 0; t < sc->ntypes && t < 1024; t++) {
         const char *name = sc->types + 32 * t;
         amb_fx[t] = (short)ambient_fx(name);
         amb_once[t] = 0;
+        amb_se[t] = !strcmp(name, "DrainPipeBubbleA") ? SE_OJ_LV_PIPE_BUBBLE_A : !strcmp(name, "DrainPipeBubbleB") ? SE_OJ_LV_PIPE_BUBBLE_B :
+                    !strcmp(name, "Steam") ? SE_OJ_LV_HD_STEAM : !strcmp(name, "IcicleRockLight") ? SE_OJ_LV_ICICLE_ROCK_LIGHT :
+                    !strcmp(name, "UFOKinokoLandingBlackSmoke") ? SE_OJ_LV_UFO_KINOKO_SMOKE :
+                    !strcmp(name, "LavaHomeVolcanoFallingRock") ? SE_AT_LV_FALLING_ROCK : 0;
         for (unsigned k = 0; k < sizeof once / sizeof once[0]; k++) amb_once[t] |= strcmp(name, once[k]) == 0;
     }
 }
@@ -47484,6 +47493,12 @@ static void ambient_effects(void)
             continue;
         }
         if (r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) continue;
+        if (amb_se[r->type]) { /* exeMove: startLevelSound */
+            int k = 0;
+            while (k < amb_nlv && amb_lv[k].row != (int)i) k++;
+            if (k == amb_nlv && amb_nlv < 48) { amb_lv[k].row = (int)i; amb_lv[k].h = 0; amb_nlv++; }
+            if (k < amb_nlv) amb_lv[k].h = se_level(amb_se[r->type], &r->pos[0], amb_lv[k].h);
+        }
         float d = vlen(vsub(row_pos(r), cam_pos));
         if (d > 5000.0f) continue;
         if (nb == 12 && d >= bd[11]) continue;

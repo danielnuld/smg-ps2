@@ -5347,7 +5347,7 @@ static void srl_update(void)
         break;
     case SRL_ALLRIGHTS:
         if (FIRST(&srl.n)) lyt_start_pane(srl.title, "TheEnd", "AllRights", 0);
-        if (srl.n.step == 190) se_start(SE_SY_E3_THANK_YOU, NULL); /* sStepToThankYouVoice (Mario) */
+        if (srl.n.step == 190) se_start(gd_player_luigi() ? SE_SY_THANK_YOU_LUIGI : SE_SY_E3_THANK_YOU, NULL); /* sStepToThankYouVoice (isPlayerLuigi) */
         if (lyt_pane_stopped(srl.title, "TheEnd", 0)) { srl.pic_on = 0; lyt_show_pane(srl.title, "TheEnd", 0); nrv_set(&srl.n, SRL_PREPAREINFO); }
         break;
     case SRL_PREPAREINFO: if (srl.n.step == 100) srl_next_info(); break; /* sStepForPrepareInfo */
