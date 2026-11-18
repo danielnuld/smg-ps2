@@ -137,8 +137,10 @@ No interim ISOs: Daniel tests at the end.
   QuakeEffectAreaCube (#580), AreaMoveSphere (#581), RasterScrollCube (#492). Left: ShadeCube, HazeCube
   (HeatHazeEffect), AudioEffectCube / Sphere / Cylinder (reverb), CameraRepulsiveSphere / Cylinder,
   ExtraWallCheckArea / Cylinder (Mario's shadow fade), RaceJudgeCube, PlaneCollisionCube, WarpCube,
-  DarkMatterCylinder, the guidance cubes (Wii controls). An area's placed name must contain its manager's name
-  (IsManagerName): PlayerSeCube / Sphere / Cylinder name none, nothing places them.
+  DarkMatterCylinder, the guidance cubes (Wii controls). An area registers with the manager whose name its placed
+  name begins with (IsManagerName), or the one its class names (getManagerName: PlayerSeCube / Sphere / Cylinder ->
+  PlayerSeArea, in #580; CameraRepulsiveSphere / Cylinder, AudioEffect*, HazeCube...): ask the engine's area_obj
+  with the placed names.
 - [ ] Sound (docs/sound-gaps.md, regenerated 2026-11-18 with the .inc files read): 404 of 1316 class SE names
   missing, each a nerve or reaction the port lacks; Mario's keys done but for the Wii-only ones (#565, #575).
 - [ ] BombBird, BombBirdBomb, Karon, Kuribo, CocoNut carried on AreaMove / RailMove floors
