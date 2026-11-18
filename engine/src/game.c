@@ -1552,7 +1552,10 @@ static int m_dash_chance, m_item_dash; /* Mario::_436 (noticeDashChance: the rac
 static struct { int on, step, hidden; V3 pos, rel, axis; float scale; } bh;
 static void bgm_stop(int frames);
 static const char *bgm_comet(void);
-static int cube_bgm_invalid; /* MR::setCubeBgmChangeInvalid: the ChangeBgmCubes do nothing more (update_bgm_cubes) */
+static int cube_bgm_invalid; /* MR::setCubeBgmChangeInvalid (AudSceneMgr::_1D): the ChangeBgmCubes and the RestartCubes'
+                              * BGM changes do nothing more in this scene (update_bgm_cubes, stage_bgm_change) */
+static void bgm_queue_clear(void); /* MR::clearBgmQueue */
+static void restart_cube_bgm(const Row *r, unsigned short *done);
 static int opening_cam_on;   /* isStageStateScenarioOpeningCamera: the scenario's opening camera runs */
 static void mario_sound(const char *key);
 static int mario_kick(V3 c, float r); /* sendBodyAttack ACTMES_KICK */
@@ -2485,6 +2488,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     sc = s;
     area_types_reset();
     scene_seq++;
+    cube_bgm_invalid = 0; /* AudSceneMgr::startScene */
     gd_scene_start(); /* GameDataFunction's scene start holder (the isOnJust checks) */
     mc_table = &MC_TABLES[gd_player_luigi() ? 1 : 0]; /* MarioActor::init2: mConst->changeTable(1) when isPlayerLuigi */
     fx_init(s);
@@ -23187,8 +23191,9 @@ static void miss(void)
     mario->hvel = v3(0, 0, 0); mario->vup = 0;
     if (mario_anim && (mev.ghost || (miss_race && !mev.over))) m_anim(sy_miss_anim() ? "水中レース負け" : "レース負け"); /* EventGhostRaceDown / EventRaceDown::init (forceKill 1: changeGameOverAnimation 10) */
     else if (mario_anim && !bh.on) mario_play(swimming ? "deathwater" : "down", 1.0f, 0); /* changeGameOverAnimation */
-    cube_bgm_invalid = 1; /* setCubeBgmChangeInvalid */
-    bgm_stop(10); bgm_sub_stop(10); /* (clearBgmQueue) */
+    cube_bgm_invalid = 1; bgm_queue_clear(); /* setCubeBgmChangeInvalid, clearBgmQueue (every PlayerEvent's init,
+                                               * MarioActor's exeGameOver*) */
+    bgm_stop(10); bgm_sub_stop(10);
     if (miss_abyss && !mev.over) mario_sound("声落下死亡"); /* EventAbyss::init */
     else { mario_sound("声最終ダメージ"); mario_sound("最後の一撃"); } /* EventDown / EventGameOver::init */
     miss_abyss = miss_ghost = miss_race = 0;
@@ -41970,6 +41975,7 @@ static void update_switches(void)
                     start_pos = row_pos(&sc->starts[k]);
                     printf("restart point %d (row %d)\n", r->arg[0], row);
                 }
+            restart_cube_bgm(r, &row_step[row]);
             continue;
         }
         if (logic[i].kind == LOGIC_DEATH) { /* DeathArea.cpp: forceKillPlayerByAbyss; isInVolume: not while its SW_A is off;
@@ -44696,12 +44702,39 @@ static int stage_bgm_state(int no) /* getBgmState */
         if (on_stage(stage_bgm_set[i].stage)) return no >= 0 && no < 8 ? stage_bgm_set[i].st[no] : -1;
     return 0;
 }
-static int bgm_playing_id(const char *id) /* MR::isPlayingStageBgmID / mCurrentBGM[0] == id: its stream is the one on */
+static int bgm_playing_id(const char *id) /* MR::isPlayingStageBgmID: the stage BGM is that one and is not stopping
+                                           * (under a sub BGM: the stage's that comes back) */
 {
     const char *q = !strncmp(id, "MBGM_", 5) ? id + 5 : !strncmp(id, "BGM_", 4) || !strncmp(id, "STM_", 4) ? id + 4 : id;
+    if (!(bsub.on ? bsub.had : audio_playing())) return 0;
     for (u32 i = 0; i < sizeof bgm_tab / sizeof bgm_tab[0]; i++)
         if (!strcmp(bgm_tab[i].bgm, q)) return !strcmp(bgm_cur, bgm_tab[i].track);
     return 0;
+}
+static void bgm_queue_clear(void) { bgm_last[0] = bgm_next[0] = 0; } /* clearLastBGM, clearNextBGM */
+/* ChangeBgmCube::movement's case 0 and RestartCube::changeBgm: the stage's BGM number no unless it already plays
+ * (then nothing; three boss BGMs lock the cubes: setCubeBgmChangeInvalid), then its mute state number state_no at once.
+ * (A stage that is not in the table: getBgmId gives sound id 0, no BGM: nothing here) */
+static void stage_bgm_change(int no, int state_no)
+{
+    const char *id = stage_bgm_id(no);
+    if (id) {
+        if (bgm_playing_id(id)) return; /* (before the state too) */
+        bgm_start(id); /* AudWrap::startStageBgm(id, false) */
+        if ((on_stage("ReverseKingdomGalaxy") && !strcmp(id, "MBGM_BOSS_05_A")) ||
+            ((on_stage("CannonFleetGalaxy") || on_stage("BattleShipGalaxy")) && !strcmp(id, "MBGM_BOSS_01_A")))
+            cube_bgm_invalid = 1;
+    }
+    if (state_no >= 0) { int st = stage_bgm_state(state_no); if (st >= 0) bgm_state(st, 0); } /* changeTrackMuteState(state, 0) */
+}
+/* RestartCube::changeBgm (updatePlayerRestartIdInfo: Mario in it, its BGM number arg1 given, the cubes not locked):
+ * `done` is its _48 */
+static void restart_cube_bgm(const Row *r, unsigned short *done)
+{
+    if (*done || cube_bgm_invalid || r->arg[1] < 0) return;
+    if (star_demo || bgm_playing_id("STM_STAR_EXIST") || bgm_playing_id("STM_STAR_EXIST_2") || miss_running()) { *done = 1; return; }
+    if (bgm_playing_id("STM_BOSS_MECHA_KOOPA")) return;
+    stage_bgm_change(r->arg[1], r->arg[2]);
 }
 /* ChangeBgmCube.cpp after Petari (movement): Mario coming into it (once a stay: _3C), unless setCubeBgmChangeInvalid
  * was called; it goes invalid for good in a power star's get demo, with STM_STAR_EXIST / _2 playing or Mario dead,
@@ -44714,12 +44747,12 @@ static int bgm_playing_id(const char *id) /* MR::isPlayingStageBgmID / mCurrentB
  * 7 over 120 frames (at once when he came from 10000 or more away), going out state 1 over 120.
  * ponytail: setNextIdStageBgm as the port's bgm_next (started once the stream stopped) */
 static struct { short row; unsigned char dead, in, out; V3 last; } bgm_area[48];
-static int n_bgm_area = -1, t_bgm_cube, t_bgm_prohibit;
-static const Scene *bgm_area_sc;
+static int n_bgm_area, t_bgm_cube, t_bgm_prohibit;
+static u32 bgm_area_seq; /* the scene they were listed in (game_init's scene_seq) */
 static void update_bgm_cubes(void)
 {
-    if (bgm_area_sc != sc || n_bgm_area < 0) {
-        bgm_area_sc = sc; n_bgm_area = 0;
+    if (bgm_area_seq != scene_seq) {
+        bgm_area_seq = scene_seq; n_bgm_area = 0;
         t_bgm_cube = scene_type(sc, "ChangeBgmCube"); t_bgm_prohibit = scene_type(sc, "BgmProhibitArea");
         for (u32 i = 0; i < sc->nobjs && n_bgm_area < 48; i++)
             if ((t_bgm_cube >= 0 && (int)sc->objs[i].type == t_bgm_cube) || (t_bgm_prohibit >= 0 && (int)sc->objs[i].type == t_bgm_prohibit)) {
@@ -44728,6 +44761,15 @@ static void update_bgm_cubes(void)
                 n_bgm_area++;
             }
     }
+#ifdef BGMCUBE_TEST /* plain build XF=-DBGMCUBE_TEST: from frame 300 Mario put in each of the areas in turn, 240 frames each */
+    if (game_frame >= 300 && game_frame % 240 == 60 && n_bgm_area) {
+        int k = (int)((game_frame - 300) / 240) % n_bgm_area;
+        const Row *r = &sc->objs[bgm_area[k].row];
+        mario->pos = row_pos(r); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        printf("bgm cube test f %u: Mario in row %d (%d of %d), args %d %d %d %d, playing %s%c", game_frame, bgm_area[k].row, k, n_bgm_area,
+               r->arg[0], r->arg[1], r->arg[2], r->arg[3], bgm_cur, 10);
+    }
+#endif
     for (int k = 0; k < n_bgm_area; k++) {
         __typeof__(&bgm_area[0]) a = &bgm_area[k];
         const Row *r = &sc->objs[a->row];
@@ -44758,19 +44800,12 @@ static void update_bgm_cubes(void)
         switch (r->arg[0]) {
         case 0:
             if (a1 < 0) { game_bgm_stage(); break; } /* startCurrentStageBGM */
-            if ((id = stage_bgm_id(a1))) {
-                if (bgm_playing_id(id) && bgm_stage_playing()) break;
-                bgm_start(id); /* AudWrap::startStageBgm(id, false) */
-                if ((on_stage("ReverseKingdomGalaxy") && !strcmp(id, "MBGM_BOSS_05_A")) ||
-                    ((on_stage("CannonFleetGalaxy") || on_stage("BattleShipGalaxy")) && !strcmp(id, "MBGM_BOSS_01_A")))
-                    cube_bgm_invalid = 1; /* setCubeBgmChangeInvalid */
-            }
-            if (a2 >= 0) { int st = stage_bgm_state(a2); if (st >= 0) bgm_state(st, 0); } /* changeTrackMuteState(state, 0) */
+            stage_bgm_change(a1, a2);
             break;
         case 1:
             if (r->arg[3] != 1 && !bgm_permitted()) break; /* a red / black comet in the stage */
             if (a2 >= 0 && (id = stage_bgm_id(a2))) {
-                if (bgm_playing_id(id) && bgm_stage_playing()) break;
+                if (bgm_playing_id(id)) break;
                 snprintf(bgm_next, sizeof bgm_next, "%s", id); /* AudWrap::setNextIdStageBgm */
             }
             bgm_stop(a1 < 0 ? 90 : a1);
@@ -44791,6 +44826,7 @@ static void bgm_boss(int id) /* MR::startBossBGM(BossBgmID) */
 }
 static void bgm_after_boss(void) /* MR::startAfterBossBGM (AudStageBgmWrap::getCometEventBgm) */
 {
+    cube_bgm_invalid = 1; bgm_queue_clear(); /* setCubeBgmChangeInvalid, clearBgmQueue */
     if (miss_running()) return; /* isPlayerDead */
     const char *c = bgm_comet();
     if (strcmp(c, "Dark")) {
