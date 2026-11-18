@@ -17074,10 +17074,58 @@ static void m_proc_hip(Player *m)
     if (vlen(j) > MC.mLimitSpeedHipDrop) m_set_jv(m, vmul(vnorm(j), MC.mLimitSpeedHipDrop));
 }
 
+/* MarioSukekiyo / MarioBury (MarioSukekiyo.cpp; MarioStatus_Sukekiyo 0x1A head first, MarioStatus_Bury 0x1B to his
+ * feet: one class) on a Sand floor: stuck with スケキヨ / 埋まり, his posture the ground's normal and his side (_14,
+ * _20), until A or a spin (_4A: スケキヨ脱出 / 埋まり脱出 to its end); off the sand it closes. Bury starts from a hip
+ * drop on Sand (procHipDrop) and from a hard landing on it (doLanding). ponytail: Sukekiyo starts only from doLanding's
+ * landing type 1 head down (_3E 1: endRush off a land-effect rush sensor / MarioLauncher), which the port does not
+ * have; MarioActor::_F44 and forceSetHeadVecKeepSide (his head is his up) not kept */
+static struct { int on, out; V3 up, side; } suke; /* on: 1 Sukekiyo, 2 Bury; out: _4A */
+static int sw_anim_busy(void);
+static void mario_material_fx(int k, V3 up, V3 at);
+static int m_floor_sand(const Player *m) /* isCurrentFloorSand: Sand 13 / NoStampSand 30, not wading */
+{
+    if (m_wade.under || m_wade.deep) return 0;
+    return m_floor_severe(m, 13) || m_floor_severe(m, 30);
+}
+static void suke_start(Player *m, int bury)
+{
+    suke.on = bury ? 2 : 1; suke.out = 0;
+    mario_sound("スケキヨ開始");
+    mario_material_fx(0, m->ground_n, m->pos); /* playEffectRT("属性尻ドロップ", _368, getTrans()): MAT_HIPDROP */
+    pad_rumble(RUMBLE_VERY_STRONG); /* startPadVib("最強") */
+    camera_shake(SHAKE_NORMAL_STRONG); /* startCamVib(3) */
+    suke.up = m->ground_n; suke.side = vcross(m->up, m->face); /* _368, mSideVec */
+    m_stop_jump(m); m->hip = 0;
+    m_stop_walk(m);
+    if (suke.on == 1) m_anim("スケキヨ");
+    else { mario_sound("声足埋まり開始"); m_anim("埋まり"); }
+}
+static int suke_update(Player *m)
+{
+    if (!m_floor_sand(m)) return 0;
+    if (suke.out) return sw_anim_busy(); /* isAnimationRun(nullptr) */
+    if (swing_perm && pad_pressed(PAD_SQUARE) && !swing_inhibit && !m_input_off()) suke.out = 1; /* isRequestRush */
+    if (m_req_jump) suke.out = 1; /* checkTrgA */
+    if (suke.out) {
+        if (suke.on == 1) { m_anim("スケキヨ脱出"); mario_sound("声スケキヨ終了"); }
+        else { m_anim("埋まり脱出"); mario_sound("声足埋まり終了"); }
+        mario_sound("スケキヨ終了");
+    }
+    return 1;
+}
+static void suke_close(Player *m)
+{
+    m_stop_walk(m);
+    m_clip_stop(); /* stopAnimation(nullptr, 基本) */
+    suke.on = 0;
+}
+
 static void m_hip_land(Player *m) /* procHipDrop's first frame on the ground */
 {
     m->land_timer = 0; m->walk = 0; m->brake1 = 0;
-    if (m_floor_sink(m)) { /* isCurrentFloorSink: straight in, no landing (ponytail: isCurrentFloorSand's MarioBury not ported) */
+    if (m_floor_sand(m)) { suke_start(m, 1); return; } /* isCurrentFloorSand: changeStatus(mBury) */
+    if (m_floor_sink(m)) { /* isCurrentFloorSink: straight in, no landing */
         m->jumping = 0; m->hip = 0;
         m_clip_stop(); /* stopAnimation(nullptr, 基本) */
         m->sink = 200;
@@ -17254,7 +17302,9 @@ static void m_do_landing(Player *m)
     m_add_rumble_power(5.0f, 60); /* getAnimator()->addRumblePower(5, 0x3C) */
     m->squat_lock = 0;
     m->air_spin = MC.mAirWalkTime;
-    if (vdot(vsub(m->jump_from, m->pos), m->up) > MC.mHardLandingHeight) hard = 1;
+    if (m->floor != 6 && m->floor != 7 && m->floor != 8 && m->floor != 0xB && m->floor != 0x22 && /* !isSoftLandingFloor */
+        vdot(vsub(m->jump_from, m->pos), m->up) > MC.mHardLandingHeight) hard = 1;
+    if (hard && m_floor_sand(m)) { suke_start(m, 1); return; } /* changeStatus(mBury) */
     if (!hard && !m->slip_poly) { /* !mDrawStates._C */
         if (m->jump_kind == 5 && m_check_squat(m, 0)) { m->squat = 1; m->walk = 1.0f; m_clip_stop(); return; }
         if ((m_sz > 0.9f && m->back_t == 0) || (!m->hip && m_check_squat(m, 0))) {
@@ -21990,7 +22040,8 @@ void game_test_slider_input(int frame)
 }
 /* Test builds (XF=-DSINK_TEST=<floor code>: 17 Sink, 18 SinkPoison, 25 SinkDeath, 31 SinkDeathMud): from Mario's first
  * free frame every 30 frames the collision is searched for a face of that code facing up; he is put 100 over the
- * first and left there: mSinkTimer, mPoisonTimer and his life logged; from 200 frames on (code 17: over 100 in) A
+ * first (13 Sand / 30 NoStampSand too: there a jump and a hip drop, MarioBury, and A at 200) and left there:
+ * mSinkTimer, mPoisonTimer and his life logged; from 200 frames on (code 17: over 100 in) A
  * every 30 frames, five times (the way out), then left to sink */
 void game_test_sink_input(int frame, int code)
 {
@@ -22021,10 +22072,14 @@ void game_test_sink_input(int frame, int code)
     }
     int t = frame - at;
     pad_force_stick = 1; pad_force_lx = pad_force_ly = 0; pad_force = 0;
-    if (t >= 200 && t < 333 && (t - 200) % 30 < 3) pad_force = PAD_CROSS;
+    if (code == 13 || code == 30) { /* Sand: a jump and a hip drop (MarioBury), A at 200 (out) */
+        if (t >= 60 && t < 63) pad_force = PAD_CROSS;
+        else if (t >= 75 && t < 78) pad_force = PAD_R1;
+        else if (t >= 200 && t < 203) pad_force = PAD_CROSS;
+    } else if (t >= 200 && t < 333 && (t - 200) % 30 < 3) pad_force = PAD_CROSS;
     if (t % 10 == 0 && t <= 700)
-        printf("sink f %d: floor %d grounded %d jumping %d sink %d poison %d life %d walk %.2f ofs %.0f clip %s miss %d\n", t, m->floor, m->grounded,
-               m->jumping, m->sink, m->poison, life, m->walk, vlen(m->sink_ofs),
+        printf("sink f %d: floor %d grounded %d jumping %d sink %d bury %d/%d poison %d life %d walk %.2f ofs %.0f clip %s miss %d\n", t, m->floor,
+               m->grounded, m->jumping, m->sink, suke.on, suke.out, m->poison, life, m->walk, vlen(m->sink_ofs),
                mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-", miss_running());
 }
 /* Test builds (MARIO2D_TEST): from Mario's first free frame, if he is in no 2D area he is held in the first
@@ -22919,6 +22974,7 @@ static void update_mario_(void)
         else if (!m_clip_on("spinground") || m->jumping || slipping) m->magic = 0;
         else { m_main_move(m); m_update_walk_speed(m); done = 1; }
     }
+    if (!done && suke.on) { if (!suke_update(m)) suke_close(m); done = 1; } /* MarioSukekiyo / MarioBury (a status) */
     if (!done && m->side_step) { if (!side_step_update(m)) side_step_close(m); done = 1; } /* MarioSideStep (a status) */
     if (!done && m->slider) { if (!slider_update(m)) slider_close(m); done = 1; } /* MarioSlider (a status) */
     if (!done && m->skate) { if (!skate_update(m)) skate_close_(m); else done = 1; } /* MarioSkate (a status) */
@@ -56269,6 +56325,7 @@ void game_draw(void)
     if (fo.on || fo.sw || fo.blend) mario_base(m); /* MarioFoo / MarioSwim: _1FC and his front (setBlendMtxTimer after it) */
     hang_posture(m); /* MarioHang::postureCtrl */
     if (mario->slider) basis_matrix(m, mario->pos, sl.up, mario->face, 0); /* MarioSlider::postureCtrl: _1FC */
+    if (suke.on) basis_matrix(m, mario->pos, suke.up, vcross(suke.side, suke.up), 0); /* MarioSukekiyo::postureCtrl: makeMtxUpSide(_14, _20) */
     m_blend_apply(m);
     m[12] += mario->sink_ofs.x; m[13] += mario->sink_ofs.y; m[14] += mario->sink_ofs.z; /* updateLookOfs's _154: into
         * a Sink floor (m_update_on_sand); only this drawn matrix moves, not what mario_base's other callers read */
