@@ -18721,6 +18721,10 @@ static struct {
     int f15, f39;               /* calcFrontFloor: _15 the floor over the wall's hit, _39 a place on it (_4A4) */
     float f4E0, f4E4;           /* its height over the hit, the hit's distance ahead */
     V3 p4A4;
+    Tri t4D8, t4DC;             /* checkAllWall: _4D8 a floor face ahead and under his centre (its place _50C), _4DC a
+                                 * standable slope ahead (its place _518) */
+    V3 p50C, p518;
+    int f4D8, f4DC;             /* (their isValid) */
     Tri floor;                  /* _47C */
     Tri last;                   /* recordLastGround: _474, _4BC its place in it */
     V3 l4BC, ground_pos;        /* mGroundPos */
@@ -19523,8 +19527,10 @@ static void m_wall_jump_hit(Player *m)
 /* checkAllWall: the faces round the centre within 80 (90 swimming), not floors nor ceilings (|n . head| <= 0.5), by
  * their normal against his front (his last move in a tornado jump): front (-mWallFrontAngleRange), back
  * (mWallBackAngleRange) or side, the deepest of each. A front one hit on its face (-0.999, on a wall -0.9) is faced
- * (_8), else met (_32); one under the floor ahead is no front wall. ponytail: the slope ahead (_4DC, _4D8, _380,
- * mDrawStates._F / _17), checkStrikePointToMap, Teresa's thick ball, ThroughWall and _400 are not kept */
+ * (_8), else met (_32); one under the floor ahead is no front wall. Of the floors and ceilings: _4D8 the one hit
+ * ahead (over 0.707 on his front) and under his centre, _4DC a face ahead of mFlatAngle or more he could stand on
+ * (mSlipAngle) more than 30 off his ground (diffAngleAbs gives radians: as decompiled this never holds).
+ * ponytail: _380, mDrawStates._F / _17, checkStrikePointToMap, Teresa's thick ball, ThroughWall and _400 are not kept */
 static void m_check_all_wall(Player *m)
 {
     float r = swimming ? 90.0f : 80.0f;
@@ -19535,9 +19541,19 @@ static void m_check_all_wall(Player *m)
     }
     Hit h[16];
     int n = kcl_query(c, r, h, 16), walls[3] = {-1, -1, -1};
+    mw.f4D8 = mw.f4DC = 0;
     for (int i = 0; i < n; i++) {
-        if (fabsf(vdot(h[i].n, m->up)) > 0.5f) continue;
         if (m2.on && fabsf(vdot(h[i].n, m2.v6A0)) > 0.707f) continue; /* (2D) */
+        V3 dir = vsub(h[i].pos, c), fb = vsub(h[i].pos, m->pos);
+        dir = vlen(dir) > 1e-6f ? vnorm(dir) : v3(0, 0, 0); fb = vlen(fb) > 1e-6f ? vnorm(fb) : v3(0, 0, 0);
+        float un = vdot(m->up, h[i].n), deg = 180.0f * (acosf(un > 1.0f ? 1.0f : un < -1.0f ? -1.0f : un) / 3.14159f);
+        Tri ht = {h[i].inst, h[i].sub, h[i].prism, h[i].inst < 0 ? kcl_icestep : insts[h[i].inst].kcl};
+        if (deg >= MC.mFlatAngle && vdot(dir, m->face) > 0.0f && vdot(fb, m->face) > 0.0f &&
+            angle_d(m, h[i].n) <= MC.mSlipAngle && ang_abs(m->ground_n, h[i].n) > 30.0f) { mw.t4DC = ht; mw.p518 = h[i].pos; mw.f4DC = 1; }
+        if (fabsf(un) > 0.5f) { /* (mHeadVec) */
+            if (vdot(dir, m->up) < 0.0f && vdot(dir, m->face) > 0.707f) { mw.t4D8 = ht; mw.p50C = h[i].pos; mw.f4D8 = 1; }
+            continue;
+        }
         float facing = vdot(h[i].n, front);
         int side = facing >= MC.mWallBackAngleRange ? 2 : facing <= -MC.mWallFrontAngleRange ? 0 : 1;
         if (walls[side] >= 0 && h[walls[side]].dist > h[i].dist) continue;
@@ -20172,6 +20188,91 @@ static void m_blend_step(void)
     if (!m_blend_n) return;
     m_blend_r = 1.0f - (1.0f - m_blend_r) * (float)(m_blend_n - 1) / (float)m_blend_n;
     m_blend_n--;
+}
+/* MarioStep.cpp after Petari (Mario::checkStep / startStep, MarioStep: MarioStatus_Step): on his feet, the stick held
+ * against a front wall (his pad's direction under -0.5 on its normal) that has a floor on it (_15, _39: calcFrontFloor,
+ * its place _4A4) less than mWalkStepHeight up, he is set on that floor (階段) with nothing 80 over it (a point, a 20
+ * and a 50 ball) and 200 to the ceiling; the status then walks him on (mainMove without its velocity, the walk speed
+ * 0.1 at least) while his drawn matrix eases over 20 - 16 x his walk speed frames (4 at least; counted down by the
+ * walk speed, 0.5 at least). A jumps out of it. Before that, with a floor face ahead (_4D8, no front wall faced):
+ * within 20 across and nearly square to his front it is the step (its place _50C); else, under 60 degrees of his
+ * front on its normal, his velocity is turned about his side by that much. No step onto a press part or one that
+ * moved (unless it is his ground's). ponytail: startStep's _4C8 test (the face he is pressed by), MarioStatus_Climb
+ * and MarioActor::_3E5 not kept */
+static struct { int on; float t, walk; } stp; /* _14, _18 */
+static float m_dist_to_ceil(Player *m);
+static V3 m_front_wall_norm(void);
+static int sw_anim_busy(void);
+static void m_start_step(Player *m, V3 at) /* startStep, MarioStep::start */
+{
+    if (stp.on) return; /* getCurrentStatus() == 0x10 */
+    V3 cp = vadd(at, vmul(m->up, 80.0f)); /* rVec - gravity x 80 */
+    Hit h[2];
+    if (kcl_query(cp, 1.0f, h, 2)) return;  /* checkStrikePointToMap */
+    if (kcl_query(cp, 20.0f, h, 1)) return; /* checkStrikeBallToMap 20 */
+    if (kcl_query(cp, 50.0f, h, 1)) return; /* 50 */
+    V3 old = m->pos;
+    m->pos = at;
+    float ceil_d = m_dist_to_ceil(m); /* calcDistToCeil(false) from there */
+    m->pos = old;
+    if (ceil_d < 200.0f) return;
+    if (mw.f4D8) { /* _4D8: no press object's, no part that moved but his ground's */
+        if (press_at(mw.t4D8.inst)) return;
+        if (tri_moved(&mw.t4D8) && mw.t4D8.inst != mario_ground) return;
+    }
+    m->pos = at; /* setTrans(rVec, 階段) */
+    stp.on = 1;  /* changeStatus(mStep): start */
+    stp.walk = m->walk; /* (MR::clamp's result is dropped) */
+    int n = 20 - (int)(16.0f * stp.walk);
+    if (n < 4) n = 4;
+    m_blend_mtx(n); /* setBlendMtxTimer */
+    stp.t = (float)n;
+    if (sw_anim_busy()) m_clip_stop(); /* isAnimationRun(nullptr): stopAnimation(nullptr) */
+    m->turn_slip = 0; /* _3D0 */
+    m->vel = v3(0, 0, 0);
+    m->turn_neutral = 0; /* mMovementStates._10 */
+#ifdef STEP_TEST
+    printf("step: up %.0f, %d frames, walk %.2f\n", vdot(vsub(at, old), m->up), n, stp.walk);
+#endif
+}
+static void m_check_step(Player *m) /* checkStep */
+{
+    if (m->jumping || m->squat || !m->grounded) return; /* jumping, _A, !_1 */
+    if (hg.on || m->walling || swimming) return;        /* MarioStatus_Hang / Wall / Swim, isSwimming */
+    if (dm_damaging()) return;
+    if (!near0(carry_d)) return;                        /* _184 */
+    if (fabsf(m_sz) < 0.001f) return;                   /* !isStickOn */
+    if (m->stand_turn) return;                          /* _750 */
+    if (m->slip_poly) return;                           /* mDrawStates._C */
+    if (mw.s2 && slip_polygon(m, tri_attr(&mw.shadow) & 0x3F, tri_n(&mw.shadow))) return; /* isSlipPolygon(_45C) */
+    if (mw.f4D8 && !mw.w8) { /* _4D8->isValid() && !_8 (&& _1) */
+        float fd = vdot(m->face, tri_n(&mw.t4D8));
+        V3 hz = vtangent(vsub(mw.p50C, m->pos), m->up); /* vecKillElement(.., -gravity) */
+        if (vlen(hz) < 20.0f && fabsf(fd) < 0.3926991f) {
+            if (vdot(vsub(mw.p50C, m->pos), m->up) < MC.mWalkStepHeight) m_start_step(m, mw.p50C);
+        } else if (fabsf(fd) < 1.0471976f) m->vel = rot_axis(m->vel, vcross(m->up, m->face), fd); /* PSMTXRotAxisRad(mSideVec, frontDot) */
+        return;
+    }
+    if (!mw.f15 || !mw.f39) return;                     /* _15, _39 */
+    if (!(vdot(m_pad, m_front_wall_norm()) < -0.5f)) return; /* getWorldPadDir . mFrontWallTriangle's normal */
+    if (vdot(vsub(mw.p4A4, m->pos), m->up) < MC.mWalkStepHeight) m_start_step(m, mw.p4A4);
+}
+static void m_try_jump(Player *m);
+static void m_update_walk_speed(Player *m);
+static int step_update(Player *m) /* MarioStep::update: 0 ends it */
+{
+    if (m_req_jump) { m_try_jump(m); return 0; } /* isRequestJump */
+    if (m->jumping) return 0;
+    m_main_move(m);
+    m->vel = v3(0, 0, 0); /* clearVelocity */
+    float w = m->walk < 0.1f ? 0.1f : m->walk;
+    m->walk = w;
+    m_update_walk_speed(m);
+    if (w < 0.5f) w = 0.5f;
+    stp.t -= w;
+    if (stp.t < 0.0f) return 0;
+    m_blend_mtx((int)stp.t);
+    return 1;
 }
 static void mtx_quat(const float *m, float q[4]) /* C_QUATMtx (m's columns its axes) */
 {
@@ -22831,6 +22932,7 @@ static void update_mario_(void)
         else if (!m_clip_on("spinground") || m->jumping || slipping) m->magic = 0;
         else { m_main_move(m); m_update_walk_speed(m); done = 1; }
     }
+    if (!done && stp.on) { if (!step_update(m)) stp.on = 0; done = 1; } /* MarioStep (a status; close does nothing) */
     if (!done && m->side_step) { if (!side_step_update(m)) side_step_close(m); done = 1; } /* MarioSideStep (a status) */
     if (!done && m->slider) { if (!slider_update(m)) slider_close(m); done = 1; } /* MarioSlider (a status) */
     if (!done && m->skate) { if (!skate_update(m)) skate_close_(m); else done = 1; } /* MarioSkate (a status) */
@@ -22873,6 +22975,7 @@ static void update_mario_(void)
         m->vel = vadd(m->vel, m->s350);
     }
     m->s350 = v3(0, 0, 0);
+    m_check_step(m); /* checkStep (ponytail: checkBump not ported) */
 
     /* MarioActor's Binder (initBinder 60, setBinderOffsetVec _2C4): radius 60 round his place + _2C4, up x 70 on the
      * ground (50 squatting), eased 0.1 a frame to -gravity x 70 off it; checkGround keeps him on the ground. Hanging his
