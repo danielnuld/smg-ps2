@@ -2778,7 +2778,7 @@ enum { GB_APPEAR, GB_WAIT, GB_DISAPPEAR, GB_DECIDE, GB_DEAD };
 enum { GC_SELECTING, GC_SELECTEDBACK, GC_SELECTED };
 enum { NP_APPEARREADY, NP_APPEAR, NP_WAIT };
 #define DOME_PLATES 8
-typedef struct { LytInst *l; u8 alive, shown, last_immediate, type, layout_shown; Nrv n; } DomePlate;
+typedef struct { LytInst *l; u8 alive, shown, last_immediate, type, layout_shown, waited; Nrv n; } DomePlate; /* waited: !_30 */
 static struct {
     u8 on;
     LytInst *info, *back_l, *conf, *conf_back_l;
@@ -3020,7 +3020,11 @@ static void dmu_plate_movement(int i)
         else if (lyt_stopped(p->l, 0)) nrv_set(&p->n, NP_WAIT);
         break;
     case NP_WAIT:
-        if (FIRST(&p->n)) lyt_start(p->l, "Wait", 0);
+        if (FIRST(&p->n)) {
+            lyt_start(p->l, "Wait", 0);
+            if (p->type == 1 && !p->waited) se_start(SE_SY_ASTRO_GALAXY_NEW_EFF, NULL); /* a new galaxy's plate, its first Wait (_30; the GalaxyNamePlateNew effect not shown) */
+            p->waited = 1;
+        }
         if (!p->shown) p->alive = 0;
         break;
     }
