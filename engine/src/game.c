@@ -16053,6 +16053,8 @@ static void m_squat_anim(Player *m)
 
 static void m_proc_jump(Player *m, int a1);
 static void m_init_jump(Player *m);
+static int near0(V3 v);
+static V3 m_v190, m_v19C; /* Mario::_190 / _19C: this frame's move by an AreaMoveSphere / along his ground's rail */
 static void m_pad_vib(int s) /* MarioModule::startPadVib(u32): 0 弱, 1 微弱, 2 中, 3 強 */
 {
     static const u8 k[4] = {RUMBLE_WEAK, RUMBLE_VERY_WEAK, RUMBLE_MIDDLE, RUMBLE_STRONG};
@@ -16876,6 +16878,16 @@ static void m_try_jump(Player *m) /* tryJump: 1st / 2nd / 3rd jump, or the turn,
     if (m->squat) { m_try_back_jump(m); return; }
     if (m_flip1A) m->jump_kind = 0; /* _10._1A: _430 0 */
     m_set_jv(m, vadd(vmul(m->face, m->walk * MC.mJumpFrontSpeed), vmul(m->up, MC.mJumpHeight[m->jump_kind])));
+    { /* stickTotal (_190 + _19C): off his velocity, its part across gravity into the jump (half against it) */
+        V3 st = vadd(m_v190, m_v19C);
+        if (!near0(st)) {
+            m->vel = vsub(m->vel, st); /* addVelocity(-stickTotal) */
+            st = vtangent(st, m->up);
+            V3 jv = m_jv(m), h = vtangent(jv, m->up);
+            h = vadd(h, vmul(st, vdot(st, h) > 0.0f ? 1.0f : 0.5f));
+            m_set_jv(m, vadd(h, vmul(m->up, vdot(jv, m->up))));
+        }
+    }
     m->digital = 0; m->grounded = 0;
     m_proc_jump(m, 1);
     m->jumping = 1;
@@ -20346,6 +20358,59 @@ static void m_start_step(Player *m, V3 at) /* startStep, MarioStep::start */
     printf("step: up %.0f, %d frames, walk %.2f\n", vdot(vsub(at, old), m->up), n, stp.walk);
 #endif
 }
+/* Mario::powerAreaMove / powerRailMove (MarioEnforce.cpp), after tryPushToVelocity: on his feet on an AreaMove floor
+ * (code 28) inside an AreaMoveSphere he is carried round it: its up less its part towards the sphere's centre, at
+ * arg0 (10) a frame; on a RailMove floor (27) along his ground's rail at the point nearest him, at 10 a frame. Against
+ * a wall (front, side or back) the part into it and along gravity is dropped. tryJump takes the two off his velocity
+ * and adds them to the jump (half when against it).
+ * ponytail: the rail's speed is its path_arg3 (10 when unset), which the PATH entries do not carry */
+static const unsigned char *find_path(const unsigned char *blob, int zone, int id);
+static float rail_nearest(const float *p, int n, V3 q);
+static V3 m_power_wall(Player *m, V3 v) /* (_8 || _19 || _1A) */
+{
+    if (mw.w8 || mw.w19 || mw.w1A) {
+        V3 n = m_wall_norm(m);
+        if (vdot(n, v) < 0.0f) { v = vsub(v, vmul(n, vdot(v, n))); v = vtangent(v, m->up); }
+    }
+    return v;
+}
+static void m_power_moves(Player *m)
+{
+    m_v190 = m_v19C = v3(0, 0, 0);
+    if (!m->grounded || m->jumping) return;
+    if (m->floor == 28) { /* powerAreaMove: MR::calcAreaMoveVelocity */
+        int a = area_obj("AreaMoveSphere", m->pos);
+        if (a >= 0) {
+            const Row *r = &sc->objs[a];
+            V3 x, z;
+            row_axes(r, &x, &z);
+            V3 up = vcross(z, x), radial = vsub(row_pos(r), m->pos);
+            radial = vlen(radial) > 1e-6f ? vnorm(radial) : v3(0, 0, 0);
+            up = vsub(up, vmul(radial, vdot(up, radial)));
+            up = vlen(up) > 1e-6f ? vnorm(up) : v3(0, 0, 0);
+            m_v190 = m_power_wall(m, vmul(up, r->arg[0] == -1 ? 10.0f : (float)r->arg[0]));
+            m->vel = vadd(m->vel, m_v190); /* addVelocity */
+        }
+    }
+    if (m->floor == 27 && mario_ground >= 0 && insts[mario_ground].row >= 0) { /* powerRailMove: his ground's host */
+        const Row *r = &sc->objs[insts[mario_ground].row];
+        const unsigned char *e = scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
+        if (e) {
+            const float *pts = (const float *)(e + 24);
+            u32 np = *(const u32 *)(e + 8);
+            float c = rail_nearest(pts, (int)np, m->pos); /* calcNearestRailDirection */
+            V3 d = vsub(rail_at(pts, np, c + 10.0f), rail_at(pts, np, c));
+            if (vlen(d) < 1e-3f) d = vsub(rail_at(pts, np, c), rail_at(pts, np, c - 10.0f)); /* (the rail's end) */
+            d = vlen(d) > 1e-6f ? vnorm(d) : v3(0, 0, 0);
+            if (mw.w8 || mw.w19 || mw.w1A) { /* (the direction, before its speed) */
+                V3 n = m_wall_norm(m);
+                if (vdot(n, d) < 0.0f) { d = vsub(d, vmul(n, vdot(d, n))); d = vtangent(d, m->up); }
+            }
+            m_v19C = vmul(d, 10.0f);
+            m->vel = vadd(m->vel, m_v19C);
+        }
+    }
+}
 static void m_check_step(Player *m) /* checkStep */
 {
     if (m->jumping || m->squat || !m->grounded) return; /* jumping, _A, !_1 */
@@ -23088,6 +23153,7 @@ static void update_mario_(void)
         m->vel = vadd(m->vel, m->s350);
     }
     m->s350 = v3(0, 0, 0);
+    m_power_moves(m); /* powerAreaMove, powerRailMove */
     m_check_step(m); /* checkStep (ponytail: checkBump not ported) */
 
     /* MarioActor's Binder (initBinder 60, setBinderOffsetVec _2C4): radius 60 round his place + _2C4, up x 70 on the
