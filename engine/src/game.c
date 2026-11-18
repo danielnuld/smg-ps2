@@ -199,6 +199,8 @@ typedef struct {
      * slope dash frames, _8F4, mDrawStates._4 the slope dash; _16C last frame's velocity, getLastMove; MarioActor _288 the
      * map's push in the last move (the move less mVelocity) */
     int floor, slip_poly, s23, s3C2, s3C4, s3FE, s_dash;
+    int sink, poison;   /* mSinkTimer (0..255: how far into a Sink floor), mPoisonTimer (updateOnSand / updateOnPoison) */
+    V3 sink_ofs;        /* _154: the drawn offset down his _1FC, eased 0.2 to sink / 256 x 120 (updateLookOfs) */
     float s8F0, s280, s8F4;
     V3 s8F8, s910, s284, s904, s1A8, prev_vel, last_move, s288, s350; /* .., _350 (Mario::push) */
     int press, press_t; /* MarioActor::setPress: _39C + 1 (0 none), frames to the game over (_FB8) */
@@ -1533,6 +1535,7 @@ static V3 start_pos;
 static int life = MAX_LIFE, max_life = MAX_LIFE, misses, lives = START_LIVES, stars;
 static void miss(void);
 static int miss_running(void);
+static int miss_sink; /* the next miss is MarioActor::exeGameOverSink's (forceGameOverSink: m_update_on_sand) */
 static int miss_abyss; /* the next miss is MarioActor::exeGameOverAbyss's (a DeathArea: forceKillPlayerByAbyss) */
 static int miss_ghost; /* the next miss is forceKillPlayerByGhostRace's (EventGhostRaceDown) */
 static int miss_race; /* the next miss is forceKillPlayerByGroundRace's (EventRaceDown) */
@@ -1572,7 +1575,8 @@ enum { SMOKE_LAND, SMOKE_LAND_BIG, SMOKE_WALL_JUMP, SMOKE_DUST, SMOKE_WALL_RUB, 
        SMOKE_SLIP_BRAKE, SMOKE_WALLHIT_LAND, SMOKE_DAMAGE_LAND, SMOKE_SPIN, SMOKE_BRAKE, SMOKE_HIGH_JUMP, SMOKE_BLACKHOLE,
        SMOKE_PULLBACK_LAND, SMOKE_SEA_FLOOR, SMOKE_JUMP, SMOKE_CONTRAIL, SMOKE_BOOST, SMOKE_N };
 static void mario_smoke_stop(int k);
-static void m_update_on_water(Player *m);
+static void m_update_on_water(Player *m), m_update_on_sand(Player *m), m_update_on_poison(Player *m);
+static int m_floor_severe(const Player *m, int code), m_floor_sink(const Player *m), m_shadow_sound(void);
 static int m_swing_fx; /* Mario::_10._1: a spin started (MarioEffect::doCubeEffect plays the swing effect) */
 static int got_coins, got_purple, got_pieces;
 /* CoinRotater (degrees a frame): coins 8, QuestionCoin its in-water matrix 4; StarPiece 15; PowerStar::processWait 3 */
@@ -15722,7 +15726,13 @@ static void m_stop_walk(Player *m) /* stopWalk (cancelSquatMode, the brake clips
 static float m_target_walk(const Player *m) /* getTargetWalkSpeed (sWalkTargetTable) */
 {
     static const float t[8] = {0.0f, 0.15f, 0.25f, 0.4f, 0.5f, 0.6f, 0.8f, 1.0f};
-    return m->squat ? 0.0f : t[m->tsi] * (1.0f - m_walk_resist); /* _2D0 */
+    if (m->squat) return 0.0f;
+    float w = t[m->tsi];
+    if (m->sink) { /* mSinkTimer: none on SinkDeath (25) / SinkDeathMud (31), else less the deeper */
+        if (m_floor_severe(m, 25) || m_floor_severe(m, 31)) w = 0.0f;
+        else w *= 1.0f - (float)m->sink / 256.0f;
+    }
+    return w * (1.0f - m_walk_resist); /* _2D0 */
 }
 
 static float m_inertia(Player *m, float speed) /* decideInertia */
@@ -15758,12 +15768,13 @@ static void m_update_walk_speed(Player *m) /* updateWalkSpeed */
     if (m->tornado || m->magic) t *= MC.mTornadoMultiply; /* mMovementStates._F || isStatusActive(MarioStatus_Magic) */
     if (m_item_dash) t *= MC.mItemDashRatio; /* getTargetWalkSpeed: _434 */
     m->squat = 0;
-    if (!m_dash_chance && !m_item_dash && m_check_squat(m, 0)) {
+    if (!m_dash_chance && !m_item_dash && m_check_squat(m, 0) && m->sink <= 32) {
         m->squat = 1;
         if (m->wall) { m->tsi = 0; m->walk = 0; }
     }
     if (m->turn_slip || m->turn_neutral) t = 0.0f;
     float in = m_inertia(m, t);
+    t = t * (float)(256 - m->sink) / 256.0f; /* (mSinkTimer) */
     m->walk = m->walk * in + t * (1.0f - in);
 }
 
@@ -15893,9 +15904,24 @@ static void m_decide_walk_anim(Player *m)
     if (!blend_wait && m->tsi == 0 && sw_dive_ready() && player_mode != PM_BEE) { m_anim_ip("飛び込み準備", 4); return; }
     m_group("基本", -1); /* (the default: changeAnimation(nullptr, 基本); stopAnimation("飛び込み準備", 4)) */
     if (blend_wait) m_control_wait(m);
-    else {
+    else if (!m->sink) {
         if (m->tsi != 0) m_stop_wait(); /* stopWaitAnimation */
         m_walk_weight(W[m->tsi]);
+    } else { /* mSinkTimer: WalkSoft / Walk up to index 3, then Walk / Run by how deep */
+        float w[4] = {0, 0, 0, 0};
+        if (m->tsi != 0) {
+            float f1 = 1.0f;
+            if (m->tsi <= 3) {
+                if (m->tsi == 2) f1 = 0.75f;
+                if (m->tsi == 3) f1 = 0.5f;
+                w[0] = f1; w[1] = 1.0f - f1;
+            } else {
+                if (m->tsi >= 5) f1 = (float)m->sink / 100.0f;
+                f1 = clamp01(f1);
+                w[1] = f1; w[2] = 1.0f - f1;
+            }
+        } else w[3] = 1.0f;
+        m_walk_weight(w);
     }
     {
         float f3 = 0;
@@ -15908,6 +15934,7 @@ static void m_decide_walk_anim(Player *m)
         if (target < tt[6]) f5 = 1.0f;
         float f6 = MC.mStartSpinAnimeRatio * (0.5f * (60.0f * (target * MC.mWalkSpeed * 0.01f / step[2]))), k2 = 2.0f - f5;
         if (sp < f6) sp = sp * k2 + f6 * (1.0f - k2);
+        if (m->sink && m->tsi != 0 && sp < 1.0f) sp = 1.0f; /* (mSinkTimer) */
         sp *= 1.0f - m_walk_resist; /* _2D0 */
         m->start_spin_ratio = f5 - 1.0f;
         if (mario_anim) mario_anim->speed = sp; /* changeSpeed */
@@ -16748,6 +16775,21 @@ static void m_try_back_jump(Player *m) /* tryBackJump: the back flip */
 static void m_try_jump(Player *m) /* tryJump: 1st / 2nd / 3rd jump, or the turn, long and back jumps */
 {
     if (m->jumping) return;
+    if (m->sink) { /* mSinkTimer: in a Sink floor a jump only lifts him part of the way out */
+        if (m_floor_severe(m, 25)) { /* SinkDeath (mMovementStates._38 not kept) */
+            if (m->sink > 32) m->sink -= 32;
+            if (m->sink < 64) m->sink = 64;
+            return;
+        }
+        if (m_floor_severe(m, 31)) return; /* SinkDeathMud */
+        if (m->sink > 100) {
+            if (m->sink > 200) { m->sink = 128; m_anim("埋まりジャンプA"); }
+            else { m->sink = 32; m_anim("埋まりジャンプB"); }
+            mario_sound(m_floor_severe(m, 18) ? "毒沼脱出" : "砂脱出");
+            mario_sound("声砂脱出");
+            return;
+        }
+    }
     mario_smoke(SMOKE_JUMP); /* 共通跳躍 (water only) */
     int squat = m_check_squat(m, 1);
     m->squat_lock = 1;
@@ -16761,16 +16803,22 @@ static void m_try_jump(Player *m) /* tryJump: 1st / 2nd / 3rd jump, or the turn,
     }
     m->slip_front = !m->wall; /* checkWallRiseAndSlipFront */
     if (m->wall) m->walk = 0;
-    if (squat && m->walk > 0.3f) { m_try_squat_jump(m); return; }
-    if (m->squat) { m_try_back_jump(m); return; }
+    int mud = 0; /* isMudFloorJump: off a Sink floor (17) the 埋まり脱出ジャンプ, _430 3 at half his walk speed */
+    if (player_mode != PM_TERESA && !m_flip1A && m_floor_severe(m, 17)) { mud = 1; m->jump_kind = 3; m->walk *= 0.5f; }
+    if (m->jump_kind != 3) {
+        if (squat && m->walk > 0.3f) { m_try_squat_jump(m); return; }
+        if (m->squat) { m_try_back_jump(m); return; }
+    }
     if (m_flip1A) m->jump_kind = 0; /* _10._1A: _430 0 */
     m_set_jv(m, vadd(vmul(m->face, m->walk * MC.mJumpFrontSpeed), vmul(m->up, MC.mJumpHeight[m->jump_kind])));
     m->digital = 0; m->grounded = 0;
     m_proc_jump(m, 1);
     m->jumping = 1;
-    static const char *clips[3] = {"jump", "jump2", "jumproll"};
-    mario_play(clips[m->jump_kind], 1.0f, 0);
-    if (m->jump_kind == 0) {
+    static const char *clips[4] = {"jump", "jump2", "jumproll", "walkburyjumphi"};
+    if (m->jump_kind == 3) { if (mud) m_anim("埋まり脱出ジャンプ"); } /* (changeAnimation(.., 落下); no sound) */
+    else mario_play(clips[m->jump_kind], 1.0f, 0);
+    if (m->jump_kind == 3) ;
+    else if (m->jump_kind == 0) {
         mario_sound(m->bee_wall ? "ハチ壁ジャンプ" : "小ジャンプ");
         if (player_mode != PM_TERESA) { mario_sound("声小ジャンプ"); mario_sound("ジャンプ踏切"); }
         if (player_mode == PM_BEE) { m_anim("ハチジャンプ"); bee_sync_jump(m); }
@@ -16954,6 +17002,10 @@ static void m_init_jump(Player *m) /* initJumpParam */
     m->turn_neutral = 0; m->turn_brake = 0; m->u_turn = 0; m->turn_ready = 0; m->turn_slip = 0; m->land_timer = 0;
     if (m->jump_kind != 5) m->squat = 0;
     m->jump_from = m->pos;
+    if (m->sink) { /* mSinkTimer: the jump weaker the deeper he was, and out */
+        m_set_jv(m, vmul(m_jv(m), 0.2f + 0.8f * ((float)(0x100 - m->sink) / 256.0f)));
+        m->sink = 0;
+    }
 }
 
 static int m_jump_to_hip_drop(Player *m) /* jumpToHipDrop */
@@ -17025,6 +17077,12 @@ static void m_proc_hip(Player *m)
 static void m_hip_land(Player *m) /* procHipDrop's first frame on the ground */
 {
     m->land_timer = 0; m->walk = 0; m->brake1 = 0;
+    if (m_floor_sink(m)) { /* isCurrentFloorSink: straight in, no landing (ponytail: isCurrentFloorSand's MarioBury not ported) */
+        m->jumping = 0; m->hip = 0;
+        m_clip_stop(); /* stopAnimation(nullptr, 基本) */
+        m->sink = 200;
+        return;
+    }
     hip_hit = 1; hip_inst = ground_inst; /* tell the objects under Mario */
     kari_cling = 0;                      /* MR::removeAllClingingKarikari */
     m->hip = HIP_LAND;
@@ -17184,7 +17242,10 @@ static void m_do_landing(Player *m)
             }
         return;
     }
-    if (m->air_timer > 10) mario_smoke(SMOKE_LAND); /* 共通着地普通 */
+    if (m_floor_sink(m)) { m_clip_stop(); m->sink = 64; return; } /* isCurrentFloorSink: he lands a quarter in */
+    if (m->floor == 0x1B || m->floor == 0x1C) { /* RailMove / AreaMove sounding of Sand (getSoundCodeString(_45C)) */
+        if (m_shadow_sound() == 11) { m_clip_stop(); m->sink = 32; return; }
+    } else if (m->air_timer > 10) mario_smoke(SMOKE_LAND); /* 共通着地普通 */
     switch (m->jump_kind) { /* _430 */
     case 0: case 0xA: case 0xB: case 0xE: m_pad_vib(0); break;
     case 2: case 4: case 6: m_pad_vib(3); break;
@@ -20255,7 +20316,7 @@ static int m_tilt_press(int inst) /* MarioActor::selectTiltPress: _FC4's ナナ�
  * the ceiling, his ground's floor code changed on a press with 200 or more under him pushes him 10 aside; else
  * setPress 0 (a face across his head) or 1. A jump between two such faces keeps its level (cutGravityElementFromJumpVec),
  * falling into a gap under 80 he stops there. addVelocity goes to the next frame's push (m->s350: the check is after
- * the move here). ponytail: no MarioBury / mSinkTimer in the port (taken as off); mDrawStates _1E / _A not kept */
+ * the move here). ponytail: no MarioBury in the port (taken as off); mDrawStates _1E / _A not kept */
 static int m_side_press(Player *m)
 {
     V3 pos = hg.on ? mw.c : m->pos, g = vmul(m->up, -1.0f);
@@ -20296,7 +20357,7 @@ static int m_side_press(Player *m)
                         }
                         if (pushed) continue;
                     }
-                    if (ceil_d >= 180.0f) { /* !Bury, !mSinkTimer */
+                    if (!m->sink && ceil_d >= 180.0f) { /* !Bury, !mSinkTimer */
                         V3 ao = vsub(a->pos, c), bo = vsub(c, b->pos);
                         float la = vlen(ao), lb = vlen(bo), dd = la > 0 && lb > 0 ? vdot(ao, bo) / (la * lb) : 1.0f;
                         if (acosf(dd > 1.0f ? 1.0f : dd < -1.0f ? -1.0f : dd) >= 0.017453292f) { /* diffAngleAbs */
@@ -20307,7 +20368,7 @@ static int m_side_press(Player *m)
                     }
                     float dn = -vdot(an, bn), ang = acosf(dn > 1.0f ? 1.0f : dn < -1.0f ? -1.0f : dn);
                     if (m_tilt_press(a->inst) || m_tilt_press(b->inst)) ang = 0.0f;
-                    if (ang > 0.34906587f) { /* !Bury, !mSinkTimer */
+                    if (!m->sink && ang > 0.34906587f) { /* !Bury, !mSinkTimer */
                         float dist = (160.0f - ceil_d) / sinf(ang);
                         if (!(dist < 0.0f)) {
                             V3 ah = vtangent(an, m->up), bh = vtangent(bn, m->up), *w = vlen(ah) > vlen(bh) ? &ah : &bh;
@@ -21927,6 +21988,45 @@ void game_test_slider_input(int frame)
                m->slider, m->floor, m->grounded, m->jumping, m->s23, vlen(sl.v14), sl.f38, sl.f3C,
                mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-", m_w[0], m_w[1], m_w[2], m_w[3], m->pos.x, m->pos.y, m->pos.z);
 }
+/* Test builds (XF=-DSINK_TEST=<floor code>: 17 Sink, 18 SinkPoison, 25 SinkDeath, 31 SinkDeathMud): from Mario's first
+ * free frame every 30 frames the collision is searched for a face of that code facing up; he is put 100 over the
+ * first and left there: mSinkTimer, mPoisonTimer and his life logged; from 200 frames on (code 17: over 100 in) A
+ * every 30 frames, five times (the way out), then left to sink */
+void game_test_sink_input(int frame, int code)
+{
+    static int free_at = -1, at = -1;
+    Player *m = mario;
+    if (free_at < 0) { if (demo_on || !m->grounded || m->launch >= 0 || starter >= 0) return; free_at = frame; }
+    frame -= free_at;
+    if (at < 0) {
+        if (frame < 10 || frame % 30) return;
+        int n = 0;
+        for (int i = 0; i < ninsts && at < 0; i++) {
+            if (!insts[i].kcl) continue;
+            const unsigned *h = (const unsigned *)insts[i].kcl;
+            int np = (int)((h[3] - h[2]) / 16);
+            for (int p = 1; p < np && at < 0; p++) {
+                if ((kcl_attribute(insts[i].kcl, p) & 0x3F) != code) continue;
+                Tri t = {i, 0, p, insts[i].kcl};
+                V3 c = vmul(vadd(vadd(tri_pos(&t, 0), tri_pos(&t, 1)), tri_pos(&t, 2)), 1.0f / 3.0f);
+                n++;
+                if (vdot(tri_n(&t), up_at(c, tri_n(&t))) < 0.9f) continue;
+                at = frame; test_nolost = 1;
+                m->pos = vadd(c, vmul(tri_n(&t), 100.0f)); m->hvel = v3(0, 0, 0); m->vup = 0;
+                printf("sink test: row %d, put at %.0f %.0f %.0f\n", insts[i].row, m->pos.x, m->pos.y, m->pos.z);
+            }
+        }
+        if (at < 0) printf("sink test f %d: no level face of code %d (%d faces of it)\n", frame, code, n);
+        return;
+    }
+    int t = frame - at;
+    pad_force_stick = 1; pad_force_lx = pad_force_ly = 0; pad_force = 0;
+    if (t >= 200 && t < 333 && (t - 200) % 30 < 3) pad_force = PAD_CROSS;
+    if (t % 10 == 0 && t <= 700)
+        printf("sink f %d: floor %d grounded %d jumping %d sink %d poison %d life %d walk %.2f ofs %.0f clip %s miss %d\n", t, m->floor, m->grounded,
+               m->jumping, m->sink, m->poison, life, m->walk, vlen(m->sink_ofs),
+               mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-", miss_running());
+}
 /* Test builds (MARIO2D_TEST): from Mario's first free frame, if he is in no 2D area he is held in the first
  * PlaneModeCube's first floor under its top (TeresaMario2DGalaxy, KoopaBattleVs galaxies); then the stick right 120 frames, left 120, up
  * 60 (no move in 2D), right with A at 360; his distance off the plane (along _6A0) logged */
@@ -22836,7 +22936,9 @@ static void update_mario_(void)
         float d = vdot(m->vel, n);
         m->vel = vadd(vsub(m->vel, vmul(n, d)), vmul(vsub(m->ground_n, n), 0.5f * fabsf(d)));
     }
+    m_update_on_sand(m);  /* updateOnSand: mSinkTimer */
     m_update_on_water(m); /* updateOnWater: the water floor codes */
+    m_update_on_poison(m); /* updateOnPoison */
     if (!m->s23) { m->s1A8 = m->vel; m->s3C2 = 0; m->s280 = 0; m->s284 = v3(0, 0, 0); } else m->s3C2++;
     if (m->s3C4) m->s3C4--;
     if (m->grounded && !m->jumping && !m->walling && !done) { /* isEnableSlopeMove: MarioStatus none */
@@ -23105,12 +23207,18 @@ static void update_mario_(void)
 #if defined(CATCHUP) || defined(MISS_TEST)
 #define MISS_EVENTS 1
 #endif
-static struct { int on, f, phase, pf, wipe_f, over, ghost; } mev; /* ghost: EventGhostRaceDown (no MissLayout, its wipe 92-200) */
+static struct { int on, f, phase, pf, wipe_f, over, ghost, sink; } mev; /* ghost: EventGhostRaceDown (no MissLayout, its wipe 92-200); sink: exeGameOverSink */
 static int miss_running(void) { return mev.on; }
 static void miss_event_update(void)
 {
     if (!mev.on) return;
     int f = mev.f, next = 0;
+    if (mev.sink) { /* MarioActor::exeGameOverSink: the swamp's (SinkDeathMud 31, SinkPoison 18) or the sand's sounds.
+                     * ponytail: its 砂埋まり体 / 手, 泥埋まり体 / 手 effects not ported */
+        int swamp = mario->floor == 31 || mario->floor == 18;
+        mario_sound(swamp ? "沼死亡" : "砂死亡");
+        if (f == 90) mario_sound(swamp ? "声沼沈み死亡" : "声砂沈み死亡");
+    }
     if (mev.over) {
         if (f == 90) bgm_sub("BGM_GAMEOVER"); /* sound */
         if (f == 60) dome_layout_off = 1; /* closeDefaultLayout */
@@ -23144,7 +23252,10 @@ static void miss(void)
     mev.on = 1;
     mev.over = lives <= 0; /* MarioActor::exeGameOver: getPlayerLeft() == 0 */
     mev.ghost = miss_ghost && !mev.over;
+    mev.sink = miss_sink; miss_sink = 0;
     mario->hvel = v3(0, 0, 0); mario->vup = 0;
+    if (mario_anim && mev.sink) m_anim("埋まりダウン"); /* changeGameOverAnimation 8 (MarioActorNrvGameOverSink) */
+    else
     if (mario_anim && (mev.ghost || (miss_race && !mev.over))) m_anim(sy_miss_anim() ? "水中レース負け" : "レース負け"); /* EventGhostRaceDown / EventRaceDown::init (forceKill 1: changeGameOverAnimation 10) */
     else if (mario_anim && !bh.on) mario_play(swimming ? "deathwater" : "down", 1.0f, 0); /* changeGameOverAnimation */
     bgm_stop(10); bgm_sub_stop(10); /* (setCubeBgmChangeInvalid, clearBgmQueue) */
@@ -23207,6 +23318,73 @@ static const short smoke_fx_of[8][4] = { /* [material (7: the smoke's Follow one
 static struct { int on, mat; u16 timer; } smoke_st[SMOKE_N]; /* mEmitter (kept), mMaterial, mTimer */
 /* MarioEffect: _C / _10 the EffectCylinder's arg0 / arg1 (-1 none), _18 / _1C a SmokeEffectColorArea's prm colour */
 static struct { int cyl0, cyl1, tinted; u8 prm[3]; } m_eff = {-1, -1, 0, {255, 255, 255}};
+/* Mario::checkCurrentFloorCodeSevere: his floor code (_960) is `code`, and so is his ground's face and (unless his
+ * shadow lies more than 30 under his ground) the face under his shadow (_45C) */
+static int m_floor_severe(const Player *m, int code)
+{
+    if (m->floor != code) return 0;
+    int g = ground_attr & 0x3F;
+    if (vdot(vsub(mw.shadow_pos, mw.ground_pos), vmul(m->up, -1.0f)) > 30.0f) return code == g;
+    int s = tri_attr(&mw.shadow) & 0x3F;
+    return s == code && s == g;
+}
+static int m_floor_sink(const Player *m) /* isCurrentFloorSink: Sink 17, SinkDeathMud 31, SinkPoison 18, SinkDeath 25 */
+{
+    return m_floor_severe(m, 17) || m_floor_severe(m, 31) || m_floor_severe(m, 18) || m_floor_severe(m, 25);
+}
+static int m_shadow_sound(void) { return KCL_SOUND(tri_attr(&mw.shadow)); } /* getSoundCodeString(_45C): 11 "Sand" */
+/* Mario::updateOnSand (MarioWalk.cpp): mSinkTimer. On a RailMove / AreaMove floor sounding of Sand up to 64; on a Sink
+ * floor up to 255 (SinkDeath 25 / SinkDeathMud 31: four a frame, no walk, 6 a frame down a slope), then
+ * forceGameOverSink; off them, jumping or swimming 0. The walk track is 埋まり歩行 while in. Then updateLookOfs's _154:
+ * he is drawn sink / 256 x 120 down his up, eased 0.2. ponytail: mMovementStates._1F (kept through a rush) not kept */
+static void m_update_on_sand(Player *m)
+{
+    if (m->grounded) {
+        if (m->floor == 27 || m->floor == 28) {
+            if (m_shadow_sound() == 11 && m->sink < 64) m->sink++;
+        } else if (m_floor_sink(m)) {
+            if (m->sink >= 255) { miss_sink = 1; miss(); return; } /* forceGameOverSink */
+            m->sink++;
+            if (m->floor == 25 || m->floor == 31) {
+                if (m->floor == 31) { if (m->sink == 1) mario_sound("声沼沈み"); mario_sound("沼強制沈み"); }
+                else { if (m->sink == 1) mario_sound("声砂沈み"); mario_sound("砂強制沈み"); }
+                m_stop_walk(m);
+                m->sink = m->sink + 3 > 255 ? 255 : m->sink + 3;
+                V3 g = vmul(m->up, -1.0f); /* getAirGravityVec */
+                if (vdot(g, m->ground_n) > -0.99f) {
+                    V3 v1 = vsub(m->ground_n, vmul(g, vdot(m->ground_n, g))); /* vecKillElement(_368, gravity) */
+                    V3 v2 = vnorm(vcross(v1, m->ground_n));
+                    m->vel = vadd(m->vel, vmul(vcross(m->ground_n, v2), 6.0f)); /* addVelocity */
+                }
+            } else mario_sound("砂沈み");
+            if (mario_anim && !sw_anim_busy()) anim_track(mario_anim, 1, "walkbury"); /* 埋まり歩行 */
+        } else {
+            if (m->sink != 0 && mario_anim && !sw_anim_busy()) anim_track(mario_anim, 1, "walk"); /* 歩行 */
+            m->sink = 0;
+        }
+    }
+    if (m->jumping) m->sink = 0;
+    if (swimming) m->sink = 0; /* isStatusActive(MarioStatus_Swim) */
+    V3 to = m->sink ? vmul(m->up, -(float)m->sink * (1.0f / 256.0f) * 120.0f) : v3(0, 0, 0); /* -_1FC x .. */
+    m->sink_ofs = vadd(vmul(m->sink_ofs, 0.8f), vmul(to, 0.2f)); /* vecBlend(_154, vec4, 0.2) */
+}
+/* Mario::updateOnPoison: on SinkPoison (18) a life at once and every 256 frames (mPoisonTimer), the game over at none.
+ * ponytail: MarioActor::_BC4 not kept */
+static void m_update_on_poison(Player *m)
+{
+    if (m->grounded) {
+        if (m_floor_severe(m, 18)) {
+            if (m->poison == 0) {
+                dm_dec_life(); /* decLife(0) */
+                mario_sound("毒沼ダメージ"); mario_sound("ダメージ"); mario_sound("声小ダメージ");
+                if (life == 0) dm_game_over(); /* forceGameOver */
+                camera_shake(SHAKE_NORMAL); /* startCamVib(0) */
+            }
+            if (m->poison < 255) m->poison++; else m->poison = 0;
+        } else m->poison = 0;
+    } else if (m->jumping && m->air_timer > 10) m->poison = 0; /* _3BC */
+    if (swimming) m->poison = 0;
+}
 /* Mario::updateOnWater's draw states: mIsUnderwater (on water floors 20..22 over 20..22), _13 (on 23 over 23), _1D
  * (over 20..23); _738 the ripples' height over his ground */
 static int m_shadow_code(void) /* Mario::_962: the code of the face under his shadow (_45C), -1 none */
@@ -56092,6 +56270,8 @@ void game_draw(void)
     hang_posture(m); /* MarioHang::postureCtrl */
     if (mario->slider) basis_matrix(m, mario->pos, sl.up, mario->face, 0); /* MarioSlider::postureCtrl: _1FC */
     m_blend_apply(m);
+    m[12] += mario->sink_ofs.x; m[13] += mario->sink_ofs.y; m[14] += mario->sink_ofs.z; /* updateLookOfs's _154: into
+        * a Sink floor (m_update_on_sand); only this drawn matrix moves, not what mario_base's other callers read */
     if (mario->press) for (int j = 4; j < 7; j++) m[j] *= mario->press_s; /* _3B0: squashed along his up */
     if (bh.on) for (int j = 0; j < 11; j++) if (j % 4 != 3) m[j] *= bh.scale; /* the black hole's mScale */
     if (dmg.scale_y != 1.0f) for (int j = 4; j < 7; j++) m[j] *= dmg.scale_y; /* MarioCrush: mScale (1, 0.2, 1) */
