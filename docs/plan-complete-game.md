@@ -10,10 +10,12 @@ No interim ISOs: Daniel tests at the end.
 ### Animations
 - [x] 104 placed classes had a Wait clip and no own-named clip, drawn in their bind pose (Kinopio, Penguin, HoneyBee,
       TakoHei...): slice.py WAIT_SKINNED / WAIT_ARC (out/wait_classes.json) makes them skinned; obj_anim plays Wait.
-- [ ] Check after the repack that every scenario still fits PACK_ROOM, and a few in PCSX2 (garden Toads, EggStar
-      TakoHei, Gateway Lumas).
+- [x] Check after the repack that every scenario still fits PACK_ROOM, and a few in PCSX2 (garden Toads, EggStar
+      TakoHei, Gateway Lumas): 136 / 136 converted and fit, coverage 135 / 135 (2026-11-06); the 2026-11-17 full
+      repack (592 packs) passed smoke.ps1.
 - [ ] Per class, the actions its Petari nerves start (startAction) instead of Wait only: done class by class in
-      phase 2 with each behaviour.
+      phase 2 with each behaviour. 2026-11-18: 985 of the 988 placed classes are named in the engine
+      (class_coverage.py); not checked class by class that each plays all its actions.
 
 ### Power-ups (Petari MarioActorMorph setPlayerMode: 1 invincible, 2 fire, 3 ice, 4 bee, 5 rabbit / spring
 ### (Hopper), 6 Teresa / Boo, 7 Foo / flying)
@@ -37,11 +39,12 @@ No interim ISOs: Daniel tests at the end.
 - [x] Invincible: blend kind 4 (frame buffer x mean(C0) + C0, its C0 the BRK track: slice.py brk_c0 / BRKC, game.c
   brkc_apply, render.c render_group_tint) and its MutekiKankyo2 env layer; the hands follow the body's frame.
 - [x] Ice: MarioSkate, doFreezeAttack, IceStep floors (collision) on water, no swim, no DamageFire, no smoke.
-      (TransparentWall's ice walls: placed nowhere.) [ ] the freeze attack's hits on enemies (phase 2 reactions).
+      (TransparentWall's ice walls: placed nowhere.) [x] the freeze attack's hits on enemies (freeze_hits: ACTMES_FREEZE_ATTACK).
 - [x] Spring: MarioRabbit (bounce, charge, turn, lean of Hip / Spine1), forceJump, hip drop clips.
 - [x] Boo: MarioTeresa (float, A push, wind from BigFans, reflections, vanish through GhostThroughCode walls),
       TeresaMario (基本 wait / run blend: anim_blend, fly / fall / spin / hit / change, BTP eyes, Erase alpha).
-      GlaringLightArea / SunLightArea: placed nowhere. [ ] heat beam, Teresa sensor messages per enemy (phase 2).
+      GlaringLightArea / SunLightArea: placed nowhere. [x] heat beam (ATK_HEATBEAM ends the mode; EyeBeamer
+      sends it). [ ] Teresa sensor messages per enemy: not checked enemy by enemy.
 - [x] Flying: MarioFoo line by line (jet, tilt, spin, brake beam and trail with FooLine.bti as added strips,
   checkBaseTransBall, CelestrialSphere, passRing for DashRing in phase 2); tryStartFoo from the spin jump.
 - [x] MarioFireBall: skinned, its Roll BCK, mRotation from the throw, initShadowVolumeCylinder(25); in common.bin.
@@ -101,16 +104,18 @@ No interim ISOs: Daniel tests at the end.
   Not kept (by hand): slope-ahead data (_4DC/_4D8/_380), checkStrikePointToMap, Teresa's thick ball, hang camera,
   animated parts (leaves / Move joint) always count as moving. Pending with it: tryDrop's wall branches. SlipUp
   effect added to jpa.py (repack).
-- [ ] Mario statuses not ported (inventory 2026-10-25, in play order): MarioHang (cliff hang / climb), MarioSideStep,
-  updateOnSand / updateOnPoison, MarioBump / MarioStep / MarioFrontStep, MarioMove2D / 25D / Mario2D, MarioSlider,
-  checkSidePress, MarioRecovery / doPointWarp / doCubeWarp, MarioStick, MarioFlow, MarioSpin (tornado tilt, wall),
-  MarioSukekiyo, MarioActorBlackHole, bodyClap, PlayerEvent FireDown / RaceDown / GhostRaceDown + drawPreWipe,
-  MarioSearchLight. Done: Faint, Blown (but its checkWallJumpHit case), the damages, SwimDamage, Eye, FpView.
-- [ ] TreasureBox's KinokoLifeUp gives it at once (its BenefitItemLifeUp should pop out): phase 2.
-- [ ] FountainBig's bee flip (phase 2 object); BeeFlowerHover (phase 2); MarioStick (no decompiled class sends
-      ATYPE_BEE_FLOWER: nothing sticks).
+- [ ] Mario statuses not ported (inventory 2026-10-25, checked against game.c 2026-11-18): updateOnSand /
+  updateOnPoison, MarioBump / MarioStep / MarioFrontStep, doCubeWarp, MarioStick, MarioSukekiyo, bodyClap, PlayerEvent
+  FireDown, drawPreWipe, MarioSearchLight; MarioSpin's tornado tilt / wall (the tornado jump's state is in:
+  feat/mario-moves, merged). Done since: MarioSideStep, Mario2D / MarioMove2D, MarioSlider, checkSidePress /
+  checkPressDamage, MarioRecovery / doPointWarp, MarioFlow, MarioActorBlackHole (exeGameOverBlackHole2), EventRaceDown
+  / EventGhostRaceDown, MarioHang (see above: climb not verified). Before: Faint, Blown (but its checkWallJumpHit
+  case), the damages, SwimDamage, Eye, FpView.
+- [x] TreasureBox's KinokoLifeUp pops out (BenefitItemObj: appearKinokoSuper / appearThrowUp).
+- [x] BeeFlowerHover (game.c update_beeflowers: its five nerves). [ ] FountainBig's bee flip: not found in the code.
+      [ ] MarioStick (no decompiled class sends ATYPE_BEE_FLOWER: nothing sticks).
 
-## Phase 2: level objects (class_coverage.md: static 222 classes, missing 36)
+## Phase 2: level objects (class_coverage.md, 2026-11-18: 988 placed classes, static 3, missing 0; it was static 222, missing 36)
 - [x] Gateway rabbits (Daniel: "found one, it did not respond"): the opening plays through as a player would
   (GATEWAY_TEST with XF=-DGW_FOLLOW: Mario walks after the bunny, into the bushes / pipes, onto the rabbits; 3 of 3
   caught, the tower demo starts). Fixed on the way, all against Petari: DemoRabbit::updateJump jumps whenever bound
@@ -132,8 +137,9 @@ No interim ISOs: Daniel tests at the end.
   (AudBgmSetting cMuteState): tools/mbgm.py mixes each state offline (sequence warped onto the stream's beats, the
   second loop mixed in), out/music/<stream>[@k].pcm + engine/src/mbgm_tab.h; game.c bgm_state (setStageBGMState) swaps
   file at the same place; RunawayRabbitCollect's states 2 / 3 / 1. Run tools/music.py before tools/mbgm.py (it
-  writes the same stems). [ ] the other setStageBGMState users (ChangeBgmCube, bosses, SphereSelector, FileSelector,
-  TeresaRacer, SpringJetWater, BgmProhibitArea, AudBgmConductor) with their classes. [ ] by ear: the sequence /
+  writes the same stems). [x] setStageBGMState on the bosses (Koopa, Polta, SkeletalFishBoss, TripodBoss),
+  TeresaRacer (race.inc), SpringJetWater, AudBgmConductor (the pinch BGM). [ ] ChangeBgmCube, BgmProhibitArea,
+  SphereSelector, FileSelector: no bgm_state call found (2026-11-18). [ ] by ear: the sequence /
   stream balance (items' volumes / 255) and the 4-frame dip at a state change.
 - [x] MarioEffect: cSmokeTable whole (20 entries, 7 materials x 4 variants, intervals, joints, wall forms, water
   only), getFloorMaterialIndex, cMaterialEffectTable (hip drop / bee wind / spin / stage-in by material),
@@ -141,7 +147,20 @@ No interim ISOs: Daniel tests at the end.
   スリップ坂制動, 跳躍 (water only), 雪煙レベル done; 水波紋 + 水はね(弱) on each wading step (decide(Squat)Walk
   Animation's tail, mIsUnderwater also from checkWaterCube with _738 / _73C), WADE_TEST in PCSX2 (steps at the
   walk's frame 0 / 30). No code plays スリップ空転 / 共通水底接触 / ひこうき雲 / 壁上昇 (only stopped) / 宇宙遊泳
-  (see above). [ ] ブラックホール / 引き戻し着地 / 着地大 with their statuses (black hole fall, pull-back,
-  MarioLauncher / SpinCannon endRush). [ ] by hand in Beach Bowl: the wading splash / ring sizes (0.2 scale).
-## Phase 3: bosses
-## Phase 4: tests (levels in order, engine demos). Known: the Gateway RunawayRabbit did not respond to Daniel.
+  (see above). [x] ブラックホール with the black hole fall (mario_smoke(SMOKE_BLACKHOLE)). [ ] 引き戻し着地 /
+  着地大: in the table, no call found (pull-back landing, MarioLauncher / SpinCannon endRush). [ ] by hand in Beach Bowl: the wading splash / ring sizes (0.2 scale).
+## Phase 3: bosses (checked against the code 2026-11-18; their notes are in docs/history.md)
+- [x] In the engine after Petari: DinoPackun / DinoPackunVs2, OtaKing, BossStinkBug (#195), TripodBoss, BossKameck,
+  TombSpider (#198, #277), BossBegoman, Polta (#305), Dodoryu, IceMerameraKing, SkeletalFishBoss, KoopaJrShip (#302),
+  Koopa (Vs1 / 2 / 3).
+- [x] Koopa's boot TLB miss in kp_init / kp_models (#525, closed; docs/resume.md still lists it: check on the console).
+- [ ] Each boss fought start to end on the console (none has been: the console test has reached the Terrace dome).
+
+## Phase 4: tests (levels in order, engine demos)
+- [x] The Gateway RunawayRabbit that did not respond to Daniel (see phase 2).
+- [x] Every scenario boots and runs in PCSX2: coverage 135 / 135 (2026-11-06; EpilogueDemoStage by its `ending` test).
+- [x] smoke.ps1 before each ISO: the opening, the Gateway, the grand star's return through the Terrace's door, a
+  Good Egg star.
+- [ ] On the console, in play order: verified from the title to the Terrace dome; the 2026-11-17 ISO waits for
+  Daniel's test. The galaxies after it: not played on the console yet.
+- [ ] The opening against the Wii scene by scene (docs/resume.md Next 2); Good Egg against the Wii (#5).
