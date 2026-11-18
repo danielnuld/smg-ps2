@@ -21385,16 +21385,31 @@ static void sw_hit_wall(Player *m, V3 n) /* hitWall (doSwimmingHitCheck's head b
         else if (sw_stick_y() >= 0.0f) sw.vangle += 0.1f;
     }
     sw.wall_t = 6; sw.dash_t = 0;
-    if (vlen(sw.stream_dir) > 1e-6f && sw.lock_t) { /* (the jet's part: no shell) a stream pressing him on it */
+    if (sw.jet_t || (vlen(sw.stream_dir) > 1e-6f && sw.lock_t)) { /* with the shell, or a stream pressing him on it.
+        * ponytail: the shell's sendPunch / tryJetAttack on the wall's sensor first (map faces have none here) */
         float into = vdot(fo.up, vmul(n, -1.0f));
         V3 tang = vadd(vsub(fo.up, vmul(vmul(n, -1.0f), into)), vmul(n, into * 1.5f)), va = vtangent(tang, m->up);
         float spr = MC.mTurboReductionHitWall;
+        int reflect = 1; /* isReflect */
         if (vlen(va) > 1e-6f) {
             va = vnorm(va);
             if (vdot(n, vmul(m->up, -1.0f)) > 0.1f && sw.vangle < 1.5707964f) sw.vangle = 3.1415927f - sw.vangle;
             sw.knock_t = 20; sw.knock = vmul(n, 6.0f);
-            if (vdot(va, sw.stream_dir) > 0.0f) sw.front = va;
+            if (vlen(sw.stream_dir) <= 1e-6f) { /* no stream: by how square he met it */
+                if (ang_abs_h(sw.front, n, m->up) >= 2.6179941f) {
+                    if (ang_abs(fo.up, n) <= 2.6179941f) reflect = 0; /* (its >= 2 pi case can not hold) */
+                    else { sw.knock_t = 60; sw.knock = vmul(n, 16.0f); }
+                } else {
+                    V3 gl = vsub(sw.front, vmul(n, vdot(sw.front, n))); /* glancing: along the wall, 0.8 of his speed */
+                    if (vlen(gl) > 1e-6f) { sw.front = vnorm(gl); spr = 0.8f; reflect = 0; }
+                }
+            } else if (vdot(va, sw.stream_dir) > 0.0f) sw.front = va;
             else { sw.knock_t = 60; sw.knock = vmul(n, 16.0f); }
+        }
+        if (sw.jet_t && reflect) { /* 壁ヒット at the wall, the shell's turn */
+            mario_named_fx("WallHit", NULL);
+            mario_sound("亀壁ヒット");
+            m_anim("水泳ジェット壁ターン");
         }
         sw.fspeed *= spr;
         hit = 1;
