@@ -20460,7 +20460,7 @@ static int m_tilt_press(int inst) /* MarioActor::selectTiltPress: _FC4's ナナ�
  * the ceiling, his ground's floor code changed on a press with 200 or more under him pushes him 10 aside; else
  * setPress 0 (a face across his head) or 1. A jump between two such faces keeps its level (cutGravityElementFromJumpVec),
  * falling into a gap under 80 he stops there. addVelocity goes to the next frame's push (m->s350: the check is after
- * the move here). ponytail: no MarioBury in the port (taken as off); mDrawStates _1E / _A not kept */
+ * the move here). ponytail: mDrawStates _1E / _A not kept */
 static int m_side_press(Player *m)
 {
     V3 pos = hg.on ? mw.c : m->pos, g = vmul(m->up, -1.0f);
@@ -20501,7 +20501,7 @@ static int m_side_press(Player *m)
                         }
                         if (pushed) continue;
                     }
-                    if (!m->sink && ceil_d >= 180.0f) { /* !Bury, !mSinkTimer */
+                    if (suke.on != 2 && !m->sink && ceil_d >= 180.0f) { /* !Bury, !mSinkTimer */
                         V3 ao = vsub(a->pos, c), bo = vsub(c, b->pos);
                         float la = vlen(ao), lb = vlen(bo), dd = la > 0 && lb > 0 ? vdot(ao, bo) / (la * lb) : 1.0f;
                         if (acosf(dd > 1.0f ? 1.0f : dd < -1.0f ? -1.0f : dd) >= 0.017453292f) { /* diffAngleAbs */
@@ -20512,7 +20512,7 @@ static int m_side_press(Player *m)
                     }
                     float dn = -vdot(an, bn), ang = acosf(dn > 1.0f ? 1.0f : dn < -1.0f ? -1.0f : dn);
                     if (m_tilt_press(a->inst) || m_tilt_press(b->inst)) ang = 0.0f;
-                    if (!m->sink && ang > 0.34906587f) { /* !Bury, !mSinkTimer */
+                    if (suke.on != 2 && !m->sink && ang > 0.34906587f) { /* !Bury, !mSinkTimer */
                         float dist = (160.0f - ceil_d) / sinf(ang);
                         if (!(dist < 0.0f)) {
                             V3 ah = vtangent(an, m->up), bh = vtangent(bn, m->up), *w = vlen(ah) > vlen(bh) ? &ah : &bh;
