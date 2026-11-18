@@ -48415,8 +48415,8 @@ static void ambient_effects(void)
 /* SoundEmitterCube.cpp / SoundEmitterSphere.cpp after Petari (their movement, every frame, demos too): an ambient level sound (arg0: the cube's SE_AT_LV_GRAVE / KOOPA_WIND / WIND_DESERT / WIND_ICE_MT_TOP, the
  * sphere's MAGMA_AMBIENT / FLOATING_SAND / WIND_DESERT / MAGMA_WIND_VOLCANO / KOOPA_FLOAT_SAND / WIND_RABBIT_MAZE)
  * played at the camera's watch point (cube 0 / 3, sphere 1 / 2 / 4 / 5) or the microphone, moved into the area: the
- * cube's world bounding box, the sphere's surface. (PlayerSeArea, SE_PM_LV_LONG_FALL: its placed names PlayerSeCube /
- * Sphere / Cylinder name no area manager, nothing places them.) ponytail: the microphone (AudMicWrap::getMicPos) taken as the camera's eye */
+ * cube's world bounding box, the sphere's surface. PlayerSeArea.cpp (placed as PlayerSeCube / Sphere / Cylinder; arg0
+ * 0): SE_PM_LV_LONG_FALL while Mario is in it and not rising in a jump. ponytail: the microphone (AudMicWrap::getMicPos) taken as the camera's eye */
 static struct { short row; unsigned char kind; u32 h; } snd_em[48];
 static int n_snd_em = -1;
 static const Scene *snd_em_sc;
@@ -48426,10 +48426,11 @@ static void update_sound_emitters(void)
     static const u32 sphere_se[6] = {SE_AT_LV_MAGMA_AMBIENT, SE_OJ_LV_FLOATING_SAND, SE_AT_LV_WIND_DESERT,
                                      SE_AT_LV_MAGMA_WIND_VOLCANO, SE_AT_LV_KOOPA_FLOAT_SAND, SE_AT_LV_WIND_RABBIT_MAZE};
     if (snd_em_sc != sc || n_snd_em < 0) {
-        int t[2] = {scene_type(sc, "SoundEmitterCube"), scene_type(sc, "SoundEmitterSphere")};
+        int t[5] = {scene_type(sc, "SoundEmitterCube"), scene_type(sc, "SoundEmitterSphere"), scene_type(sc, "PlayerSeCube"),
+                    scene_type(sc, "PlayerSeSphere"), scene_type(sc, "PlayerSeCylinder")};
         snd_em_sc = sc; n_snd_em = 0;
         for (u32 i = 0; i < sc->nobjs && n_snd_em < 48; i++)
-            for (int k = 0; k < 2; k++)
+            for (int k = 0; k < 5; k++)
                 if (t[k] >= 0 && (int)sc->objs[i].type == t[k]) { snd_em[n_snd_em].row = (short)i; snd_em[n_snd_em].kind = (unsigned char)k; snd_em[n_snd_em++].h = 0; }
     }
     if (!n_snd_em) return;
@@ -48462,7 +48463,8 @@ static void update_sound_emitters(void)
             d = vlen(vsub(q, c));
             if (!(row_shown(snd_em[k].row) && d < rad) && d > 1e-6f) q = vadd(c, vmul(vsub(q, c), rad / d)); /* !isInVolume */
             snd_em[k].h = se_level(sphere_se[a0], &q.x, snd_em[k].h);
-        }
+        } else if (a0 == 0 && row_shown(snd_em[k].row) && area_inside(r, mario->pos) && !(mario->jumping && m_rising(mario)))
+            snd_em[k].h = se_level(SE_PM_LV_LONG_FALL, &mario->pos.x, snd_em[k].h); /* PlayerSeArea::movement: startLevelSoundPlayer */
     }
 }
 
