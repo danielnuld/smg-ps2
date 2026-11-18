@@ -199,6 +199,7 @@ typedef struct {
      * slope dash frames, _8F4, mDrawStates._4 the slope dash; _16C last frame's velocity, getLastMove; MarioActor _288 the
      * map's push in the last move (the move less mVelocity) */
     int floor, slip_poly, s23, s3C2, s3C4, s3FE, s_dash;
+    int hip_homing;     /* _10._27: the hip drop is the spin one (スピンヒップドロップ) */
     int sink, poison;   /* mSinkTimer (0..255: how far into a Sink floor), mPoisonTimer (updateOnSand / updateOnPoison) */
     V3 sink_ofs;        /* _154: the drawn offset down his _1FC, eased 0.2 to sink / 256 x 120 (updateLookOfs) */
     float s8F0, s280, s8F4;
@@ -15811,6 +15812,8 @@ static void m_decide_walk_speed(Player *m) /* decideWalkSpeed: the stick picks m
 }
 
 /* doBrakingAnimation / updateBrakeAnimation: 歩行制動ブレーキ (RunEnd) after a run let go; its end stops the walk */
+static int m_wall_met(void); /* mMovementStates._8 || _32 */
+static int m_anim_on(const char *jp);
 static void m_update_brake(Player *m)
 {
     if (m->brake2) {
@@ -15821,6 +15824,10 @@ static void m_update_brake(Player *m)
             if (!m->brake2) { m_clip_stop(); m_stop_walk(m); }
         }
     } else if (m_clip_on("runend") && (mario_anim->done || m->tsi)) m_clip_stop();
+    if (!gd_player_luigi()) return; /* gIsLuigi: his brakes slide on */
+    if (!m_clip_on("runend") && !m_anim_on("ブレーキ")) return; /* 歩行制動ブレーキ, ブレーキ */
+    if (m_wall_met()) { m_clip_stop(); m->brake2 = 0; m->brake1 = 0; m->turn_slip = 0; m->turn_ready = 0; } /* _8 / _32: _71F _71E _3D0 _3D2 */
+    else if (!demo_on && m->grounded) mario_sound("ルイージ滑り");
 }
 
 /* decideWalkAnimation: the 基本 blend by mTargetWalkSpeedIndex, its speed from the foot steps, the start-spin ratio, the
@@ -17037,6 +17044,12 @@ static int m_jump_to_hip_drop(Player *m) /* jumpToHipDrop */
     if (m->hip || m->jump_kind == 5) return 0;
     if ((m->jump_kind == 9 || m->jump_kind >= 11) && m_rising(m)) return 0;
     if (m->height < MC.mHipDropLimitHeight) return 0;
+    /* MarioActor::_3E5 (updateHitSensor): the spin2nd clip, or a one-shot running in the tornado jump / 地上ひねり /
+     * サマーソルト / 水泳スピン / 水上スピン / しゃがみスピン: the hip drop is the spin one */
+    int spin = m_clip_is("spin2nd") || (mario_anim && !mario_anim->loop && !mario_anim->done &&
+               ((m->jump_kind == 8 && m->jumping) || m_anim_on("地上ひねり") || m_anim_on("サマーソルト") ||
+                m_anim_on("水泳スピン") || m_anim_on("水上スピン") || m_anim_on("しゃがみスピン")));
+    m->hip_homing = 0;
     if (m->jump_kind == 8) m_cancel_tornado(m);
     m->hip = HIP_START; m->hip_still = 0;
     m->squat_lock = 0;
@@ -17046,9 +17059,14 @@ static int m_jump_to_hip_drop(Player *m) /* jumpToHipDrop */
         m->hip_clip[0] = "hoppermariohipdropstart"; m->hip_clip[1] = "hoppermariohipdrop"; m->hip_clip[2] = "hipdropland";
     } else if (player_mode == PM_BEE) { /* ハチヒップドロップ開始 / ハチヒップドロップ / (壁)着地 */
         m->hip_clip[0] = "beehipdropstart"; m->hip_clip[1] = "beehipdrop"; m->hip_clip[2] = "beehipdropland";
+    } else if (spin) { /* スピンヒップドロップ開始 / スピンヒップドロップ / 着地; _10._27 (stopEffect スピンライト not kept) */
+        m->hip_clip[0] = "hipdrophomingstart"; m->hip_clip[1] = "hipdrophoming"; m->hip_clip[2] = "hipdrophomingland";
+        m->hip_homing = 1;
     } else { m->hip_clip[0] = "hipdropstart"; m->hip_clip[1] = "hipdrop"; m->hip_clip[2] = "hipdropland"; }
     mario_play(m->hip_clip[0], 1.0f, 0);
-    mario_sound("尻ドロップ回転"); mario_sound("声尻ドロップ");
+    mario_sound("尻ドロップ回転");
+    if (spin) { mario_sound("声スピン尻ドロップ"); mario_sound("スピン尻ドロップ回転"); } /* (isNormalDrop, whatever his mode) */
+    else mario_sound("声尻ドロップ");
     m->zero_gr = MC.mHipDropZeroGrTime;
     return 1;
 }
@@ -17096,6 +17114,12 @@ static void m_proc_hip(Player *m)
     if (vlen(m->hvel) > 10.0f) m->hvel = vmul(m->hvel, 0.5f);
     V3 j = m_jv(m);
     if (vlen(j) > MC.mLimitSpeedHipDrop) m_set_jv(m, vmul(vnorm(j), MC.mLimitSpeedHipDrop));
+    if (m->hip_homing && m_clip_on("hipdrophoming")) { /* _10._27 && スピンヒップドロップ */
+        mario_sound("スピン尻ドロップ落下");
+        /* ponytail: its homing (the parts under him whose name has MatrixControl's super hip drop bit, or the
+         * sensor under him _4A8: mJumpVec turned to it) is not ported: the table's data was not read */
+        if (m->wall) m->hip_homing = 0; /* _8 (_1A / _19 not kept) */
+    }
 }
 
 /* MarioSukekiyo / MarioBury (MarioSukekiyo.cpp; MarioStatus_Sukekiyo 0x1A head first, MarioStatus_Bury 0x1B to his
@@ -17298,7 +17322,7 @@ static void m_do_landing(Player *m)
     }
     if (swing_perm && m->spin_lock && m->spun && m->jump_kind != 3) { m->spun = 0; m->spin_cool = 0x10; } /* _946 */
     m_reset_tornado(m);
-    mario_sound("着地");
+    mario_sound(m->bee_wall ? "ハチ壁くっつき" : "着地"); /* mBeeWallWalk */
     if (m->land_type == 2) { /* ScenarioStarter: stopWalk, the stage-in landing */
         m->land_type = 0;
         m_stop_walk(m);
@@ -17811,7 +17835,10 @@ static void m_swing(Player *m)
      * (スピンリング: updatePunching, where the punch timer runs out.) ponytail: no colour flash (_1AA-_1B5) */
     if (m->spin_rec && --m->spin_rec == 6) m->spin_end = 5;
     if (m->spin_end && --m->spin_end == 0) { m_pad_vib(0); mario_sound("スピン回復終了"); }
-    if (m->spin_cool && --m->spin_cool == 0xd) m->spin_rec = 0x13;
+    if (m->spin_cool && --m->spin_cool == 0xd) {
+        m->spin_rec = 0x13;
+        if (mode_action("スピン回復エフェクト") == 1) mario_sound("スピン許可"); /* MarioActorParts: _994 appears (SpinTimer) */
+    }
     if (m->jumping && player_mode != PM_TERESA && !foo_active()) m->spin_cool = 0; /* updateSwingAction */
     if (!m->squat && m_anim_on("サマーソルト") && mario_anim->frame >= 40.0f) m_clip_stop(); /* MarioAnimator::squatSpinCheck */
     if (!swing_perm || !pad_pressed(PAD_SQUARE) || m->spin_cool || swing_inhibit || m->walling || m_input_off()) return; /* isRequestRush */
@@ -17829,6 +17856,7 @@ static void m_swing(Player *m)
         m->spin_timer = 25; m->spin_t = 0; /* setPunchHitTimer(0x19) */
     } else if (player_mode == PM_BEE && m_clip_on("beespinground")) ; /* ハチスピン: no trySpinPunch */
     else if (!m_clip_on("spinground")) {
+        if (!m->jumping && !(m->s23 || m->slider) && suke.on == 2) mario_sound("スケキヨ終了スピン"); /* isStatusActive(MarioStatus_Bury) */
         if (m->jumping) { /* trySpinPunch in the air: 空パンチ */
             if (m->hip) return;
             mario_play("spin2nd", 1.0f, 0);
@@ -18788,6 +18816,7 @@ static void m_set_press(Player *m, int type)
     if (m->press || (type == 0 && m_dist_to_ceil(m) >= 160.0f)) return;
     pad_rumble(RUMBLE_PRESS); /* startPadVib("マリオ[つぶれ]") */
     m->press = type + 1; m->press_t = 60; m->press_s = 1.0f;
+    mario_sound("プレスダメージ"); mario_sound("声大ダメージ");
     m->hvel = v3(0, 0, 0); m->vup = 0; m->jumping = 0; m->grounded = 1;
     life = 0;
     printf("mario pressed (%d)" "\n", type);
@@ -18869,6 +18898,7 @@ static V3 m_wall_norm(const Player *m) /* getWallNorm */
     return m->face;
 }
 static V3 m_front_wall_norm(void) { return mw.w8 ? tri_n(&mw.front) : v3(0, 0, 0); } /* getFrontWallNorm */
+static int m_wall_met(void) { return mw.w8 || mw.w32; }
 static V3 m_side_wall_norm(void) { return mw.w1A ? tri_n(&mw.side) : v3(0, 0, 0); } /* getSideWallNorm */
 static int m_wall_code_is(const Tri *t, int code) { return t->prism && KCL_WALL(tri_attr(t)) == code; } /* getWallCodeString == */
 enum { WALLC_NOTGRAB = 3, WALLC_NOACTION = 8 }; /* CollisionCode::createWallTable */
@@ -49027,7 +49057,7 @@ static int mteresa_update(Player *m) /* MarioTeresa::update */
     m->walk = sp > 1.0f ? 1.0f : sp;
     m_set_jv(m, m->ts14);
     m->vel = vel;
-    if (!m->ts42) mario_sound("テレサ飛行中"); /* playSoundTeresaFlying */
+    if (!m->ts42) mario_sound("テレサ浮遊"); /* playSoundTeresaFlying (ponytail: its timing by MarioWait not passed) */
     return 1;
 }
 static void teresa_mode_start(void) /* setPlayerMode 6 and Mario::startTeresaMode */
