@@ -18630,25 +18630,13 @@ static int mario_attack(int msg, V3 from)
  * (forceKill), DamageNormal (4) a damage, DamageFire (10) / 0x81 the fire dance, Needle (24) the needle's, DamageElectric
  * (15) the paralysis. ponytail: checkCurrentFloorCodeSevere's shadow test not done; PullBack (16: doRecovery) and the
  * Rebound wall (doFlipJump) wait for MarioRecovery / the wall codes */
-/* MR::getFirstPolyOnLineToMap: the first face met from `from` along d facing against it (its point, normal, inst).
- * ponytail: stepped spheres of 10 every 10, as drop_to_ground; no polygon-exact ray in kcl.c */
+/* MR::getFirstPolyOnLineToMap: the first face the segment from + d enters from its front (kcl_line: checkArrow), its
+ * point, normal and part; map_line_attr its codes */
 static int map_line(V3 from, V3 d, V3 *hp, V3 *n, int *inst)
 {
-    float len = vlen(d);
-    if (len < 1e-3f) return 0;
-    V3 u = vmul(d, 1.0f / len);
-    Hit h[8];
-    for (float t = 0; t <= len; t += 10.0f) {
-        V3 p = vadd(from, vmul(u, t));
-        int k = kcl_query(p, 10.0f, h, 8), b = -1;
-        for (int i = 0; i < k; i++)
-            if (vdot(h[i].n, u) < 0 && (b < 0 || vdot(h[i].n, u) < vdot(h[b].n, u))) b = i;
-        if (b < 0) continue;
-        *hp = vsub(p, vmul(h[b].n, 10.0f - h[b].dist)); *n = h[b].n; *inst = h[b].inst;
-        map_line_attr = h[b].attr;
-        return 1;
-    }
-    return 0;
+    if (!kcl_line(from, vadd(from, d), hp, n, inst)) return 0;
+    map_line_attr = tri_attr(&kcl_line_tri);
+    return 1;
 }
 
 static int press_at(int inst) { return inst >= 0 && insts[inst].press; }
