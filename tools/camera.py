@@ -21,10 +21,11 @@ Cameras (`camera/cameraparam.bcam`, a JMap table; field names CameraParamChunk.c
 DotCamParams.cpp:62-66). Kept: game cameras "c:%04x" (areas), "s:%04x" (start), "o:" (named defaults); event cameras
 ("e:") and ground-triangle cameras ("g:") are not used yet. Missing fields take CameraParamChunk.hpp:12-55 defaults.
 angleA / angleB are radians as stored (each type converts them its own way).
-CAMS: u32 n, 12 pad; n x 128 B {u16 zone, u8 kind ('c', 's', 'o'), u8 type (TYPES index, 255 = other: the engine uses
+CAMS: u32 n, u32 entry size (136; 0 in older blobs: 132 B entries without roll), 8 pad; n x {u16 zone, u8 kind ('c', 's', 'o'), u8 type (TYPES index, 255 = other: the engine uses
 XZ_PARA like CameraHolder's default), u16 num (hex id, 0 for "o:"), u16 flags (bit i = flag.<FLAGS[i]>), f32 dist,
 angleA, angleB, wpoint[3], axis[3], up[3], woffset[3], loffset, loffsetv, fovy, upper, lower, uplay, lplay,
-s32 camint, num1, num2, vpanuse, f32 vpanaxis[3], pad}.
+s32 camint, num1, num2, vpanuse, f32 vpanaxis[3], s32 evfrm, u32 evclass, f32 roll (radians: CameraParamChunk's
+mExParam.mRoll, the view turned about its axis, CameraDirector::calcViewMtxFromPoseParam)}.
 """
 import re
 import struct
@@ -156,9 +157,11 @@ def cameras(bcams, float_column, int_column, jp2en=None, rails=None):
             evfrm = get("evfrm", -1)
             evfrm = int(evfrm[i]) if evfrm else -1
             evfrm = evfrm - 2**32 if evfrm >= 2**31 else evfrm
+            roll = get("roll", 0.0)
+            roll = float(roll[i]) if roll else 0.0
             index[(zone, kind[0], num)] = len(out)
-            out.append(struct.pack("<HBBHH22f4i3fiI", zone, ord(kind[0]), TYPES.index(t) if t in TYPES else 255, num & 0xFFFF,
-                                   flags, *fl, *ints, *pan, evfrm, evclass))
+            out.append(struct.pack("<HBBHH22f4i3fiIf", zone, ord(kind[0]), TYPES.index(t) if t in TYPES else 255, num & 0xFFFF,
+                                   flags, *fl, *ints, *pan, evfrm, evclass, roll))
     return out, index, used
 
 

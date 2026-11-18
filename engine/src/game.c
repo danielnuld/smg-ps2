@@ -3174,7 +3174,14 @@ void game_init(const Scene *s, const unsigned char *blob)
         cam_blob = blob;
         camera_rail = cam_rail;
         camera_gravity = cam_gravity; camera_map_poly = cam_map_poly; camera_map_ball = cam_map_ball;
-        camera_init(c ? (const CamParam *)(c + 16) : NULL, c ? *(const int *)c : 0, ca, na, (const float (*)[16])zm, &t);
+        const CamParam *cp = c ? (const CamParam *)(c + 16) : NULL;
+        if (c && *(const int *)(c + 4) != (int)sizeof(CamParam)) { /* an older blob's 132-byte cameras: no roll */
+            int nc = *(const int *)c;
+            CamParam *w = mem_alloc(MEM_SCENE, nc * sizeof(CamParam));
+            for (int i = 0; i < nc; i++) { memcpy(&w[i], c + 16 + 132 * i, 132); w[i].roll = 0.0f; }
+            cp = w;
+        }
+        camera_init(cp, c ? *(const int *)c : 0, ca, na, (const float (*)[16])zm, &t);
         /* CameraDirector::closeCreatingCameraChunk: mIsStartCameraActive, startStartPosCamera(false): the start's
          * camera (getCurrentStartCameraId: its Camera_id) until checkStartCondition */
         const Row *st0 = scene_start(s);
@@ -12946,6 +12953,16 @@ static void npc_sensor(const Inst *in, const float m[16])
     if (t[2] != 0.0f && in->anim && in->anim->skin && in->anim->skin->njoints > 1) mat_mul(w, in->m, in->anim->world[1]);
     hs_add(vadd(v3(w[12], w[13], w[14]), vmul(vnorm(v3(w[4], w[5], w[6])), t[1])), t[0], HS_NPC, in->row);
 }
+static float nrail_len(const float *p, u32 n, int cl);
+static V3 nrail_at(const float *p, u32 n, int cl, float d, V3 *dir);
+/* Tico::init: a cast of 青チコ変身 (tryRegisterDemoCast, isDemoCast: _15C 1, whatever its arg1): the demo's index, -1 none */
+static int tico_blue_demo(int row)
+{
+    for (int k = 0; k < ndemos; k++)
+        if (!strcmp(demos[k].h->name, "青チコ変身"))
+            for (int i = 0; i < demos[k].h->ngroup; i++) if (demos[k].group[i] == row) return k;
+    return -1;
+}
 static void update_talkers(void)
 {
     if (!tk_nctl) return;
@@ -13049,6 +13066,23 @@ static void update_talkers(void)
             talk_near(k);
         } else if (in->talkcls == 4) { /* ButlerMap::exeTalk: at its talk's end the map (obj_arg0: the Grand Galaxy's) */
             if (talk_near_at_end(k)) menu_galaxy_map(sc->objs[in->row].arg[0] > 0);
+        } else if (in->talkcls == 2 && tico_blue_demo(in->row) >= 0) { /* the blue Luma that turns into pull stars (#556) */
+            int row = in->row, bd = tico_blue_demo(row);
+            const Row *r = &sc->objs[row];
+            if (!row_rdir[row]) { /* exeBlue0: at its talk's end Blue1, startTimeKeepDemo(青チコ変身) */
+                if (talk_near_at_end(k)) { row_rdir[row] = 1; row_coord[row] = -1.0f; dx_push(bd, 0); printf("tico row %d: blue, demo %d\n", row, bd); }
+            } else if (row_rdir[row] == 1) { /* exeBlue1: Fly, along its rail in the 移動 part's steps (its first), then Meta */
+                u32 n = 0; int cl = 0; V3 dir;
+                const float *pts = r->path >= 0 && scene_blob_g ? find_rail(scene_blob_g, r->zone, r->path, &n, &cl) : NULL;
+                float len = pts && n >= 2 ? nrail_len(pts, n, cl) : 0.0f;
+                if (row_coord[row] < 0.0f) { obj_play(in, "fly", 1, 0); row_coord[row] = 0.0f; }
+                row_coord[row] += len / demos[bd].parts[0].total; /* setRailCoordSpeed(total length / getDemoPartTotalStep) */
+                if (len > 0.0f) { /* moveCoordAndFollowTrans */
+                    V3 at = nrail_at(pts, n, cl, fminf(row_coord[row], len), &dir);
+                    insts[i].m[12] = at.x; insts[i].m[13] = at.y; insts[i].m[14] = at.z;
+                }
+                if (row_coord[row] >= len) { row_rdir[row] = 2; row_step[row] = 1; } /* isRailReachedGoal: Meta */
+            }
         } else if (tico && sc->objs[in->row].arg[1] == 3) { /* Tico::exeTalk: at its talk's end Meta (gone) */
             if (talk_near_at_end(k)) row_step[in->row] = 1; /* setNerve(Meta) */
         } else if (in->talkcls == 12 && pcs_talk(k, &insts[i])) { /* the surfing PenguinCoach's nerves (surf.inc) */
@@ -22403,10 +22437,11 @@ static void m_check_head_point(Player *m)
  * frames (_3AA); for the next 15 frames (_334) the gravity is held, and high off the ground (over 160) he is pushed
  * along it by his head's turn. As Bee a turn of pi / 6 blends his drawn matrix over 8. ponytail: _F74 (a camera cut
  * resets the ground too) and _2E0 (the air walk's direction, not kept here) */
-static void m_gravity_turn(Player *m, V3 up0)
+static void m_gravity_turn(Player *m, V3 up0, int zero)
 {
     if (m->launch >= 0) { m_334 = 0; return; } /* doRush: no updateGravityVec; endRush's (true, ..) resets _334 */
-    float ang = ang_abs(up0, m->up);
+    float ang = zero ? 0.0f : ang_abs(up0, m->up); /* (the angle is 0 when _24C or the new gravity is zero) */
+    if (zero & 1) m2.t10 = 1;                      /* isNearZero(gravity): _10.turning */
     int reset_ground = 0;
     if (player_mode == PM_BEE && ang >= 3.1415927f / 6.0f) m_blend_mtx(8);
     if (m_334) m->up = up0;
@@ -22439,12 +22474,19 @@ static void update_mario_(void)
     if (miss_running()) { if (mario_anim) anim_update(mario_anim); return; } /* the down / game over demo holds him */
     Player *m = mario;
     V3 up0 = m->up;
-    m->up = up_at(m->pos, m->up);
+    /* updateGravityVec with no gravity at him (_24C zero: MysteryGravityRoomPlanet, whose cube gravity is its shadows'
+     * only): on the ground his gravity is the ground's normal turned over (-_368), in the air the last one (_240) */
+    static int zero_prev;
+    V3 gup = up_at(m->pos, v3(0, 0, 0));
+    int zero = vlen(gup) < 0.5f;
+    if (!zero) m->up = gup;
+    else if (m->grounded && vlen(m->ground_n) > 0.5f) m->up = vnorm(m->ground_n);
     if (fo.on && !strcmp(game_stage_name, "HeavensDoorGalaxy/2")) { /* Mario::isUseFooSpecialGravity: towards one point */
         V3 d = vsub(m->pos, v3(14760.0f, -10676.2f, 6770.0f));
         if (vlen(d) > 1e-6f) m->up = vnorm(d);
     }
-    m_gravity_turn(m, up0);
+    m_gravity_turn(m, up0, zero | zero_prev << 1);
+    zero_prev = zero;
     if (!m->grounded && m->jump_kind != 13 && vdot(up0, m->up) < 0.999f) { /* in the air his velocity is a world vector
                                                       * (mJumpVec): a new gravity keeps it, not his rise along the old up.
                                                       * ponytail: not after a launch star (kind 13): our flights' ends were
@@ -56539,6 +56581,65 @@ int game_demo_fat(int frame) /* EggStar 2: placed 900 off the TicoFat once, he w
     return -1;
 }
 
+#ifdef GROOM_TEST
+/* XF=-DGROOM_TEST (plain build, EggStarGalaxy/2): Mario put on the floor of MysteryGravityRoomPlanet (frame 1000) and
+ * walked over its corner bridge onto the wall, then up it (#557); positions and ups in the zone's frame */
+static V3 groom_pt(const float *m, V3 p) { return v3(m[0] * p.x + m[4] * p.y + m[8] * p.z + m[12], m[1] * p.x + m[5] * p.y + m[9] * p.z + m[13], m[2] * p.x + m[6] * p.y + m[10] * p.z + m[14]); }
+void game_test_groom(int frame)
+{
+    static float zm[16];
+    static int phase;
+    if (frame < 1000) return;
+    test_nolost = 1;
+    if (frame == 1000) {
+        u32 sz;
+        const unsigned char *z = blob_chunk(scene_blob_g, "ZONE", &sz);
+        static const float one[3] = {1, 1, 1};
+        for (u32 i = 0; i < sc->nobjs; i++)
+            if (sc->objs[i].type == scene_type(sc, "MysteryGravityRoomPlanet")) {
+                const float *e = (const float *)(z + 4 + 56 * sc->objs[i].zone + 32);
+                mat_translate_rot_scale(zm, e, e + 3, one);
+            }
+        mario->pos = groom_pt(zm, v3(50, -1150, -600));
+        mario->up = up_at(mario->pos, v3(0, 1, 0)); mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
+        camera_start_pos_end();
+    }
+    V3 zx = v3(zm[0], zm[1], zm[2]), zy = v3(zm[4], zm[5], zm[6]), zz = v3(zm[8], zm[9], zm[10]), o = v3(zm[12], zm[13], zm[14]);
+    V3 l = vsub(mario->pos, o), lp = v3(vdot(l, zx), vdot(l, zy), vdot(l, zz)), lu = v3(vdot(mario->up, zx), vdot(mario->up, zy), vdot(mario->up, zz));
+    if (frame > 1060) {
+        if (phase == 0 && lu.z > 0.7f) phase = 1;
+        test_walk_to(groom_pt(zm, phase ? v3(50, 600, -1250) : v3(50, -1250, -1400)), 50.0f);
+    }
+    if (frame % 20 == 0)
+        printf("groom f %d: phase %d at %d %d %d up %.2f %.2f %.2f grounded %d wall %d%s\n", frame, phase, (int)lp.x, (int)lp.y, (int)lp.z, lu.x, lu.y, lu.z,
+               mario->grounded, mario->wall, phase && lp.y > 0 && mario->grounded ? " ok" : "");
+}
+#endif
+
+#ifdef CAMROLL_TEST
+/* XF=-DCAMROLL_TEST=4500 (its drop under the planet's centre; plain build, EggStarGalaxy/1): Mario dropped on DiskGardenPlanet's top (frame 1000), then on its
+ * underside (1400): the cameras there carry a roll of pi (#555), so the camera's up and Mario's agree on both sides */
+void game_test_camroll(int frame)
+{
+    if (frame < 1000) return; /* (the flight in is over by 850) */
+    test_nolost = 1;
+    if (frame == 1000 || frame == 1400) {
+        V3 c0 = start_pos;
+        for (u32 i = 0; i < sc->nobjs; i++) if (sc->objs[i].type == scene_type(sc, "DiskGardenPlanet")) c0 = row_pos(&sc->objs[i]);
+        V3 up = up_at(vadd(c0, v3(0, 3000, 0)), v3(0, 1, 0));
+        mario->pos = vadd(c0, vmul(up, frame == 1000 ? 1500.0f : -(float)CAMROLL_TEST));
+        mario->up = up_at(mario->pos, up); mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
+        camera_start_pos_end();
+    }
+    if (frame % 50 == 0) {
+        V3 e, w, u; float fovy;
+        camera_pose(&e, &w, &u, &fovy);
+        printf("camroll f %d: camera %d %s grounded %d up dot %.2f%s\n", frame, camera_current(), camera_type_name(), mario->grounded,
+               vdot(u, mario->up), frame > 1600 && frame <= 1800 ? (vdot(u, mario->up) > 0.5f ? " ok" : " FAIL") : "");
+    }
+}
+#endif
+
 #ifdef CAMWALK_TEST
 /* camwalk test (PeachCastleGardenGalaxy 1, start 0): Mario walked down the road to the plaza by the stick, the camera
  * logged as it changes: its rail camera (c:0019, rail 26) over the road; after PrologueA (the garden again at start 1)
@@ -57085,7 +57186,7 @@ void game_test_npc_look(unsigned frame)
                    (int)r->rot[2], in->m[4], in->m[5], in->m[6], vlen(v3(in->m[0], in->m[1], in->m[2])), in->nu.x, in->nu.y, in->nu.z,
                    in->anim && in->anim->clip_id >= 0 ? sc->clips[in->anim->clip_id].name : "-");
         }
-    if (frame < 300) return;
+    if (frame < 1000) return; /* (the flight in is over by 850) */
     int k = (int)(frame - 300) / 240;
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
