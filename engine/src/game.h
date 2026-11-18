@@ -44,6 +44,7 @@ int game_test_creeper(void);
 int game_test_sbp(void);
 int game_test_petari(void);
 int game_test_sambo(void);
+int game_test_ds(void); /* DS_TEST builds: DharmaSambo (dharma.inc) */
 int game_test_bomb_teresa(void);
 int game_test_bigbubble(int f);
 int game_test_dring(void);
