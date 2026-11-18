@@ -163,6 +163,8 @@ void audio_stop(void)
 #endif
     music = NULL;
     fade_n = 0;
+    if (ready) audsrv_stop_audio(); /* audsrv's ring emptied: left alone it plays its last block over and over through a
+                                     * load (the console, #558) */
     me_rhythm(NULL, 0); /* AudBgmRhythmStrategy::reject */
 }
 

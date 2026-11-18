@@ -5458,9 +5458,10 @@ void menu_draw(void)
     }
     llt_draw(); /* PauseMenu::draw: the letter after the menu (and KinopioAstro's) */
     plt_draw();
-    if (sv.win.alive) { render_world_done(); lyt_draw(sv.win.l); } /* the save's window over all of it */
     wipe_draw_quad();
     fade_draw();
+    if (sv.win.alive) { render_world_done(); lyt_draw(sv.win.l); } /* the save's window over all of it, a closed wipe too
+                                                                    * (GameSystem draws its SysInfoWindow after the scene: #559) */
 }
 
 int menu_test_point_book(const char *pane) /* tests: the pointer on a pane of the picture book (its back button's "BoxButton" when pane is NULL) */
