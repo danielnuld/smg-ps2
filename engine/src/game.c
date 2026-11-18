@@ -16040,8 +16040,10 @@ static int mode_auto_bind(const char *cls)
 }
 static void set_player_mode(int mode, int b);
 /* MarioActor::tryRush on an auto bind: 0 refused (×スルー), else bound, back to normal first when 変身解除 */
+static int suke_active(void);
 static int mode_rush(const char *cls)
 {
+    if (suke_active()) return 0; /* MarioActor::tryStartRush: not in MarioStatus_Bury / Sukekiyo */
     int v = mode_auto_bind(cls);
     if (v == 0) return 0;
     if (v == 2) set_player_mode(PM_NORMAL, 1);
@@ -17187,6 +17189,7 @@ static int suke_update(Player *m)
     }
     return 1;
 }
+static int suke_active(void) { return suke.on != 0; }
 static void suke_close(Player *m)
 {
     m_stop_walk(m);
