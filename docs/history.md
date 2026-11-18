@@ -11,6 +11,14 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- RasterScrollCube, AstroChangeStageCube's capture wipe (feat/492-raster-astro-wipe, 2026-11-07): MarioCollision.cpp:2296
+  (Mario in a RasterScrollCube: setRasterScroll(arg0, arg1, arg2); slice.py LOGIC RasterScrollCube, HeavenlyBeach's
+  only; its scene reserves the target blocks). AstroChangeStageCube after its 5 frames: closeSystemWipeCircleWithCapture
+  Screen(110) centred on Mario's centre (render_screen_capture: the frame at 320 x 224 in the target blocks, reserved
+  at that moment; render_screen_captured draws it back over the screen under the ring each frame), the stage change once
+  the ring is shut. Tests: `astro` AstroGalaxy/1 (the dome's cube: the ring closes over the frozen frame, AstroDome);
+  plain XF "-DRASTER_TEST -DPACKS_OVERLAY=..." HeavenlyBeachGalaxy/1 (Mario in the cube 300-600: the waves).
+  ponytail: the capture at half size. Repack: slice_all.py HeavenlyBeachGalaxy (LOGIC RasterScrollCube).
 - #9 (issue #3) EE performance: Good Egg bench, EE time a frame (render_begin's flip / VIF / clear wait now printed
   apart: ~3.4 ms of the old "draw" was that wait): start view 19.9 -> 12.5 ms (logic 6.7 -> 5.1, draw 12.7 -> 7.0),
   path 16.4 -> 11.5, worst 38-42 -> 26. Clip cache sized per clip (inflates 8300-15000 -> 7-22 a bench), skinned
