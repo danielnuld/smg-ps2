@@ -518,6 +518,7 @@ static unsigned *row_larea_t;
 static struct { int area, from, t, n; RenderLight cur; } plight; /* the player's ActorLightCtrl (area -1: none yet) */
 static int area_inside(const Row *r, V3 p);
 static int area_obj(const char *cls, V3 p);
+static void mario_set_raster(int t, int x, int y); /* MR::setRasterScroll (race.inc) */
 /* clip_area.inc */
 static void snow_init(const Scene *s), snow_update(void), snow_draw(V3 eye); /* snow_floor.inc */
 static int ca_shape_of(const char *name);
@@ -2936,6 +2937,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     { /* AstroMapBoard's picture, the mirror's, the raster scroll's bands (a TeresaRacer of a racer id): their VRAM out of the cache */
         int tr = scene_type(s, "TeresaRacer"), raster = 0;
         for (u32 i = 0; tr >= 0 && i < s->nobjs; i++) raster |= (int)s->objs[i].type == tr && s->objs[i].arg[0] != -1;
+        raster |= scene_type(s, "RasterScrollCube") >= 0; /* (MarioCollision's setRasterScroll in it) */
         render_target_reserve(st_mapboard || scene_type(s, "MirrorAreaCube") >= 0 || raster);
     }
     gw_init();
@@ -23212,6 +23214,17 @@ static void update_mario_(void)
             m_tower.r = 500.0f * r->scale[0];
         }
     }
+    { /* MarioCollision.cpp:2296: in a RasterScrollCube, setRasterScroll(its arg0, arg1, arg2) */
+        int rs = area_obj("RasterScrollCube", m->pos);
+        if (rs >= 0) mario_set_raster(sc->objs[rs].arg[0], sc->objs[rs].arg[1], sc->objs[rs].arg[2]);
+#ifdef RASTER_TEST /* XF=-DRASTER_TEST HeavenlyBeachGalaxy/1: Mario put in the cube from frame 300 to 600 */
+        if (game_frame >= 300 && game_frame < 600) {
+            int t = scene_type(sc, "RasterScrollCube");
+            for (u32 i = 0; t >= 0 && i < sc->nobjs; i++) if ((int)sc->objs[i].type == t) { m->pos = vadd(row_pos(&sc->objs[i]), vmul(m->up, 200.0f)); m->hvel = v3(0, 0, 0); m->vup = 0; break; }
+        }
+        if (game_frame % 30 == 0) printf("raster test f %u: cube %d%c", game_frame, rs, 10);
+#endif
+    }
     { /* updateCubeCode: in a PullBackCube or PullBackCylinder, doRecovery (a cylinder without arg0 1: its base and up
        * for MarioRecovery's _4C / _58, _12) */
         int pb = area_obj("PullBackCube", m->pos);
@@ -42561,7 +42574,8 @@ int game_test_movie(int which) /* tests: the appear switch of the MovieStarter o
     return -1;
 }
 
-static int ac_row = -1, ac_wait;
+static int ac_row = -1, ac_wait, ac_capture; /* ac_capture: 1 capture the next frame, 2 draw it (SystemWipeHolder) */
+static const Scene *ac_scene;
 #ifdef ASTRO_DOOR
 /* astro test with XF=-DASTRO_DOOR=1: Mario 600 out of dome 1's door (its cube's side of the dome's centre), walked by the stick through its door to its
  * AstroChangeStageCube (its Open collision: the Close one stops him at the door, as with =0, no grand star) */
@@ -42600,17 +42614,31 @@ int game_test_astro_cube(int mode) /* tests: Mario put in the first AstroChangeS
 static void astro_cube(int row, const Row *r)
 {
     int id = r->arg[0] == 0 ? game_scenario_no() : r->arg[1]; /* _3C: getCurrentScenarioNo */
+    if (ac_scene != sc) { ac_scene = sc; ac_row = -1; ac_capture = 0; }
     if (ac_row >= 0) {
-        if (row != ac_row || ac_wait++ != 5) return;
+        if (row != ac_row) return;
+        if (ac_wait < 5) { ac_wait++; return; } /* cChangeStageWaitFrame */
+        if (ac_wait == 5) { /* closeSystemWipeCircleWithCaptureScreen(cWipeFrame 110), setWipeCircleCenterPos */
+            ac_wait++;
+            render_target_reserve(1); /* (the capture's blocks: taken only now, the scene ends) */
+            ac_capture = 1;
+            menu_wipe_circle(1, 110);
+            float x, y;
+            V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+            if (screen_pos(c, &x, &y)) menu_wipe_circle_center(x, y);
+            return;
+        }
+        if (ac_wait != 6 || menu_wipe_active()) return; /* the change stage request: done once the ring is shut */
+        ac_wait++;
         switch (r->arg[0]) {
-        case 0: case 4: menu_fade_move(110, SEQ_MOVE, "AstroGalaxy", -1, id, 0); break;
-        case 2: menu_fade_move(110, SEQ_MOVE, "AstroGalaxy", 1, id, 0); break;
+        case 0: case 4: menu_fade_move(1, SEQ_MOVE, "AstroGalaxy", -1, id, 0); break;
+        case 2: menu_fade_move(1, SEQ_MOVE, "AstroGalaxy", 1, id, 0); break;
         case 1:
-            if (gd_flag_is_on("RosettaTalkAboutTico")) menu_fade_move(110, SEQ_SCENARIO_SELECT, "HeavensDoorGalaxy", -1, -1, 0);
-            else menu_fade_move(110, SEQ_MOVE, "HeavensDoorGalaxy", 2, id, 0);
+            if (gd_flag_is_on("RosettaTalkAboutTico")) menu_fade_move(1, SEQ_SCENARIO_SELECT, "HeavensDoorGalaxy", -1, -1, 0);
+            else menu_fade_move(1, SEQ_MOVE, "HeavensDoorGalaxy", 2, id, 0);
             break;
-        case 3: menu_fade_move(110, SEQ_MOVE, "LibraryRoom", 1, id, 0); break;
-        case 5: menu_fade_move(110, SEQ_MOVE, "AstroDome", r->arg[2], id, 0); break;
+        case 3: menu_fade_move(1, SEQ_MOVE, "LibraryRoom", 1, id, 0); break;
+        case 5: menu_fade_move(1, SEQ_MOVE, "AstroDome", r->arg[2], id, 0); break;
         }
         return;
     }
@@ -57993,6 +58021,8 @@ void game_draw(void)
     PROF(6);
     render_world_done(); /* the blended instances (an Air's sky) under the HUD and talks */
     mario_draw_raster(); /* MarioActor::drawRasterScroll (its draw: the 3D done) */
+    if (ac_capture == 1) { render_screen_capture(); ac_capture = 2; } /* SystemWipeHolder::startGameScreenCapture */
+    else if (ac_capture == 2) render_screen_captured(); /* the captured screen under the wipe ring */
     talk_draw();
     wipe_draw();
     menu_draw();
