@@ -16057,8 +16057,8 @@ static void m_check_wall_push(Player *m);
  * spin), MarioActor.cpp updateSwingAction / MarioActorPunch.cpp trySpinPunch; constants MC (tools/mario_const.py).
  * The gravity is -up; mJumpVec is hvel + up x vup. m->vel is the frame's move (mVelocity).
  * The map: MarioActor's Binder, checkGround, checkAllWall, calcFrontFloor, calcShadowPos (see update_mario_).
- * ponytail: skating, as Rabbit / Teresa Mario keeps the old 50 sphere (collide_n) and its ground; no squat uppercut,
- * the height over the ground in the air is a probe; no 2D, sand, slider, side step; no _34 (decideInertiaOnIce / decideOnIceAnimation: its setter is not in the decomp); the quad walk blend
+ * ponytail: skating, as Rabbit / Teresa Mario keeps the old 50 sphere (collide_n) and its ground;
+ * the height over the ground in the air is a probe; no _34 (decideInertiaOnIce / decideOnIceAnimation: its setter is not in the decomp); the quad walk blend
  * (基本: WalkSoft / Walk / Run / Wait at sWeightTable) and その場足踏み (Run / Wait) play their heaviest clip */
 static V3 m_cx, m_cy;          /* the camera's axes on the plane under Mario (calcMoveDir) */
 static V3 m_camx, m_camy, m_camz; /* MarioActor mCamDirX / Y / Z (getCamDirX / Y / Z: Z looks forward) */
@@ -18132,7 +18132,7 @@ static void m_do_landing(Player *m)
     if (hard && m_floor_sand(m)) { suke_start(m, 1); return; } /* changeStatus(mBury) */
     if (m_pullback_land) { m_pullback_land = 0; m->jump_kind = 0xE; }
     int dive = m_anim_on("飛び込みジャンプ") || m_anim_on("後方飛び込みジャンプ");
-    if (!hard && !m->slip_poly && m->jump_kind != 0xE && !dive) { /* !mDrawStates._C (ponytail: _10._8, 水上ダメージ中 not tested) */
+    if (!hard && !m->slip_poly && m->jump_kind != 0xE && !dive && !m_anim_on("水上ダメージ中")) { /* !mDrawStates._C (ponytail: _10._8 is not kept) */
         if (m->jump_kind == 5 && m_check_squat(m, 0)) { m->squat = 1; m->walk = 1.0f; m_clip_stop(); return; }
         if ((m_sz > 0.9f && m->back_t == 0) || (!m->hip && m_check_squat(m, 0))) {
             m_clip_stop();
@@ -18169,8 +18169,10 @@ static void m_do_landing(Player *m)
             mario_smoke(SMOKE_PULLBACK_LAND); /* 共通引き戻し着地 */
             m_anim("引き戻し着地");
             hard = 0;
-        } else if (k >= 0 && k < 14) mario_play(land[k], 1.0f, 0);
+        } else if ((k == 8 || k == 9 || k >= 0xB) && m_anim_on("水上ダメージ中")) m_anim("中ダメージ着地"); /* (the default case) */
+        else if (k >= 0 && k < 14) mario_play(land[k], 1.0f, 0);
         m_stop_walk(m);
+        if (k != 0xE && angle_d(m, m->ground_n) > 8.0f) m_anim("ショート着地"); /* isBlendWaitGround */
         if (hard) { /* startCamVib(4) */
             mario_play("landstiffen", 1.0f, 0); m->land_timer += 16; camera_shake(SHAKE_STRONG);
             mario_sound("重い着地"); mario_sound("声着地停止");
@@ -19947,8 +19949,7 @@ static void m_retain(Player *m)
     if (pad_pressed(PAD_SQUARE) && m->jumping && vdot(m_pad, m->prev_vel) < 0.0f) diff = 1.0f; /* isRequestSpin, _16C */
     float limit = m->land_timer < 2 ? 0.1f : 0.06f;
     if (m->retain_b) { if (m_sz != 0) m->retain_b = 0; diff = 1.0f; }
-    /* ponytail: the jump's !isAnimationRun(nullptr) (the Xanime default clip) is not checked */
-    int retain = !(m->jumping && !m->retain_a) && !(m->jumping && mw.w8);
+    int retain = !(m->jumping && !m->retain_a) && !(m->jumping && mw.w8) && !(m->jumping && !sw_anim_busy()); /* !isAnimationRun(nullptr) */
     m_draw_d = 0;
     if (diff < limit && m_sz != 0 && retain) {
         if (!m->retain_t || (m->retain_a && m->jumping)) { m_draw_d = 1; m->retain_t = 0; }
@@ -20082,7 +20083,9 @@ static int m_fix_walling(Player *m, int immediate) /* fixWallingPosition: fixWal
     else { V3 f = m->face; if (blend_sphere(f, to, &f, 0.1f)) m_front(m, f); }
     return 1;
 }
-/* isEnableStickWall. ponytail: MarioActor _468, the ice wall (sensor 0x57) of Ice Mario */
+/* isEnableStickWall. Carrying (MarioActor _468) he does not stick: A at the wall is the triangle jump at once
+ * (initTriangleJump, startJump). ponytail: the ice wall (sensor 0x57) of Ice Mario */
+static int m_wall_start_jump(Player *m);
 static int m_enable_stick_wall(Player *m)
 {
     if (player_mode == PM_TERESA) return 0;
@@ -20108,6 +20111,14 @@ static int m_enable_stick_wall(Player *m)
     if (mw.w19) { if (!m_clip_on("walljump") && m_stick_wall_side(m) != 1) return 0; } /* 壁ジャンプ */
     else if (!m_clip_on("walljump") && !m->slip_front && m_stick_wall_side(m) != 1) return 0;
     if (mw.s30) return 0;
+    if (m_carry_jet()) {
+        if (!m_req_jump) return 0; /* checkTrgA */
+        V3 h = vtangent(m_jv(m), m->up); /* initTriangleJump */
+        m->wall_jv0 = vlen(h) >= 0.001f ? vnorm(h) : v3(0, 0, 0);
+        m->wall_t = 0;
+        m_wall_start_jump(m);
+        return 0;
+    }
     if (!map_poly(mario_joint_drawn(13), vmul(m->face, mw.w19 ? -120.0f : 120.0f), NULL, NULL)) return 0; /* _2AC */
     return kari_cling == 0;
 }
