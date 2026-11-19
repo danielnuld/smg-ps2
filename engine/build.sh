@@ -26,6 +26,8 @@
 # camwalk: with packs (PeachCastleGardenGalaxy 1), Mario walked down the road to the plaza, camera changes logged (-DCAMWALK_TEST)
 # XF=-DCAMROLL_TEST=1500 (plain, EggStarGalaxy/1): Mario dropped on DiskGardenPlanet's top, then its underside: the camera's roll (#555)
 # XF=-DGROOM_TEST=1 (plain, EggStarGalaxy/2): Mario walked over MysteryGravityRoomPlanet's corner bridge onto its wall (#557)
+# XF=-DSWINGROPE_TEST (plain, HeavenlyBeachGalaxy/1): Mario dropped by the SwingRope at frame 1000, the stick 200 frames into
+#   the ride, A at 500 (-DSWR_TEST_A=n), again after each jump; =2: the camera on the rope from its side (#568)
 # overview: with packs, the camera orbits the whole galaxy (-DOVERVIEW_TEST; for pictures and videos)
 # rail: with packs, Mario dropped onto the first rail-moving map part at frame 120 (-DRAIL_TEST)
 # rotor: with packs, Mario dropped onto the first rotating map part at frame 120 (-DROTOR_TEST)
