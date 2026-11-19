@@ -24,7 +24,10 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   LodCtrl, so the forced high / middle / low models do nothing and the other LodCtrl holders (UFOBase,
   LavaStrangeRock, MapObjActor's planet LOD...) are not hidden; far level 0 reaches only what the port clips by
   ClippingJudge (NPCs, walkers, SuperSpinDrivers: the rest is drawn by the port's own distances). Test: route with
-  `XF="-DVG_TEST -DPACKS_OVERLAY=<overlay>"` ("view groups: n on id:flags" when the count changes).
+  `XF="-DVG_TEST -DPACKS_OVERLAY=<overlay>"` ("view groups: n on id:flags" when the count changes): EggStarGalaxy/1 on
+  the old packs, the star at f 4281; with its scene sliced anew (163 VGRP rows) the groups go on and off along the
+  flight ("2 on 1:3 13:3" ... "0 on") and the star is at f 4281 again. Not seen: a hidden group (arg1 4: 42 cubes).
+  Memory: about 1.5 KB of code, 2 bytes a row from the scene arena with the chunk. Repack: every galaxy.
 - UI audit, SysInfoWindow and the sub meter (fix/679-sysinfo-abutton, #679 #707, 2026-11-19): menu.c si_* gets
   SysInfoWindow's mIconAButton (an IconAButton at AButtonPosition: openWithoutMessage when a Type_Key window appears,
   term at Disappear's first step, killed, moved and drawn with the window: the save's done / error windows had no
