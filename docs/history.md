@@ -11,6 +11,16 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- MarioStep seen working (fix/673-mario-step, #673, 2026-11-18): #571's step never started. m_check_step asked
+  m_front_wall_norm(), zero unless the front wall is faced (_8), and at a step the floor on the wall turns _8 off
+  (checkAllWall); Mario::checkStep reads mFrontWallTriangle's normal bare: m_front_tri_n, the triangle as checkAllWall
+  last left it. startStep's _4C8 press test added (calcDistToCeil's face). Test: a plain build XF=-DSTEP_TEST=<k>
+  (game_test_step_input: the collision searched for an upright face with a level floor on it 10 to 48 over the level
+  floor before it; Mario put 150 before the k-th and walked at it). PCSX2, HeavensDoorGalaxy 2 (row 39's step of 26;
+  none found in EggStar 1, BattleShip 2, Factory 1, Phantom 1). Before: _15 / _39 on, the place 26 up, no step: his
+  body's collision pushed him up the edge in 12 frames. After: `step: up 24, 10 frames, walk 0.64` when his centre's
+  ball meets the riser, set on the step, the status 14 frames (_14 from 10 down by his walk speed) while his drawn
+  matrix eases, then he walks on.
 - The seesaws (feat/614-seesaws, #614, 2026-11-18): SimpleSeesawObj (SimpleMapObj.cpp: KoopaShipSeesawStep,
   IceVolcanoBalanceStepA / B, IceMountainSeesawSlipA-D / NoSlipA; 16 placed, they turned as plain MapPartsRotators)
   and LavaHomeSeesaw in update_seesaws beside PhantomShipHandle (Inst.seesaw 1-4): MapPartsSeesaw1AxisRotator for
