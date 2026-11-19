@@ -45229,7 +45229,8 @@ static V3 firebar_ball(const Inst *in, int j, int k)
  * frame spinning 10 degrees a frame; on the ground it bursts into arg0 star pieces (default 5) of the arg3 it holds
  * (default 5), hides for arg1 frames (default 240) and starts over until it holds none; after 360 frames of falling it
  * starts over. row_turn: 0 appearing, 1 falling, 2 waiting; row_step its frames; row_hold the pieces left. The burst
- * is appearStarPiece(arg0, 15, sLaunchYVel 40). ponytail: the binder's NoAction wall filter is not applied */
+ * is appearStarPiece(arg0, 15, sLaunchYVel 40). Its effects by name: ShootingStarAppear, ShootingStarBlur (while it
+ * falls), ShootingStarBreak. ponytail: the binder's NoAction wall filter is not applied */
 static V3 shoot_pos(const Inst *in, float *k)
 {
     const Row *r = &sc->objs[in->row];
@@ -45250,6 +45251,14 @@ static void update_shooting(void)
         unsigned short *t = &row_step[row];
         signed char *ph = &row_turn[row];
         ++*t;
+        { /* its effects: ShootingStarAppear at exePreShooting's first step, ShootingStarBlur through exeShooting */
+            float fk, fm[16];
+            V3 fp = shoot_pos(in, &fk);
+            memcpy(fm, in->m, 64);
+            fm[12] = fp.x; fm[13] = fp.y; fm[14] = fp.z;
+            if (*ph == 0 && *t == 1) fx_named("ShootingStar", "ShootingStarAppear", fm, NULL, NULL);
+            if (*ph == 1) fx_named("ShootingStar", "ShootingStarBlur", fm, NULL, &row_turn[row]);
+        }
         if (*ph == 0 && *t > 20) { *ph = 1; *t = 0; }
         else if (*ph == 2 && *t > (r->arg[1] >= 0 ? r->arg[1] : 240)) { *ph = 0; *t = 0; }
         else if (*ph == 1) {
@@ -45265,6 +45274,7 @@ static void update_shooting(void)
             se_start(n > 0 ? SE_OJ_STAR_PIECE_BURST : SE_OJ_STAR_PIECE_NOT_BURST, &p.x);
             row_hold[row] -= n;
             *ph = 2; *t = 0;
+            { float bm[16]; memcpy(bm, in->m, 64); bm[12] = p.x; bm[13] = p.y; bm[14] = p.z; fx_named("ShootingStar", "ShootingStarBreak", bm, NULL, NULL); } /* exeWaitForNextShoot's first step */
             if (!row_hold[row]) row_dead[row] = 1;
             printf("shooting star %d burst %d, %d left\n", row, n, row_hold[row]);
         }
