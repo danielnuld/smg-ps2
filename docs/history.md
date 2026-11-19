@@ -11,6 +11,19 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Mario's area codes (feat/579-mario-area-codes, #579, 2026-11-18): Mario::updateCubeCode's HeavySteeringCube
+  (`m_heavy`, _10._11 / _12: the stick as read, no angle snap and no margins; mainMove's turn slowed by
+  mStickHeavyMinRatio between mStickHeavyMinAngle and MaxAngle, his walk speed with it), ForbidTriangleJumpCube
+  (`m_no_tri_jump`, mDrawStates._3: MarioWall::startJump not turned to the way he came), ForbidJumpCube
+  (`m_forbid_jump`, _1C._7: no doJetJump), DashChargeCylinder (_434 = mItemDashTimer; no stage of RMGE01 places one).
+  area_obj's class cache 24 -> 40. Test: plain with `XF="-DPACKS_OVERLAY=<overlay> -DPUT_TEST=HeavySteeringCube
+  -DPUT_TEST2=ForbidTriangleJumpCube -DPUT_UP=100 -DPUT_NOCAM"` (the put test logs the cube codes; PUT_TEST2: a
+  second class when the scene lacks the first): KoopaBattleVs1Galaxy/1 "heavy 1", SkullSharkGalaxy/1 "no tri jump 1".
+  Only the flags were seen (no pad in the test): the steering and the wall jump under them are as read from Petari.
+  ponytail: PlaneCollisionCube (_10._6), CubeCamera's arg1 (_2 / _3), GlaringLightArea / isInShadeFromTheSun for
+  Teresa Mario. **Release: slice_all.py** KoopaBattleVs1Galaxy, FishTunnelGalaxy, HeavenlyBeachGalaxy,
+  HoneyBeeKingdomGalaxy, HellProminenceGalaxy, ReverseKingdomGalaxy, SkullSharkGalaxy (slice.py LOGIC: the areas
+  were not in the packs).
 - BlackHole's Disappear (feat/596-blackhole-disappear, #596, 2026-11-18): its demo action nerve (dx_cast_hook type 3
   on a BlackHole / BlackHoleCube cast -> row_turn 1): SE_OJ_BLACK_HOLE_DISAPPEAR, the core's scale eased in from _9C
   to 0 over steps 30 .. 90, killed at 90; no hum and nothing inhaled meanwhile (attackSensor: Wait only). Test:
