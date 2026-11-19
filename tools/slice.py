@@ -218,12 +218,12 @@ def sky_sea(b, mat3, m):
 EXTRA = {"ConcreteBlock": ("ConcreteBlockBreak",),  # SimpleBreakableObj: its break ModelObj (game.c break_inst)
          "WaterfallCaveCover": ("WaterfallCaveCoverBreak",),  # MapObjActor::tryCreateBreakModel (statics.inc st_wcc)
          "Syati": ("PrizeRing",),  # Syati::initRings: its five PrizeRings (game.c syati.inc)
-         "TeresaRacer": ("PStar",), "PenguinRacerLeader": ("PStar",), "PenguinCoach": ("PStar",), "LuigiNPC": ("PStar",), "LuigiEvent": ("PStar",), "TrickRabbitFreeRun": ("PStar",),  # TakeOutStar's mStarModel (game.c tos_*); RabbitStateCaught's mPowerStarModel (trick.inc)
+         "TeresaRacer": ("PStar",), "PenguinRacerLeader": ("PStar",), "PenguinCoach": ("PStar",), "LuigiNPC": ("PStar",), "LuigiEvent": ("PStar",), "TrickRabbit": ("PStar",), "TrickRabbitFreeRun": ("PStar",),  # TakeOutStar's mStarModel (game.c tos_*); RabbitStateCaught's mPowerStarModel (trick.inc)
          "WatchTowerRotateStep": ("WatchTowerRotateStepLift",),  # its four PartsModels (statics.inc st_wtower)
          "UFOKinokoUnderConstruction": ("UFOKinokoLandingAstro",), "LargeChain": ("LargeChainFixPoint",),  # LargeChain: its fixed points
          "TicoGalaxy": ("TicoFatGoodsStarPiece", "Tico~5"),  # TicoFat's goods; its TicoStarRing (Tico::initBase(5): ColorChange 5)  # its init: that model once isUFOKinokoUnderConstruction is over (statics.inc)
          "Polta": ("PoltaLeftArm", "PoltaRightArm", "PoltaBodyBreak", "PoltaArmBreak", "PoltaFormationRock", "PoltaGroundRock", "PoltaGroundRockBreak", "PoltaRock#Color:0", "PoltaRock#Color:1", "PoltaRock#Color:2", "BombTeresa"),  # PoltaRock::setColorWhite / Black / Yellow (Color BVA frame 0 / 1 / 2); BombTeresaHolder
-         "SkeletalFishBaby": ("SnakeFish",), "ChildSkeletalFishBaby": ("SnakeFish",), "SkeletalFishBoss": ("SkeletalFishBossHeadA", "SkeletalFishGuard", "SkeletalFishBossBreak", "SkeletalFishBossScarFlash", "SkeletalFishBossLight"), "IceMerameraKing": ("IceManIce", "IceMerameraKingShock", "IceMerameraKingBreak"), "KoopaVs1": KOOPA_PARTS + ("KoopaBattleMapPlanet", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate"), "KoopaVs2": KOOPA_PARTS + ("KoopaBattleMapPlanetVs2", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate"), "KoopaVs3": KOOPA_PARTS + ("KoopaBattleMapPlanetVs3Lv1", "KoopaBattleMapPlanetVs3Lv2", "KoopaBattleMapPlanetVs3Lv3", "KoopaPlateDamage", "KoopaVS3HoleSunPlanet", "KoopaVS3HoleSunInsidePlanet", "KoopaRock", "KoopaRockBreak", "KoopaRollBall", "Peach", "KoopaJr", "KoopaJrShip"), "GhostPlayer": ("GhostMario", "GhostLuigi", "Koura"), "BegomanBabyLauncher": ("BegomanBaby",), "ElectricRailMoving": ("ElectricRailPoint",), "ElectricRail": ("ElectricRailPoint",), "NokonokoLand": ("Koura~0", "Koura~1"), "Penguin": ("Koura~0",), "PenguinStudent": ("KouraShine",), "Creeper": ("CreeperFlower", "CreeperLeaf"), "TripodBoss": ("TripodBossLow", "HomingKiller"), "Dodoryu": ("DodoryuHillA", "DodoryuHillB", "DodoryuHillC", "DodoryuLeadHill", "DodoryuRabbit"), "HoneyQueen": ("HoneyQueenWing",), "TicoFat": ("TicoFatGoodsStarPiece",), "TicoShop": ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp", "BenefitItemOneUp", "BenefitItemLifeUp"), "ShellfishYellowChip": ("YellowChip",), "BossKameck": ("BkDemo", "BossKameckFireBall", "Koura"), "BossKameck2": ("BkDemo", "BossKameckFireBall", "Koura", "BossKameckBarrier"), "FireBallBeamKameck": ("BossKameckFireBall",), "BreakableTrash": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "Teresa": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
+         "SkeletalFishBaby": ("SnakeFish",), "ChildSkeletalFishBaby": ("SnakeFish",), "SkeletalFishBoss": ("SkeletalFishBossHeadA", "SkeletalFishGuard", "SkeletalFishBossBreak", "SkeletalFishBossScarFlash", "SkeletalFishBossLight"), "IceMerameraKing": ("IceManIce", "IceMerameraKingShock", "IceMerameraKingBreak"), "KoopaVs1": KOOPA_PARTS + ("KoopaBattleMapPlanet", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate"), "KoopaVs2": KOOPA_PARTS + ("KoopaBattleMapPlanetVs2", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate"), "KoopaVs3": KOOPA_PARTS + ("KoopaBattleMapPlanetVs3Lv1", "KoopaBattleMapPlanetVs3Lv2", "KoopaBattleMapPlanetVs3Lv3", "KoopaPlateDamage", "KoopaVS3HoleSunPlanet", "KoopaVS3HoleSunInsidePlanet", "KoopaRock", "KoopaRockBreak", "KoopaRollBall", "Peach", "KoopaJr", "KoopaJrShip"), "GhostPlayer": ("GhostMario", "GhostLuigi", "Koura"), "BegomanBabyLauncher": ("BegomanBaby",), "ElectricRailMoving": ("ElectricRailPoint",), "ElectricRail": ("ElectricRailPoint",), "NokonokoLand": ("Koura~0", "Koura~1"), "Penguin": ("Koura~0",), "PenguinStudent": ("KouraShine",), "Creeper": ("CreeperFlower", "CreeperLeaf"), "TripodBoss": ("TripodBossLow", "HomingKiller"), "Dodoryu": ("DodoryuHillA", "DodoryuHillB", "DodoryuHillC", "DodoryuLeadHill", "DodoryuRabbit"), "HoneyQueen": ("HoneyQueenWing",), "TicoFat": ("TicoFatGoodsStarPiece",), "TicoShop": ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp", "BenefitItemOneUp", "BenefitItemLifeUp"), "ShellfishYellowChip": ("YellowChip",), "BossKameck": ("BkDemo", "BossKameckFireBall", "Koura"), "BossKameck2": ("BkDemo", "BossKameckFireBall", "Koura", "BossKameckBarrier"), "FireBallBeamKameck": ("BossKameckFireBall",), "BreakableTrash": ("BreakableCageBreak",), "BreakableCage": ("BreakableCageBreak",), "BreakableCageRotate": ("BreakableCageBreak",), "BreakableCageL": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "Teresa": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
          "Rosetta": ("LightDome", "DomeHalo"),  # RosettaDemoHeavensDoor1's parts (ライトドーム, ライト後光)
          "StarReturnDemoStarter": ("PStar", "GStar", "SpinTico", "MarioHair"), "GrandStarReturnDemoStarter": ("GStar",), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
@@ -265,8 +265,6 @@ def morph_arcs(o):
         a = [s32(v) for v in o["args"]]
         return () if o["name"] == "WoodBox" and a[4] in (0, -1) or o["name"] == "KoopaStatue" and a[3] != 1 else (KINOKO[o["name"]],)
     if o["name"] == "Kinopio" and s32(o["args"][2]) == 8:  # mIsSpawnPowerStarMode: its TakeOutStar's star model (game.c kinopio_nerve)
-        return ("PStar",)
-    if o["name"] == "TrickRabbit" and RGPH_ON:  # RabbitStateCaught's mPowerStarModel
         return ("PStar",)
     if o["name"] not in MORPH_ARCS:
         return ()
@@ -1925,18 +1923,11 @@ def path_entry(p):
             b"".join(struct.pack("<ii", a1[i], a2[i]) for i in range(n)))
 
 
-# TrickRabbit's rail graph, star declarer and PStar only when SMG_RGPH is set in the environment: its nerves past
-# WaitStart (game.c trick.inc trm_update) were not run in PCSX2 yet; without RGPH the engine leaves it as it was
-RGPH_ON = bool(__import__("os").environ.get("SMG_RGPH"))
-
-
 def rgph_chunk(keep, paths):
     """'RGPH': TrickRabbit's rail graph (MR::createRailGraphFromJMap, RailGraphUtil.cpp addRailToGraph): its rail and
     the rails linked from it by Path_ID; a point within 100 of a node is that node (the nearest), consecutive points
     are joined by an edge with the earlier point's args, a closed rail's last to its first. u32 n, n x {s32 row,
     u32 nnodes, u32 nedges, f32 nodes[nnodes][3], nedges x {u16 a, u16 b, s16 arg0, arg1, arg2, arg3, arg7, pad}}."""
-    if not RGPH_ON:
-        return b""
     out = []
     s16 = lambda v: max(-0x8000, min(0x7FFF, s32(v) if v >= 0 else v))
     for row, o in enumerate(keep):
@@ -2147,7 +2138,7 @@ def declare_stars(keep, scenario, appear, jp):
             k = None if 1 <= s32(r["args"][0]) <= 3 else -1
         elif r["name"] == "Kinopio":  # Kinopio::init: declarePowerStar in its power star mode (mBehavior 8)
             k = None if s32(r["args"][2]) == 8 else -1
-        elif r["name"] == "TrickRabbitFreeRun" or (r["name"] == "TrickRabbit" and RGPH_ON):  # their init: declarePowerStar
+        elif r["name"] in ("TrickRabbit", "TrickRabbitFreeRun"):  # their init: declarePowerStar
             k = None
         elif r["name"] in ("LuigiNPC", "LuigiEvent"):  # LuigiNPC::isDeclarePowerStarType: Afraid, Event, OnTree, Arrested
             t = s32(r["args"][0]) + (2 if r["name"] == "LuigiEvent" else 0)
