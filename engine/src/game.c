@@ -4336,6 +4336,10 @@ static void update_meteor(void)
         if (env) in->lv[0] = se_level(SE_OJ_LV_METEOR_ENV_FLY, &p.x, in->lv[0]);
         Hit h[1];
         int brk = 0;
+        float fm[16]; /* its effects' host: its place on the rail */
+        memcpy(fm, in->m, 64);
+        fm[12] = p.x; fm[13] = p.y; fm[14] = p.z;
+        if (*ph == 3) fx_named("MeteorStrike", "MeteorStrike", fm, NULL, in); /* exeMove: emitEffect once shown, deleted at the break (initEffectKeeper(0, nullptr): the model's group for the three classes) */
         if (!env && vlen(vsub(c, p)) < 90.0f + HIT_BODY_R) {
             mario_attack(ATK_STRONG, p);
             printf("meteor %d hits Mario\n", in->row);
@@ -4345,10 +4349,20 @@ static void update_meteor(void)
         else if (!env && kcl_query(p, 80.0f, h, 1)) {
             printf("meteor %d breaks on the ground after %d steps\n", in->row, *t);
             end = 1;
-            if (*ph == 3) { if ((h[0].attr & 0x3F) == 10) se_start(SE_OJ_METEOR_FALL_MAGMA, &p.x); else brk = 2; } /* isBindedGroundDamageFire */
+            if (*ph == 3) { /* emitEffectColumn: LavaColumn by the ground's attribute, on calcBreakPosture's matrix (the ground's normal up) */
+                float cm[16];
+                int fire = (h[0].attr & 0x3F) == 10; /* isBindedGroundDamageFire */
+                basis_matrix(cm, p, h[0].n, dir, 0);
+                fx_named("MeteorStrike", fire ? "LavaColumnAttrDamageFire" : "LavaColumnAttrDefault", cm, NULL, NULL);
+                if (fire) se_start(SE_OJ_METEOR_FALL_MAGMA, &p.x); else brk = 2;
+            }
             if (*ph == 3 && brk != 2) meteor_rumble(p, cannon);
         }
-        if (brk) { se_start(SE_OJ_METEOR_BREAK, &p.x); meteor_rumble(p, cannon); } /* exeBreak */
+        if (*ph == 3 && env && !end && render_clip_judge(&ahead.x, 200.0f, 1e9f)) end = 1; /* exeMove: a shown Environment one out of the screen is killed */
+        if (brk) { /* exeBreak */
+            se_start(SE_OJ_METEOR_BREAK, &p.x); meteor_rumble(p, cannon);
+            fx_named("MeteorStrike", "MeteorStrikeBreak", fm, NULL, NULL);
+        }
         if (end) {
             *ph = r->arg[1] > 0 ? 0 : 2;
             *t = 1; /* the interval counts from 1 */
@@ -49451,7 +49465,11 @@ static void dx_cast_hook(int row, int type, int part)
         return;
     }
     if (type == 0 && !strcmp(cls, "GCaptureTarget")) { gcap_appear(row); return; } /* GCaptureTarget::appear (update_gcap_targets) */
-    if (type == 3 && !strcmp(cls, "ElectricRail")) { row_dead[row] = 1; sw_changed = 1; return; } /* ElectricRailNrvDisappear */
+    if (type == 3 && !strcmp(cls, "ElectricRail")) { /* ElectricRailNrvDisappear: SE_OJ_ELEC_RAIL_VANISH at its first step (ponytail: gone at once, its points with it: no 20-frame shrink, the points do not stay) */
+        se_start(SE_OJ_ELEC_RAIL_VANISH, sc->objs[row].pos);
+        row_dead[row] = 1; sw_changed = 1;
+        return;
+    }
     if (type == 2 || type == 3) printf("demo: no %s for %s\n", type == 2 ? "functor" : "nerve", cls);
 }
 
