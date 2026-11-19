@@ -3425,6 +3425,7 @@ void game_init(const Scene *s, const unsigned char *blob)
  * and it takes no chip, appear request nor counter. ponytail: the chips' FlashingCtrl for arg1 frames
  * (ChipBase::appearFlashing, killed at its end) not ported: no disc group sets arg1; a ShellfishYellowChip's chip is
  * left in its shell when deactivated */
+static int chip_box_type(int yel) { return scene_type(sc, yel ? "TreasureBoxYellowChip" : "TreasureBoxBlueChip"); } /* TreasureBoxCracked::initYellowChip / initBlueChip: a chip of the group arg0 */
 #define MAX_CHIPG 32
 static struct { short row; u8 visible, done, deact; int timer, got, adf; V3 ui; float range; } chg[MAX_CHIPG];
 static int nchg;
@@ -3442,7 +3443,7 @@ static int chip_group_of(int row) /* its state, made at its first use (init / up
     int n = 0;
     for (u32 k = 0, ct = (u32)scene_type(sc, chip), cs = (u32)scene_type(sc, "ShellfishYellowChip"); k < sc->nobjs; k++) {
         const Row *c = &sc->objs[k];
-        if ((c->type != ct && !(chip[0] == 'Y' && c->type == cs)) || c->arg[0] != r->arg[0]) continue;
+        if ((c->type != ct && !(chip[0] == 'Y' && c->type == cs) && (int)c->type != chip_box_type(chip[0] == 'Y')) || c->arg[0] != r->arg[0]) continue;
         V3 a = vsub(row_pos(c), v3(2000, 2000, 2000)), b = vadd(row_pos(c), v3(2000, 2000, 2000));
         if (!n++) { lo = a; hi = b; continue; }
         lo = v3(fminf(lo.x, a.x), fminf(lo.y, a.y), fminf(lo.z, a.z)); hi = v3(fmaxf(hi.x, b.x), fmaxf(hi.y, b.y), fmaxf(hi.z, b.z));
@@ -3466,10 +3467,20 @@ static int chip_group_total(int row) /* mTotalCount */
     const Row *r = &sc->objs[row];
     const char *chip = sc->types[32 * r->type] == 'Y' ? "YellowChip" : "BlueChip";
     int n = 0;
-    for (u32 k = 0, ct = (u32)scene_type(sc, chip), cs = (u32)scene_type(sc, "ShellfishYellowChip"); k < sc->nobjs; k++)
-        if ((sc->objs[k].type == ct || (chip[0] == 'Y' && sc->objs[k].type == cs)) && sc->objs[k].arg[0] == r->arg[0]) n++;
+    for (u32 k = 0, ct = (u32)scene_type(sc, chip), cs = (u32)scene_type(sc, "ShellfishYellowChip"), cb = (u32)chip_box_type(chip[0] == 'Y'); k < sc->nobjs; k++)
+        if ((sc->objs[k].type == ct || (chip[0] == 'Y' && sc->objs[k].type == cs) || sc->objs[k].type == cb) && sc->objs[k].arg[0] == r->arg[0]) n++;
     return n;
 }
+static int chip_group_find(int yel, int grp) /* the group's state (chg index), -1 none */
+{
+    for (int i = 0; i < nlogic; i++) {
+        const Row *r = &sc->objs[logic[i].row];
+        if (logic[i].kind == LOGIC_CHIPS && r->arg[0] == grp && (sc->types[32 * r->type] == 'Y') == yel) return chip_group_of(logic[i].row);
+    }
+    return -1;
+}
+static int chip_group_deact(int yel, int grp) { int k = chip_group_find(yel, grp); return k >= 0 && chg[k].deact; } /* mIsDeactivated */
+static int chip_group_got(int yel, int grp) { int k = chip_group_find(yel, grp); return k >= 0 ? chg[k].got : 0; }   /* getGotChipCount */
 /* MR::noticeGetChip from a chip of `type` (0 blue, 1 yellow) and group arg0 */
 static void chip_notice_get(int yel, int grp, int chip_row)
 {
@@ -43109,8 +43120,33 @@ static void update_dswitches(void)
  * turtle; a gold one (arg2 1) refuses all but special ones: its REFUSE SE) or an explosion opens it (Open clip, the
  * OPEN SE dry or wet), then its item comes out: Coin (popped 130 up), KinokoOneUp (a life), KinokoLifeUp (life up),
  * PowerStar (its declared star: the box gone), Empty (its SW_A arg0 (5) frames on); arg2 2 starts open. Its dead switch
- * at the clip's end. row_turn 0 Wait / 1 Open / 2 OpenWait, row_step its step. its mushroom raised out (bitem_rise). ponytail: the coin popped (not raised),
- * chips and air bubbles give nothing, no flip of Mario off its half-open lid, no Light / Glow effects */
+ * at the clip's end. row_turn 0 Wait / 1 Open / 2 OpenWait, row_step its step. its mushroom raised out (bitem_rise).
+ * TreasureBoxBlueChip / YellowChip: a chip of the group arg0 (initBlueChip / initYellowChip: setGroupID; counted in the
+ * group's total, chip_box_type); AirBubble: an air bubble. The item comes out of the box's place (exeOpen: sFirstSpeed
+ * 15 and sAccelRate 1.2 a frame along its up to sChipOffset 170 / sAirBubbleOffset 220), a chip then bounces
+ * (exeItemBound: sBoundTime 20 frames, (15 - 15 / 20 x step) x sin(36 x step) over its place) and can be taken
+ * (ACTMES_ITEM_END_MOVE: its sensor 80; ChipBase::exeGot); the bubble waits where it stops (a touch within 130, a
+ * spin within 250). row_hold 1: its item taken. ponytail: the coin popped (not raised), no flip of Mario off its
+ * half-open lid, no Light / Glow effects; the chip does not flash nor carry a bubble */
+static int tbox_item(const char *n) /* mItemType: 2 YellowChip, 3 BlueChip, 6 AirBubble; 0 the others */
+{
+    return strstr(n, "YellowChip") ? 2 : strstr(n, "BlueChip") ? 3 : strstr(n, "AirBubble") ? 6 : 0;
+}
+/* the item's place k steps into exeOpen (0 its first); *ready once it can be taken */
+static V3 tbox_item_pos(const Inst *in, int item, int k, int *ready)
+{
+    V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), p = v3(in->m[12], in->m[13], in->m[14]);
+    float target = item == 6 ? 220.0f : 170.0f, h = 0.0f, v = 15.0f;
+    int n = 0;
+    for (; n <= k && h < target; n++) { v += 1.2f; h += v; } /* mItemVelocity += sAccelRate x up, the item += it */
+    *ready = 0;
+    if (h < target) return vadd(p, vmul(up, h));
+    int s = k - n; /* exeItemBound's step (the frame after checkItemPos) */
+    if (item == 6) { *ready = 1; return vadd(p, vmul(up, target)); }
+    if (s < 0) return vadd(p, vmul(up, target));
+    if (s >= 20) { *ready = 1; return vadd(p, vmul(up, target)); }
+    return vadd(p, vmul(up, target + (15.0f - 15.0f / 20.0f * (float)s) * sinf(36.0f * (float)s * 0.0174533f)));
+}
 static int flip_star_out(int row) /* a FlipPanelObserver past its Complete demo: its star requested */
 {
     return (row_step[row] & 0x6000) == 0x6000 && !strcmp(sc->types + 32 * sc->objs[row].type, "FlipPanelObserver");
@@ -43235,6 +43271,50 @@ static void update_tboxes(void)
     }
 }
 
+static void update_tbox_items(void) /* a chip's or an air bubble's box, opened: its item out, taken */
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    FOR_KIND(i, tbox) {
+        Inst *in = &insts[i];
+        int item = in->tbox && row_shown(in->row) ? tbox_item(sc->types + 32 * sc->objs[in->row].type) : 0, ready;
+        if (!item || row_turn[in->row] == 0 || row_hold[in->row] || sc->objs[in->row].arg[2] == 2) continue;
+        const Row *r = &sc->objs[in->row];
+        if (item != 6 && chip_group_deact(item == 2, r->arg[0])) continue; /* registerChip: deactive */
+        V3 at = tbox_item_pos(in, item, row_step[in->row] - 1, &ready);
+        if (!ready) continue;
+        float d = vlen(vsub(c, at));
+        if (item == 6) { /* AirBubble: exeWait's touch / spin */
+            if (d < 130.0f + HIT_BODY_R || (mario->spin_timer > 0 && d < 250.0f)) { bubble_break(at); row_hold[in->row] = 1; printf("treasure box row %d: its bubble taken%c", in->row, 10); }
+            continue;
+        }
+        if (d < 80.0f + HIT_BODY_R) { /* ChipBase's sensor 80: requestGet, exeGot */
+            float m[16];
+            int yel = item == 2;
+            basis_matrix(m, at, vnorm(v3(in->m[4], in->m[5], in->m[6])), vnorm(v3(in->m[8], in->m[9], in->m[10])), 0);
+            fx_emit(yel ? FX_YELLOWCHIP_GET : FX_BLUECHIP_GET, m); pad_rumble(RUMBLE_MIDDLE);
+            u32 h = se_start(yel ? SE_SY_YELLOWCHIP_GET : SE_SY_BLUECHIP_GET, NULL);
+            if (h) se_port(h, 11, (u16)(chip_group_got(yel, r->arg[0]) + 1));
+            chip_notice_get(yel, r->arg[0], in->row); /* MR::noticeGetChip */
+            row_hold[in->row] = 1;
+            printf("treasure box row %d: its chip taken%c", in->row, 10);
+        }
+    }
+}
+static void draw_tbox_items(void) /* the chip (turning as the coins do) or the bubble over its opened box */
+{
+    FOR_KIND(i, tbox) {
+        const Inst *in = &insts[i];
+        int item = in->tbox && row_shown(in->row) ? tbox_item(sc->types + 32 * sc->objs[in->row].type) : 0, ready;
+        if (!item || row_turn[in->row] == 0 || row_hold[in->row] || sc->objs[in->row].arg[2] == 2) continue;
+        if (item != 6 && chip_group_deact(item == 2, sc->objs[in->row].arg[0])) continue;
+        const Model *md = item == 6 ? m_bubble : scene_model(sc, item == 2 ? "YellowChip" : "BlueChip");
+        if (!md) continue;
+        float m[16];
+        basis_matrix(m, tbox_item_pos(in, item, row_step[in->row] - 1, &ready), vnorm(v3(in->m[4], in->m[5], in->m[6])),
+                     vnorm(v3(in->m[8], in->m[9], in->m[10])), item == 6 ? 0 : coin_rot);
+        render_model(md, m, 0x80, 0x80, 0x80);
+    }
+}
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -58432,6 +58512,7 @@ void game_update(void)
     update_levers();
     update_dswitches();
     update_tboxes();
+    update_tbox_items();
     update_gaps();
     st_update();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
@@ -60213,6 +60294,7 @@ mario_model:
     draw_gaps();
     draw_queen_wing();
     RESTQ(4);
+    draw_tbox_items();
     if (m_bubble) for (int b = 0; b < MAX_BUBBLES; b++) { /* AirBubbleGenerator's bubbles */
         if (!bubbles[b].life || bubbles[b].nrv) continue; /* (KillWait: hidden) */
         basis_matrix(m, bubbles[b].pos, up_at(bubbles[b].pos, v3(0, 1, 0)), v3(1, 0, 0), 0);
