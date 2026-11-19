@@ -146,6 +146,15 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   3500). BombHeiLauncher: its SW_A listened as on / off edges (onSwitchA: countdown 0, LauncherWait: the bomb at once;
   offSwitchA: Stop). Jellyfish: knockOut (jf_knock) from fire balls, shells, the rainbow attack and explosions.
   Test: built plain, host tests, the route test, memcheck; NOT run in PCSX2 (unverified-2026-11-18.md). No repack.
+- TrickRabbit run, Kinopio's Appear (fix/trick-rabbit-run, 2026-11-19): TrickRabbit (CosmosGardenGalaxy 1) seen in PCSX2
+  past WaitStart: its talk, the demo run along the arg7 -2 edges with the chase BGM, DemoEnd, Wait, Runaway /
+  JumpStart / Jump over two dozen nodes, the catch, "power star appear demo: row 207 (declarer 206 TrickRabbit)",
+  GiveUp (Tumble / FallDown / BrakeTurn did not come up in the run). slice.py's SMG_RGPH switch is gone: RGPH, the
+  declarer and PStar are always made. trk_test: Mario held by the rabbit until its zone's collision is loaded, put
+  toward the nearest graph node (its front pointed off its platform), then kept on the node behind it. Kinopio's
+  Appear nerve (kinopio_nerve n 4; appear switch, arg4 not 0): its Change action, the fall by sFallGravity 0.6 /
+  sFallFrictionRate 0.98 as a line to the map under its feet (ponytail: no binder, no faceToPlayer), over at the
+  BCK's end; not run in PCSX2. **Release: slice_all.py CosmosGardenGalaxy** (RGPH, TrickRabbit's declarer, PStar).
 - Trick rabbits (feat/632-trick-rabbits, #632, 2026-11-18): TrickRabbitFreeRun (ReverseKingdomGalaxy 1) and
   TrickRabbit (CosmosGardenGalaxy 1) had no gameplay (a still model, the star out from the start). engine/src/trick.inc,
   on the Gateway rabbits' kit (GwRabbit, rr_state = WalkerStateRunaway, RunawayRabbit's WalkerStateBlowDamage):
