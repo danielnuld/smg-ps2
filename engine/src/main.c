@@ -1745,6 +1745,12 @@ int main(void)
             if (frame % 10 == 0) printf("dring test f %u: %d\n", frame, st);
         }
 #endif
+#ifdef LAUNCHER_TEST
+        if (frame >= 900 && frame < 4000) { /* MarioLauncher (after the stage start): Mario in, the aim, the shot (or the reject) */
+            int st = game_test_launcher();
+            if (frame % 50 == 0) printf("launcher test f %u: %d\n", frame, st);
+        }
+#endif
 #ifdef BIGBUBBLE_TEST
         if (frame >= 900 && frame < 2400) { /* BigBubble (after the stage start): Mario in, pushed by the pointer, Z out */
             int st = game_test_bigbubble((int)frame);
@@ -2111,6 +2117,9 @@ int main(void)
 #endif
 #ifdef SLIDER_TEST
         { extern void game_test_slider_input(int); game_test_slider_input((int)frame); } /* Mario put on a Slider floor */
+#endif
+#ifdef SINK_TEST /* XF=-DSINK_TEST=<floor code 17 / 18 / 25 / 31>: Mario put on a Sink floor (#565) */
+        { extern void game_test_sink_input(int, int); game_test_sink_input((int)frame, SINK_TEST); }
 #endif
 #ifdef SIDESTEP_TEST
         { extern void game_test_sidestep_input(int); game_test_sidestep_input((int)frame); } /* Mario leans on a wall and side steps */

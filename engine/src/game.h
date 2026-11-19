@@ -46,6 +46,7 @@ int game_test_petari(void);
 int game_test_sambo(void);
 int game_test_bomb_teresa(void);
 int game_test_bigbubble(int f);
+int game_test_launcher(void);
 int game_test_dring(void);
 int game_test_seesaw(int phase);
 int game_test_follow(int phase);
