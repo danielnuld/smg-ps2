@@ -11,6 +11,17 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- What the cages hold, part of #648 (feat/648-cage-items, 2026-11-19): DummyDisplayModel was not ported, so a
+  CrystalCageS / M or a BreakableCage looked empty (the disc places coins, star pieces, Kinopios, Ticos, 1-ups,
+  chips, SuperSpinDrivers... in them: Good Egg's DinoPackunBattleZone among them). tools/slice.py: `ddm_arcs` (in
+  `morph_arcs`) packs the row's item by its arg7 as a static model "Ddm..." (`DDM`, MODEL_ARC), at its mAnim's pose
+  with the new variant "<archive>#=<BCK>" (the whole model at that BCK's last frame: Kinopio / SuperSpinDriver /
+  StarPieceDummy Freeze; Kinopio at its arg6 ColorChange frame) (**repack**, every galaxy with cages: all). game.c:
+  `ddm_model` / `ddm_draw` (Inst.ddm) draw it on the cage's base matrix at its fixed position less the table's
+  offset; no coin (shown or popped) under the Dark comet; the coin pops from where it showed; the S / M stump goes
+  to _F8 (the map within 300 x scale, wreck `lo`); SW_DEAD waits 10 steps with a SuperSpinDriver inside
+  (`cage_dead_row`); CrystalCageS's body follows Mario's foot on its Y from -40 to 140. Left of #648's CrystalCage
+  list: arg2's binder and fall; the BreakableCage list but for its item.
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /
