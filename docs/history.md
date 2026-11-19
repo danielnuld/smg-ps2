@@ -11,6 +11,14 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- RandomEffectObj (feat/631-random-effect, #631, 2026-11-18): FireworksA (10 placed) and ShootingStarArea (56) played
+  as steady SimpleEffectObj ambient effects. Now in ambient_effects (amb_once 2 / 3; row_step mStep + 2, row_turn
+  mSeStep + 1): the first emit |repeat(x + y + z, 0, arg1)| frames after its placement (0: never, as Petari), then
+  one every arg0 (600) +- arg1 (180) frames while in Move (no SW_A, or it on); FireworksA's
+  SE_OJ_FIREWORK_SEA_SHOOT at the emit and _EXPLODE 40 frames on. Seen in the log of a plain build with
+  `XF=-DSE_LOG` (StarDustGalaxy 1: its ShootingStarArea rows emit in turn); FireworksA not run (its rows wait for
+  SW_A 17 in OceanRingGalaxy). ponytail: no clipping (far 400, radius 1500), appear()'s new first time. **Release:
+  sound.py --pack** OceanRingGalaxy (the two firework SEs are new in game.c).
 - Enemies on AreaMove / RailMove floors (feat/611-area-move-walkers, #611, 2026-11-18):
   MR::calcVelocityAreaOrRailMoveOnGround as game.c area_rail_vel (an AreaMove floor, code 28: MR::calcAreaMoveVelocity,
   the AreaMoveSphere holding the place: its up less the part towards its centre x arg0 (10); a RailMove floor, 27: the
