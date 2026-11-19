@@ -329,6 +329,7 @@ HOME_POS = "\u5408\u4f53\u30d6\u30ed\u30c3\u30af\u6545\u90f7\u70b9"  # 合体ブ
 # whose texture game.c's statics.inc (Flag) draws the cloth with
 TEX_ONLY = ("Flag", "FlagKoopaA", "FlagKoopaB", "FlagRaceA", "FlagKoopaCastle", "FlagPeachCastleA", "FlagPeachCastleB",
             "FlagPeachCastleC", "FlagSurfing", "FlagTamakoro",
+            "TrampleStar",  # TrampleStar::init: TrampleStar.arc's TrampleStar.bti (game.c trample_star.inc)
             "SwingRope")  # SwingRopeGroup: SwingRope.arc's SwingRope.bti (game.c swing_rope.inc)
 DUMMY_TEX = ("MapDummy",)  # AstroMapBoard: GalaxyMapController::capture's picture (TEXT pad0 1: render_target_capture)
 LOGIC = ("SoundEmitterCube", "SoundEmitterSphere", "QuakeEffectAreaCube", "PlayerSeCube", "PlayerSeSphere", "PlayerSeCylinder", "MercatorCube", "MirrorAreaCube", "SnowFloor", "SnowplowSwitch", "FallOutFieldDraw", "ClipFieldSwitch", "RaceRail", "NPCSupportRail", "BallRail", "SphereRailDash", "FluffWind", "Fountain", "SpringJetWater", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "TimerSwitch", "SkeletalFishBossRail", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "KoopaSwitchKeeper", "KoopaPowerUpSwitch", "KoopaViewSwitchKeeper", "KoopaRestarterVs3", "BossKameckMoveRail", "TripodBossBaseJointPosition", "TripodBossStepPoint", "TripodBossStepStartArea", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
