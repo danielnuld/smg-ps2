@@ -683,12 +683,16 @@ static void trk_test(void)
         static int go;
         pad_force = 0;
         if (k->nrv == TRM_WAITSTART) {
-            if (t > 60 && t < 200) { mario->pos = vadd(k->pos, vadd(vmul(k->front, 170.0f), vmul(k->qy, 30.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
-            if (t > 260 && t % 45 < 5) pad_force = PAD_CROSS;
+            if (t > 60 && k->step < 60) { /* held until its zone's collision is loaded (its steps run); on its route's ground: toward the graph node 100 .. 400 off that is nearest (its front may point off its platform) */
+                V3 d = k->front; float best = 3.4e38f;
+                for (int n = 0; n < trg.nn; n++) { V3 v = vtangent(vsub(trg_node(n), k->pos), k->grav); float l = vlen(vsub(trg_node(n), k->pos)); if (l > 100.0f && l < best && vlen(v) > 50.0f) { best = l; d = vnorm(v); } }
+                mario->pos = vadd(k->pos, vadd(vmul(d, 170.0f), vmul(k->qy, 30.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            }
+            if (k->step > 150 && t % 45 < 5) pad_force = PAD_CROSS;
         }
         if (k->nrv == TRM_WAIT || k->nrv == TRM_RUNAWAY || k->nrv == TRM_JUMPSTART || k->nrv == TRM_JUMP || k->nrv == TRM_BRAKETURN) {
             go++;
-            if (go % 90 == 0 && go != 600 && go < 1200) { mario->pos = vadd(k->pos, vadd(vmul(k->front, -500.0f), vmul(k->qy, 60.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+            if (go % 90 == 0 && go != 600 && go < 1200) { mario->pos = trg.prev >= 0 ? vadd(trg_node(trg.prev), vmul(k->qy, 60.0f)) : vadd(k->pos, vadd(vmul(k->front, -300.0f), vmul(k->qy, 60.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
             if (go == 600) { mario->pos = vadd(k->pos, vmul(k->qy, 300.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
             if (go >= 1200 && go % 30 == 0) { mario->pos = vadd(k->pos, vmul(k->qy, 10.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
         }

@@ -33,6 +33,12 @@ static void oub_update(void);
 static void oub_draw(void);
 static void sgt_init(void);
 static void sgt_draw(void);
+static void bt_init(void);
+static void bt_draw(void);
+static void crb_init(void);
+static void crb_update(void);
+static void crb_draw(void);
+static void csf_init(void);
 static void mono_update(void);
 static void srl_init(void);
 static void srl_update(void);
@@ -277,10 +283,19 @@ static void yn_update(YesNo *y)
     btn_update(&y->no);
 }
 
-/* --- SysInfoWindow (WindowType_Normal) ------------------------------------------------------------------------ */
+/* IconAButton's type (its code is below): SysInfoWindow's mIconAButton */
+enum { IAB_OPEN, IAB_WAIT, IAB_TERM };
+typedef struct Iab { LytInst *l, *host; const char *pane; Nrv n; int on; float pos[2]; } Iab;
+static void iab_init(Iab *b, LytInst *host, const char *pane);
+static void iab_open(Iab *b);
+static void iab_term(Iab *b);
+static void iab_update(Iab *b);
+static void iab_draw(Iab *b);
+
+/* --- SysInfoWindow (WindowType_Normal; a Type_Key window opens its IconAButton at AButtonPosition) ------------------------------------------------------------------------ */
 enum { SI_APPEAR, SI_WAIT, SI_DISAPPEAR };
 enum { SI_KEY, SI_BLOCKING, SI_YESNO };
-typedef struct { LytInst *l; YesNo yn; int type; u8 alive; Nrv n; } SysInfo;
+typedef struct { LytInst *l; YesNo yn; Iab ab; int type; u8 alive; Nrv n; } SysInfo;
 
 static void si_init(SysInfo *w)
 {
@@ -289,6 +304,7 @@ static void si_init(SysInfo *w)
     w->n.next = SI_APPEAR;
     if (!w->l) return;
     yn_init(&w->yn, w->l);
+    iab_init(&w->ab, w->l, "AButtonPosition"); /* createAndSetupIconAButton */
     lyt_set_text_rec(w->l, "Left", msg_get("System_Save00_No"));
     lyt_set_text_rec(w->l, "Right", msg_get("System_Save00_Yes"));
 }
@@ -314,6 +330,7 @@ static void si_appear(SysInfo *w, const char *label, int type)
     nrv_set(&w->n, SI_APPEAR);
     w->alive = 1;
     if (type == SI_YESNO) yn_appear(&w->yn);
+    if (type == SI_KEY) iab_open(&w->ab); /* mIconAButton->openWithoutMessage */
 }
 
 static void si_update(SysInfo *w)
@@ -336,14 +353,17 @@ static void si_update(SysInfo *w)
         if (FIRST(&w->n)) {
             lyt_start_pane(w->l, "InfoWindow", "ButtonEnd", 0);
             lyt_start_pane(w->l, "WinInfoWindow", "ButtonEnd", 0);
+            if (w->type == SI_KEY) iab_term(&w->ab);
         }
-        if (lyt_pane_stopped(w->l, "InfoWindow", 0) && (w->type != SI_YESNO || !w->yn.on)) w->alive = 0;
+        if (lyt_pane_stopped(w->l, "InfoWindow", 0) && (w->type != SI_YESNO || !w->yn.on)) { w->alive = 0; w->ab.on = 0; } /* kill: mIconAButton->kill */
         break;
     }
     nrv_end(&w->n);
     yn_update(&w->yn);
     lyt_update(w->l);
+    iab_update(&w->ab);
 }
+static void si_draw(SysInfo *w) { if (w->alive) { lyt_draw(w->l); iab_draw(&w->ab); } } /* draw (ExecuteType_Children: its icon too) */
 
 static void si_disappear(SysInfo *w) { if (w->alive) nrv_set(&w->n, SI_DISAPPEAR); } /* SysInfoWindow::disappear */
 
@@ -705,8 +725,6 @@ void menu_result_start(void) /* StarReturnDemoStarter::tryStartStageResult: the 
 /* --- IconAButton (Screen/IconAButton.cpp, menus.bin's IconAButton): Open (Appear), Wait (Press), Term (End, dead);
  * openWithoutMessage hides PicPlate and clears its text; placed at the host's pane (setFollowActorPane /
  * setLayoutPosAtPaneTrans: copyPaneTrans each frame) */
-enum { IAB_OPEN, IAB_WAIT, IAB_TERM };
-typedef struct Iab { LytInst *l, *host; const char *pane; Nrv n; int on; float pos[2]; } Iab;
 static void iab_init(Iab *b, LytInst *host, const char *pane)
 {
     memset(b, 0, sizeof *b);
@@ -1556,6 +1574,9 @@ void menu_init(const Scene *s)
     pms_init();
     oub_init();
     sgt_init();
+    bt_init();
+    crb_init();
+    csf_init();
     memset(&mono, 0, sizeof mono);
     mono.l = lyt_new("PrologueStarSteward"); /* in map.bin: the Observatory only */
     pro_lyt_init();
@@ -1660,13 +1681,15 @@ static void subm_draw(void) { if (subm_vis) for (int k = 0; k < 2; k++) if (subm
  * Recover (Font's Flash, the number's CountUpPaneRumbler), BreakMeter (4..6 down to 3: Break, then FontPosition2to1),
  * ZeroMeter / ZeroMeterBreak (hidden at 0), PowerUp (the life-up mushroom: the W plate by Mario's head counting to 6,
  * MeterMove back to its place, CounterMove: FontPosition1to2, 4 5 6), WaitStart (240 frames); its ShowHide frame
- * _4C x mAlpha x 20, the pointer on PicBase fading it to 0.3. ponytail: no SuddenDeathMeter (a life of 1), no Break /
- * Break123 layout effects */
+ * _4C x mAlpha x 20, the pointer on PicBase fading it to 0.3. MarioMeter::initLifeCount: with a life of 1 (the Dark
+ * comet) the SuddenDeathMeter (Screen/SuddenDeathMeter.cpp, the same panes) stands in (hm.sudden): no Danger / Damage1 /
+ * Recover / WaitStart, no slide, mAlpha 0.3 until requestForceAppear's Appear makes it 1, PowerUp straight to 2,
+ * BreakMeter and ZeroMeter as the other's. ponytail: no Break / Break123 layout effects */
 enum { ML_HIDE, ML_APPEAR, ML_WAIT, ML_WAITSTART, ML_POWERUP, ML_METERMOVE, ML_COUNTERMOVE, ML_RECOVER, ML_DAMAGE,
        ML_BREAKMETER, ML_ZEROMETER, ML_ZEROMETERBREAK };
 static struct {
-    LytInst *l;
-    u8 alive, hidden;
+    LytInst *l, *nl, *sl;                     /* the one in use; HitPointMeter, SuddenDeathMeter */
+    u8 alive, hidden, sudden;
     int count, rum_t;                         /* mCount; the RumbleCalculator's _4 (of 15) */
     float alpha, k;                           /* mAlpha, _4C */
     float pos[2], posw[2], p3c[2], rum[2];    /* mFollowPos, mFollowPosW, _3C, the rumbler's mPosition */
@@ -1698,11 +1721,15 @@ static void hm_anim_base(void) /* setAnimBase */
 static void hm_zero_follow(void) { hm.pos[0] = hm.pos[1] = hm.posw[0] = hm.posw[1] = 0; }
 void menu_meter_init_count(int life) /* a new MeterLayout (the scene's, or the scene again after a miss) and initCount */
 {
-    LytInst *l = hm.l;
+    LytInst *nl = hm.nl, *sl = hm.sl;
     memset(&hm, 0, sizeof hm);
-    hm.l = l; hm.count = life; hm.k = 1.0f; hm.rum_t = 15; /* mCount(3), mAlpha(), _4C(1) */
+    hm.nl = nl; hm.sl = sl;
+    if (life == 1 && !hm.sl) hm.sl = lyt_new("SuddenDeathMeter"); /* mUseSuddenDeath */
+    hm.sudden = life == 1 && hm.sl;
+    LytInst *l = hm.l = hm.sudden ? hm.sl : hm.nl;
+    hm.count = life; hm.k = 1.0f; hm.rum_t = 15; /* mCount(3), mAlpha(), _4C(1) */
     if (!l) return;
-    lyt_follow(l, "HPMeter", hm.pos, 1);
+    if (!hm.sudden) lyt_follow(l, "HPMeter", hm.pos, 1);
     lyt_follow(l, "HitPointW", hm.posw, 1);
     lyt_follow(l, "HitPointNumber", hm.rum, 1); /* CountUpPaneRumbler */
     lyt_start(l, "FontPosition2to1", 1);
@@ -1711,17 +1738,19 @@ void menu_meter_init_count(int life) /* a new MeterLayout (the scene's, or the s
     hm_count_frame();
     hm.alive = 1; hm.n.next = -1; nrv_set(&hm.n, ML_WAIT); /* appear */
 }
-static void hm_init(void) { hm.l = lyt_new("HitPointMeter"); menu_meter_init_count(3); }
+static void hm_init(void) { hm.nl = lyt_new("HitPointMeter"); hm.sl = NULL; menu_meter_init_count(3); }
 void menu_meter_count(int life) /* setLifeCount (setCount) */
 {
     int prev = hm.count;
     hm.count = life;
+    if (hm.sudden) { if (life < prev) nrv_set(&hm.n, life == 0 ? ML_ZEROMETER : ML_BREAKMETER); return; } /* SuddenDeathMeter::setCount */
     if (life < prev) nrv_set(&hm.n, life == 0 ? ML_ZEROMETER : prev >= 4 && life < 4 ? ML_BREAKMETER : ML_DAMAGE);
     else if (prev < life) nrv_set(&hm.n, ML_RECOVER);
 }
 void menu_meter_power_up(void) /* requestPowerUp */
 {
     if (!hm.l) return;
+    if (hm.sudden) { nrv_set(&hm.n, ML_POWERUP); return; }
     hm.k = 1.0f;
     hm_frame_stop(2, hm.k * 20.0f);
     hm_zero_follow();
@@ -1734,6 +1763,7 @@ void menu_meter_active(int on) /* requestActive / requestDeactivate */
     if (!on) { hm.alive = 0; return; }
     if (hm.alive) return;
     hm.rum_t = 15; /* mCountUpPaneRumbler->reset */
+    if (hm.sudden) { hm.hidden = 0; hm.alive = 1; nrv_set(&hm.n, ML_WAIT); return; } /* appear, showLayout */
     if (hm.count == 3) { hm.k = 0; hm.pos[0] = (1.0f - hm_ease(0.0f)) * 50.0f; } /* getEaseInOutValue(0, 1, 0, 1) x 50 */
     else { hm.k = 1.0f; hm.pos[0] = hm.pos[1] = 0; }
     hm_frame_stop(2, hm.k * 20.0f);
@@ -1743,11 +1773,17 @@ void menu_meter_active(int on) /* requestActive / requestDeactivate */
 }
 void menu_meter_moving(int moving) /* requestPlayerMoving / requestPlayerStopped */
 {
-    if (!nrv_is(&hm.n, ML_WAIT)) return;
+    if (hm.sudden || !nrv_is(&hm.n, ML_WAIT)) return;
     if (hm.count == 3) hm.k = fminf(fmaxf(hm.k + (moving ? -0.05f : 0.05f), 0.0f), 1.0f);
     else hm.k = 1.0f;
 }
 void menu_meter_head(float x, float y) { hm.head[0] = x; hm.head[1] = y; }
+void menu_meter_force_appear(void) /* MarioMeter::requestForceAppearHPMeter (MeterLayout's: only with a count of 1) */
+{
+    if (!hm.l || (!hm.sudden && hm.count != 1)) return;
+    menu_meter_active(1);
+    nrv_set(&hm.n, ML_APPEAR);
+}
 int menu_test_meter(void) { return hm.alive * 1000 + hm.n.cur * 10 + hm.count; } /* tests: alive, nerve, count */
 void menu_meter_update(void) /* LayoutActor::movement: the nerve, control, the animations */
 {
@@ -1755,7 +1791,7 @@ void menu_meter_update(void) /* LayoutActor::movement: the nerve, control, the a
     switch (nrv_begin(&hm.n)) {
     case ML_HIDE: break;
     case ML_APPEAR:
-        if (FIRST(&hm.n)) { hm.posw[0] = hm.posw[1] = 0; hm_anim_base(); hm.k = 1.0f; }
+        if (FIRST(&hm.n)) { hm.posw[0] = hm.posw[1] = 0; if (hm.sudden) hm_count_frame(); else hm_anim_base(); hm.k = 1.0f; }
         hm.pos[0] = hm.pos[1] = 0;
         if (hm.n.step > 120) nrv_set(&hm.n, ML_WAIT); /* sAppearTime */
         break;
@@ -1765,6 +1801,7 @@ void menu_meter_update(void) /* LayoutActor::movement: the nerve, control, the a
         if (hm.n.step > 240) nrv_set(&hm.n, ML_WAIT); /* sWaitStartTime */
         break;
     case ML_WAIT:
+        if (hm.sudden) { if (FIRST(&hm.n)) hm_count_frame(); hm.posw[0] = hm.posw[1] = 0; break; }
         if (FIRST(&hm.n)) { hm_anim_base(); hm.pos[0] = hm.pos[1] = 0; }
         hm.pos[0] = (1.0f - hm_ease(hm.k)) * 50.0f; /* getEaseInOutValue(_4C, 1, 0, 1) x 50 */
         hm.posw[0] = hm.posw[1] = 0;
@@ -1777,11 +1814,12 @@ void menu_meter_update(void) /* LayoutActor::movement: the nerve, control, the a
         hm.posw[0] = hm.head[0] - base[0]; hm.posw[1] = hm.head[1] - base[1];
         if (FIRST(&hm.n)) {
             hm.hidden = 0; /* showLayout */
-            lyt_start(hm.l, "Danger1", 1); hm_frame_stop(1, 0.0f);
+            if (!hm.sudden) lyt_start(hm.l, "Danger1", 1);
+            hm_frame_stop(1, 0.0f);
             hm_recovery_frame();
             hm.k = 1.0f;
         }
-        if (hm.count < 6 && hm.n.step > 0 && hm.n.step % 5 == 0) { /* sRecoveryCountInterval */
+        if (!hm.sudden && hm.count < 6 && hm.n.step > 0 && hm.n.step % 5 == 0) { /* sRecoveryCountInterval */
             hm.count++;
             hm_recovery_frame();
             if (hm.count >= 4) lyt_set_number_rec(hm.l, "HitPointNumber", 3);
@@ -1799,6 +1837,11 @@ void menu_meter_update(void) /* LayoutActor::movement: the nerve, control, the a
         break;
     }
     case ML_COUNTERMOVE:
+        if (hm.sudden) {
+            if (FIRST(&hm.n)) { lyt_start(hm.l, "FontPosition1to2", 1); lyt_set_number_rec(hm.l, "HitPointNumber", 2); }
+            if (lyt_stopped(hm.l, 1)) nrv_set(&hm.n, ML_WAIT);
+            break;
+        }
         if (FIRST(&hm.n)) { lyt_start(hm.l, "FontPosition1to2", 1); hm.k = 1.0f; }
         if (hm.n.step == 0) lyt_set_number_rec(hm.l, "HitPointNumber", 4);
         if (hm.n.step == 5) lyt_set_number_rec(hm.l, "HitPointNumber", 5);
@@ -1830,11 +1873,11 @@ void menu_meter_update(void) /* LayoutActor::movement: the nerve, control, the a
             se_start(SE_SY_LIFE_PLATE_DEC, NULL);
             lyt_start(hm.l, "FontPosition2to1", 1);
             hm_count_frame();
-            nrv_set(&hm.n, ML_WAITSTART);
+            nrv_set(&hm.n, hm.sudden ? ML_WAIT : ML_WAITSTART);
         }
         break;
     case ML_ZEROMETER:
-        if (FIRST(&hm.n)) { lyt_start(hm.l, "Damage1", 1); hm_zero_follow(); hm_count_frame(); hm.k = 1.0f; }
+        if (FIRST(&hm.n)) { if (!hm.sudden) lyt_start(hm.l, "Damage1", 1); hm_zero_follow(); hm_count_frame(); hm.k = 1.0f; }
         if (lyt_stopped(hm.l, 1)) nrv_set(&hm.n, ML_ZEROMETERBREAK);
         break;
     case ML_ZEROMETERBREAK:
@@ -1846,6 +1889,7 @@ void menu_meter_update(void) /* LayoutActor::movement: the nerve, control, the a
     /* control: mAlpha (the pointer on PicBase), the ShowHide frame, the rumbler */
     float cx, cy;
     if (nrv_is(&hm.n, ML_APPEAR)) hm.alpha = 1.0f;
+    else if (hm.sudden) ; /* (SuddenDeathMeter::control: only Appear moves it) */
     else if (game_cursor(&cx, &cy) && lyt_pane_hit(hm.l, "PicBase", cx, cy)) hm.alpha -= 0.05f;
     else hm.alpha += 0.05f;
     hm.alpha = fminf(fmaxf(hm.alpha, 0.3f), 1.2f); /* sMinAlpha, sMaxAlpha */
@@ -2217,6 +2261,7 @@ int menu_update(void)
     wipe_update();
     dmu_update();
     mlay_update();
+    crb_update(); /* (before its PlayerMissLeft: CometRetryButton::control moves it after the nerve) */
     pms_update();
     oub_update();
     mono_update();
@@ -3865,8 +3910,8 @@ static void fs_draw(void)
     if (fsl.logo_on) lyt_draw(fsl.logo);
     if (fsl.press_on) lyt_draw(fsl.press);
     mii_draw();
-    if (fsl.win.alive) lyt_draw(fsl.win.l);
-    if (sv.win.alive) lyt_draw(sv.win.l); /* SaveDataHandleSequence's (the boot's card windows) */
+    si_draw(&fsl.win);
+    si_draw(&sv.win); /* SaveDataHandleSequence's (the boot's card windows) */
     wipe_draw_quad();
     fade_draw();
     /* the camera's target and fovy a frame late (setProgrammableCameraParam with the previous ones) */
@@ -4949,6 +4994,135 @@ void menu_sight(int on, float x, float y) /* (x, y): the pointer on the screen (
     sgt.pos[0] = x * (608.0f / 640.0f); sgt.pos[1] = y * (456.0f / 448.0f);
 }
 static void sgt_draw(void) { if (sgt.on) { render_world_done(); lyt_update(sgt.l); lyt_draw(sgt.l); } }
+/* --- BombTimerLayout (Screen/BombTimerLayout.cpp: "BombTimer"): Appear, Wait, Danger (under sDangerTransFrame 600:
+ * Danger and Blink), End (dead); its Counter the seconds left. Its hosts (Caretaker's tidy mission, CareTaker.cpp:
+ * 113-546; TrickRabbitSnowCollect) are not ported yet: they move it with menu_bomb_timer_update */
+enum { BT_APPEAR, BT_WAIT, BT_DANGER, BT_END };
+static struct { LytInst *l; u8 alive, suspend; u32 frame, limit; Nrv n; } bt;
+static void bt_init(void) { memset(&bt, 0, sizeof bt); bt.l = lyt_new("BombTimer"); }
+static void bt_text(void) { lyt_set_number_rec(bt.l, "Counter", (int)((bt.limit - bt.frame + 59) / 60)); } /* updateTextBox */
+void menu_bomb_timer_appear(void) { if (bt.l) { bt.frame = 0; bt.alive = 1; bt.n.next = -1; nrv_set(&bt.n, BT_APPEAR); } }
+void menu_bomb_timer_limit(int frames) { bt.limit = (u32)frames; if (bt.l) bt_text(); } /* setTimeLimit */
+void menu_bomb_timer_suspend(int on) { bt.suspend = (u8)on; }                          /* suspend / resume */
+void menu_bomb_timer_kill(void) { bt.alive = 0; }
+int menu_bomb_timer_rest(void) { return (int)(bt.limit - bt.frame); }                  /* getRestTime */
+int menu_bomb_timer_up(void) { return bt.frame >= bt.limit; }                          /* isReadyToTimeUp */
+static void bt_tick(void) /* update: addFrame, End at the limit */
+{
+    if (bt.suspend) return;
+    if (bt.frame < bt.limit) { bt.frame++; bt_text(); }
+    if (bt.frame >= bt.limit) nrv_set(&bt.n, BT_END);
+}
+void menu_bomb_timer_update(void) /* LayoutActor::movement (with its host's scene) */
+{
+    if (!bt.alive) return;
+    switch (nrv_begin(&bt.n)) {
+    case BT_APPEAR:
+        if (FIRST(&bt.n)) lyt_start(bt.l, "Appear", 0);
+        bt_tick();
+        if (lyt_stopped(bt.l, 0)) nrv_set(&bt.n, BT_WAIT);
+        break;
+    case BT_WAIT:
+        if (FIRST(&bt.n)) lyt_start(bt.l, "Wait", 0);
+        bt_tick();
+        if (bt.limit - bt.frame < 600) nrv_set(&bt.n, BT_DANGER); /* mDangerTransFrame */
+        break;
+    case BT_DANGER:
+        if (FIRST(&bt.n)) { lyt_start(bt.l, "Danger", 0); lyt_start(bt.l, "Blink", 1); }
+        bt_tick();
+        break;
+    case BT_END:
+        if (FIRST(&bt.n)) lyt_start(bt.l, "End", 0);
+        else if (lyt_stopped(bt.l, 0)) bt.alive = 0;
+        break;
+    }
+    nrv_end(&bt.n);
+    lyt_update(bt.l);
+}
+static void bt_draw(void) { if (bt.alive) { render_world_done(); lyt_draw(bt.l); } }
+
+/* --- CometRetryButton (Screen/CometRetryButton.cpp: "RetryButton"; GameScene::exeCometRetryAfterMiss, a comet's
+ * scenario): MissLeftWait (its PlayerMissLeft till it is dead, then the buttons), Wait (SE_SY_TALK_SELECT_YES / NO),
+ * Decided, End (the buttons gone: requestChangeStageAfterMiss / requestChangeStageGoBackAstroDome: crb.result 1 / 2,
+ * game.c miss_after_wipe). ponytail: forceOpenWipeCircle / forceCloseWipeCircle not made (the miss's wipe stays shut
+ * under it) */
+enum { CRB_MISSLEFTWAIT, CRB_WAIT, CRB_DECIDED, CRB_END };
+static struct { LytInst *l; Btn yes, no; u8 alive, result; int left; Nrv n; } crb;
+static void crb_init(void)
+{
+    memset(&crb, 0, sizeof crb);
+    if (!(crb.l = lyt_new("RetryButton"))) return;
+    btn_init(&crb.yes, crb.l, "NBackUp", "BoxButton1", 0, 1); crb.yes.end_disappear = 0;
+    btn_init(&crb.no, crb.l, "NBackDown", "BoxButton2", 0, 1); crb.no.end_disappear = 0;
+}
+int menu_comet_retry_appear(int left) /* appear; 0: no layout (the caller goes on as without it) */
+{
+    if (!crb.l) return 0;
+    crb.alive = 1; crb.result = 0; crb.left = left;
+    crb.n.next = -1; nrv_set(&crb.n, CRB_MISSLEFTWAIT);
+    return 1;
+}
+int menu_comet_retry_result(void) { return crb.result; }
+static void crb_update(void)
+{
+    if (!crb.alive) return;
+    int cur = nrv_begin(&crb.n);
+    if (cur != CRB_MISSLEFTWAIT) { menu_pointer_request(SPM_PAUSEMENU); game_cursor_menu(); } /* requestStarPointerModePauseMenu */
+    switch (cur) {
+    case CRB_MISSLEFTWAIT:
+        if (FIRST(&crb.n)) menu_miss_left_start(crb.left);
+        if (menu_miss_left_dead()) { btn_appear(&crb.yes); btn_appear(&crb.no); nrv_set(&crb.n, CRB_WAIT); }
+        break;
+    case CRB_WAIT:
+        if (btn_try_select(&crb.yes) || btn_try_select(&crb.no)) {
+            se_start(crb.yes.selected ? SE_SY_TALK_SELECT_YES : SE_SY_TALK_SELECT_NO, NULL);
+            printf("comet retry: %s" "\x0a", crb.yes.selected ? "yes" : "no");
+            nrv_set(&crb.n, CRB_DECIDED);
+        }
+        break;
+    case CRB_DECIDED:
+        if (crb.yes.selected ? btn_decided_wait(&crb.yes) : crb.no.selected && btn_decided_wait(&crb.no)) nrv_set(&crb.n, CRB_END);
+        break;
+    case CRB_END:
+        if (FIRST(&crb.n)) { btn_disappear(&crb.yes); btn_disappear(&crb.no); }
+        if (btn_hidden(&crb.yes) && btn_hidden(&crb.no)) { crb.result = crb.yes.selected ? 1 : 2; crb.alive = 0; } /* kill */
+        break;
+    }
+    nrv_end(&crb.n);
+    if (btn_pointing_trigger(&crb.yes) || btn_pointing_trigger(&crb.no)) se_start(SE_SY_BUTTON_CURSOR_ON, NULL); /* control */
+    btn_update(&crb.yes);
+    btn_update(&crb.no);
+    lyt_update(crb.l);
+}
+static void crb_draw(void) { if (crb.alive) { render_world_done(); lyt_draw(crb.l); } }
+int menu_test_point_retry(int yes) /* tests: the pointer on its Yes / No button */
+{
+    float x, y;
+    if (!crb.alive || !lyt_pane_center(crb.l, yes ? "BoxButton1" : "BoxButton2", &x, &y)) return 0;
+    game_set_cursor(x, y);
+    return 1;
+}
+
+/* --- GalaxyCometScreenFilter (Screen/GalaxyCometScreenFilter.cpp: "CometScreenFilter", CometEventKeeper's in a
+ * comet's scenario): its Color animation stopped at the comet's frame (setCometAnimFromId), drawn before the other
+ * layouts (DrawType_CometScreenFilter: game.c, under the HUD) while _20 (off at endCometEvent) */
+static struct { LytInst *l; u8 on; } csf;
+/* ponytail: off (#661). The layout is not in the packs: its five materials are light colours over the whole screen
+ * with dark ones in the corners (C0 alpha 0, C1 alpha 1 over one mirrored I8 vignette), a filter that multiplies the
+ * frame; lyt.c blends by alpha or adds, and drew it as an opaque blob (seen in CosmosGardenGalaxy 4). It needs a
+ * multiply blend (the GS: Cd x As a channel at a time under FBMSK) and then the layout in tools/lyt.py COMMON (326 KB
+ * as it converts now: one 256 x 256 image a material) */
+static void csf_init(void) { memset(&csf, 0, sizeof csf); }
+void menu_comet_filter(int id) /* getCometNameIdFromString's id (0 Red, 1 Ghost, 2 Dark, 3 Quick, 4 Purple / Black); -1 off */
+{
+    static const float frame[5] = {0.0f, 4.0f, 1.0f, 2.0f, 3.0f}; /* getCometColorAnimFrameFromId */
+    if (!csf.l) return;
+    csf.on = id >= 0 && id < 5;
+    if (!csf.on) return;
+    lyt_start(csf.l, "Color", 0);
+    lyt_set_frame(csf.l, 0, frame[id]); lyt_set_rate(csf.l, 0, 0.0f);
+}
+void menu_comet_filter_draw(void) { if (csf.on) { render_world_done(); lyt_update(csf.l); lyt_draw(csf.l); } }
 static void pms_draw(void) { if (pms.alive && pms.shown) { render_world_done(); lyt_draw(pms.l); } } /* GameSequenceProgress::draw */
 
 /* --- RosettaMonologue (RosettaDemoAstroDome.cpp: "PrologueStarSteward", map.bin): the picture book of -----------
@@ -5613,7 +5787,7 @@ static void srl_draw(void) /* StaffRoll::draw: black, the information, the pictu
     if (srl.pic_on) lyt_draw(srl.pic);
     for (int i = 0; i < SRL_LINES; i++) if (srl.line_on[i]) lyt_draw(srl.line[i]);
     lyt_draw(srl.title);
-    if (sv.win.alive) lyt_draw(sv.win.l);
+    si_draw(&sv.win);
     wipe_draw_quad();
     fade_draw();
 }
@@ -5639,6 +5813,7 @@ void menu_draw(void)
     chc_draw(); /* ChipCounter, CollectCounter */
     oub_draw(); /* OneUpBoard */
     sgt_draw(); /* MarioLauncherLayout */
+    bt_draw(); /* BombTimerLayout */
     if (spg.l && !nrv_is(&spg.n, SPG_ENDWAIT)) { render_world_done(); lyt_draw(spg.l); } /* StarPointerGuidance */
     if (mono.on) { render_world_done(); lyt_draw(mono.l); iab_draw(mono_ab()); }
     if (ynl.alive) { render_world_done(); lyt_draw(ynl.l); }
@@ -5647,14 +5822,15 @@ void menu_draw(void)
     if (pm.alive) {
         render_world_done(); /* the scene under the menu (LayoutOnPause draws after everything) */
         lyt_draw(pm.l);
-        if (pm.win.alive) lyt_draw(pm.win.l);
+        si_draw(&pm.win);
     }
     llt_draw(); /* PauseMenu::draw: the letter after the menu (and KinopioAstro's) */
     plt_draw();
     wipe_draw_quad();
     fade_draw();
+    crb_draw(); /* CometRetryButton, its PlayerMissLeft after it */
     pms_draw(); /* PlayerMissLeft: the sequence's, over the wipes */
-    if (sv.win.alive) { render_world_done(); lyt_draw(sv.win.l); } /* the save's window over all of it, a closed wipe too
+    if (sv.win.alive) { render_world_done(); si_draw(&sv.win); } /* the save's window over all of it, a closed wipe too
                                                                     * (GameSystem draws its SysInfoWindow after the scene: #559) */
 }
 
