@@ -2888,6 +2888,7 @@ static void st_update(void)
 #endif
 #ifdef ST_CCM_TEST
     st_ccm_test();
+#endif
 #ifdef ST_FLOAT_TEST
     st_float_test();
 #endif
