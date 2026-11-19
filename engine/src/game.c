@@ -58026,7 +58026,11 @@ void game_update(void)
             if (player_mode == PM_BEE) menu_submeter_ratio(1, (float)mario->air_spin / MC.mAirWalkTime);
             if (swimming) menu_submeter_ratio(0, (float)oxygen / MC.mOxygenMax);
             screen_pos(vadd(mario->pos, vmul(mario->up, BODY_RADIUS)), &sx, &sy);
-            menu_submeter_update(mario->grounded || (swimming && !mario->jumping), sx, sy, !(menu_paused() || dome_layout_off || dx.on));
+            { /* SubMeterLayout::control: getPlayerPos on the screen (his place, not his centre) */
+                float fx = sx, fy = sy;
+                screen_pos(mario->pos, &fx, &fy);
+                menu_submeter_update(mario->grounded || (swimming && !mario->jumping), fx, fy, !(menu_paused() || dome_layout_off || dx.on));
+            }
             /* setLifeCount (not while the life-up demo holds him: control returns before controlMain's update2D);
              * MeterLayout::calcMarioHeadPosition: his centre on the screen, up by calcPointRadius2D(120), (32, -38) */
             if (!super_t) menu_meter_count(life);

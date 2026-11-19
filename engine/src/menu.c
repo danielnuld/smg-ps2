@@ -277,10 +277,19 @@ static void yn_update(YesNo *y)
     btn_update(&y->no);
 }
 
-/* --- SysInfoWindow (WindowType_Normal) ------------------------------------------------------------------------ */
+/* IconAButton's type (its code is below): SysInfoWindow's mIconAButton */
+enum { IAB_OPEN, IAB_WAIT, IAB_TERM };
+typedef struct Iab { LytInst *l, *host; const char *pane; Nrv n; int on; float pos[2]; } Iab;
+static void iab_init(Iab *b, LytInst *host, const char *pane);
+static void iab_open(Iab *b);
+static void iab_term(Iab *b);
+static void iab_update(Iab *b);
+static void iab_draw(Iab *b);
+
+/* --- SysInfoWindow (WindowType_Normal; a Type_Key window opens its IconAButton at AButtonPosition) ------------------------------------------------------------------------ */
 enum { SI_APPEAR, SI_WAIT, SI_DISAPPEAR };
 enum { SI_KEY, SI_BLOCKING, SI_YESNO };
-typedef struct { LytInst *l; YesNo yn; int type; u8 alive; Nrv n; } SysInfo;
+typedef struct { LytInst *l; YesNo yn; Iab ab; int type; u8 alive; Nrv n; } SysInfo;
 
 static void si_init(SysInfo *w)
 {
@@ -289,6 +298,7 @@ static void si_init(SysInfo *w)
     w->n.next = SI_APPEAR;
     if (!w->l) return;
     yn_init(&w->yn, w->l);
+    iab_init(&w->ab, w->l, "AButtonPosition"); /* createAndSetupIconAButton */
     lyt_set_text_rec(w->l, "Left", msg_get("System_Save00_No"));
     lyt_set_text_rec(w->l, "Right", msg_get("System_Save00_Yes"));
 }
@@ -314,6 +324,7 @@ static void si_appear(SysInfo *w, const char *label, int type)
     nrv_set(&w->n, SI_APPEAR);
     w->alive = 1;
     if (type == SI_YESNO) yn_appear(&w->yn);
+    if (type == SI_KEY) iab_open(&w->ab); /* mIconAButton->openWithoutMessage */
 }
 
 static void si_update(SysInfo *w)
@@ -336,14 +347,17 @@ static void si_update(SysInfo *w)
         if (FIRST(&w->n)) {
             lyt_start_pane(w->l, "InfoWindow", "ButtonEnd", 0);
             lyt_start_pane(w->l, "WinInfoWindow", "ButtonEnd", 0);
+            if (w->type == SI_KEY) iab_term(&w->ab);
         }
-        if (lyt_pane_stopped(w->l, "InfoWindow", 0) && (w->type != SI_YESNO || !w->yn.on)) w->alive = 0;
+        if (lyt_pane_stopped(w->l, "InfoWindow", 0) && (w->type != SI_YESNO || !w->yn.on)) { w->alive = 0; w->ab.on = 0; } /* kill: mIconAButton->kill */
         break;
     }
     nrv_end(&w->n);
     yn_update(&w->yn);
     lyt_update(w->l);
+    iab_update(&w->ab);
 }
+static void si_draw(SysInfo *w) { if (w->alive) { lyt_draw(w->l); iab_draw(&w->ab); } } /* draw (ExecuteType_Children: its icon too) */
 
 static void si_disappear(SysInfo *w) { if (w->alive) nrv_set(&w->n, SI_DISAPPEAR); } /* SysInfoWindow::disappear */
 
@@ -705,8 +719,6 @@ void menu_result_start(void) /* StarReturnDemoStarter::tryStartStageResult: the 
 /* --- IconAButton (Screen/IconAButton.cpp, menus.bin's IconAButton): Open (Appear), Wait (Press), Term (End, dead);
  * openWithoutMessage hides PicPlate and clears its text; placed at the host's pane (setFollowActorPane /
  * setLayoutPosAtPaneTrans: copyPaneTrans each frame) */
-enum { IAB_OPEN, IAB_WAIT, IAB_TERM };
-typedef struct Iab { LytInst *l, *host; const char *pane; Nrv n; int on; float pos[2]; } Iab;
 static void iab_init(Iab *b, LytInst *host, const char *pane)
 {
     memset(b, 0, sizeof *b);
@@ -3865,8 +3877,8 @@ static void fs_draw(void)
     if (fsl.logo_on) lyt_draw(fsl.logo);
     if (fsl.press_on) lyt_draw(fsl.press);
     mii_draw();
-    if (fsl.win.alive) lyt_draw(fsl.win.l);
-    if (sv.win.alive) lyt_draw(sv.win.l); /* SaveDataHandleSequence's (the boot's card windows) */
+    si_draw(&fsl.win);
+    si_draw(&sv.win); /* SaveDataHandleSequence's (the boot's card windows) */
     wipe_draw_quad();
     fade_draw();
     /* the camera's target and fovy a frame late (setProgrammableCameraParam with the previous ones) */
@@ -5613,7 +5625,7 @@ static void srl_draw(void) /* StaffRoll::draw: black, the information, the pictu
     if (srl.pic_on) lyt_draw(srl.pic);
     for (int i = 0; i < SRL_LINES; i++) if (srl.line_on[i]) lyt_draw(srl.line[i]);
     lyt_draw(srl.title);
-    if (sv.win.alive) lyt_draw(sv.win.l);
+    si_draw(&sv.win);
     wipe_draw_quad();
     fade_draw();
 }
@@ -5647,14 +5659,14 @@ void menu_draw(void)
     if (pm.alive) {
         render_world_done(); /* the scene under the menu (LayoutOnPause draws after everything) */
         lyt_draw(pm.l);
-        if (pm.win.alive) lyt_draw(pm.win.l);
+        si_draw(&pm.win);
     }
     llt_draw(); /* PauseMenu::draw: the letter after the menu (and KinopioAstro's) */
     plt_draw();
     wipe_draw_quad();
     fade_draw();
     pms_draw(); /* PlayerMissLeft: the sequence's, over the wipes */
-    if (sv.win.alive) { render_world_done(); lyt_draw(sv.win.l); } /* the save's window over all of it, a closed wipe too
+    if (sv.win.alive) { render_world_done(); si_draw(&sv.win); } /* the save's window over all of it, a closed wipe too
                                                                     * (GameSystem draws its SysInfoWindow after the scene: #559) */
 }
 
