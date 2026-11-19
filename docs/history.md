@@ -11,6 +11,20 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- The floaters after Petari (feat/floaters, #783, 2026-11-19; written without the emulator: **not run in PCSX2**
+  until its PR says so): LavaFloater (LavaHomeFloaterB, LavaFloatingStepA .. D, FloaterOtakingFloaterA,
+  IceVolcanoFloaterA / B), OceanWaveFloater (OceanPierFloaterA, OceanHexagonFloater) and PhantomShipBoxFloater
+  (A / B / C) had no code, and the generic rotator read their floating force's columns as its own: it turned the
+  platform once Mario stood on it (100 rows: HellProminenceGalaxy, KoopaBattleVs3Galaxy, FloaterOtakingGalaxy,
+  IceVolcanoGalaxy, HeavenlyBeachGalaxy, OceanFloaterLandGalaxy, OceanPhantomCaveGalaxy). statics.inc `st_float`
+  (ST_FLOAT / ST_WFLOAT / ST_BFLOAT, `StFloat` from the arena): FloaterFloatingForceTypeNormal (`st_float_normal`:
+  the depth and speed, MoveFirst's dip, its sounds) under the lava ones with their Float / Sink nerves and
+  LavaBubble; FloaterFloatingForceTypeSpring (`st_float_spring`) under the pier (with WaveFloatingForce, its Ripple
+  and SE_OJ_PIER_FLOATER_WAVE) and the box (Wait / Move / MoveUnderWater, SE_OJ_BOX_FLOATER_BOUND / RIPPLE); Mario
+  carried; `in->rotor` off for them. tools/slice.py: mMoveConditionType whole in arg 3 (`FLOATERS`; a pack without
+  it leaves the floater still), tools/jpa.py NAMED: their effects (**repack** those seven galaxies and
+  resident.bin). Test: plain with `XF=-DST_FLOAT_TEST` ("floater row", "float test" lines). Left out:
+  SimpleFloaterObj (IceMountainFloaterA), calcMapGroundUpper for _9C, the lava glow's matrix, LodCtrlPlanet.
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /

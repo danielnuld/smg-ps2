@@ -425,6 +425,13 @@ def rows(b):
     return out
 
 
+# FloaterFloatingForce hosts (LavaFloater, OceanWaveFloater, PhantomShipBoxFloater: statics.inc st_float): their
+# MoveConditionType whole in arg 3 (map_parts), which those classes do not read
+FLOATERS = {"LavaHomeFloaterB", "LavaFloatingStepA", "LavaFloatingStepB", "LavaFloatingStepC", "LavaFloatingStepD",
+            "FloaterOtakingFloaterA", "IceVolcanoFloaterA", "IceVolcanoFloaterB", "OceanPierFloaterA", "OceanHexagonFloater",
+            "PhantomShipBoxFloaterA", "PhantomShipBoxFloaterB", "PhantomShipBoxFloaterC"}
+
+
 def map_parts(b, rs):
     """mappartsinfo rows: Obj_arg0-3 as usual, the MapPartsRotator columns in args 4-7: RotateSpeed, RotateAngle,
     RotateAxis, then bit 30 (a map part) | RotateType (bits 0-3, default 1) | RotateAccelType << 4 | MoveConditionType
@@ -445,6 +452,8 @@ def map_parts(b, rs):
                           (g("SignMotionType", 0) & 7) << 26]
         if r["name"] in seesaws:
             r["args"][3] = col["RotateAccelType"][i]
+        if r["name"] in FLOATERS:  # FloaterFloatingForce::init: mMoveConditionType is its depth (50 .. 2000)
+            r["args"][3] = col["MoveConditionType"][i]
     return rs
 
 
