@@ -72,8 +72,8 @@ SKINNED = ("Mario", "MarioFace", "MarioHandL", "MarioHandR")  # MarioActor::init
 # lower case); their model archive is the class name
 # the placed classes whose archive has a Wait clip and no own-named one (NPCActor / walker idles: Kinopio, Penguin,
 # TakoHei...): skinned, so obj_anim plays their Wait (tools: out/wait_classes.json, 2026-10-24)
-WAIT_SKINNED = ("GCaptureTarget", "SuperSpinDriver", "SpinDriver", "Kinopio", "TakoHei", "BeeFlowerHover", "JumpSpider", "YellowChip", "Penguin", "TimerPieceBlock", "KoteBug", "SmallStone", "MechanicKoopaMini", "TicoRail", "SplashPieceBlock", "BlueChip", "JetTurtle", "Meramera", "Caretaker", "WarpPod", "HoneyBee", "Teresa", "JumpStand", "AssemblyBlockPartsTimerA", "Karon", "StinkBugSmall", "SuperSpinDriverPink", "BegomanSpike", "Poihana", "StringSpider", "AssemblyBlockPartsIceB", "BlueStarCupsulePlanet", "FireBallBeamKameck", "KinopioAstro", "SuperSpinDriverGreen", "TicoGalaxy", "TicoStarRing", "Rabbit", "IceMeramera", "FireBubble", "TicoAstro", "SamboHead", "BombTeresa", "SplashCoinBlock", "StarReturnDemoStarter", "TimerCoinBlock", "PenguinRacer", "MarioLauncher", "TicoReading", "HipDropSwitch", "PenguinMaster", "CollectTico", "GrandStar", "PenguinCoach", "AstroDomeDemoStarter", "AstroDomeBlueStar", "GrandStarReturnDemoStarter", "BegomanBaby", "TeresaChief", "TicoComet", "TicoShop", "DesertLandUpSwitch", "BossBegoman", "BegomanSpring", "HipDropTimerSwitch", "PenguinStudent", "TalkSyati", "HoneyQueen", "AssemblyBlockPartsIceD", "AssemblyBlockPartsIceE", "BallBeamer", "TeresaRacer", "BombBird", "BegomanSpringHide", "ShellfishCoin", "PenguinSkater", "IceMerameraKing", "AssemblyBlockPartsIceC", "BossKameck2", "WaterBazooka", "Syati", "PenguinRacerLeader", "Polta", "DharmaSambo", "SurfRay", "ElectricBazooka", "GoldenTurtle", "ShellfishYellowChip", "KuriboChief", "StinkBugParent", "KoopaVs1", "KoopaVs2", "KoopaVs3", "Peach", "TrickRabbitFreeRun", "TrickRabbitFreeRunCollect", "BossKameck", "ExterminationCheckerKuribo", "TombSpider", "TripodBossCore", "TripodBossEyeLight", "TripodBossEyeLightBloom", "RosettaReading", "BossStinkBug", "BossStinkBugWing", "BossStinkBugBombLauncher", "BossStinkBugDemo", "TombSpiderPlanet", "TombSpiderCocoon", "TombSpiderGland", "TombSpiderVitalSpot")  # RosettaReading: its DemoRosettaReading (the reading demo's talk anim)
-WAIT_ARC = {"TimerPieceBlock": "CoinBlock", "TicoRail": "Tico", "SplashPieceBlock": "CoinBlock", "JetTurtle": "Koura", "SuperSpinDriverPink": "SuperSpinDriver", "FireBallBeamKameck": "Kameck", "KinopioAstro": "Kinopio", "SuperSpinDriverGreen": "SuperSpinDriver", "TicoGalaxy": "TicoFat", "TicoStarRing": "Tico", "Rabbit": "MoonRabbit", "TicoAstro": "TicoBaby", "SplashCoinBlock": "CoinBlock", "StarReturnDemoStarter": "GrandStar", "TimerCoinBlock": "CoinBlock", "PenguinRacer": "Penguin", "TicoReading": "Tico", "CollectTico": "StrayTico", "AstroDomeDemoStarter": "SuperSpinDriver", "AstroDomeBlueStar": "GCaptureTarget", "GrandStarReturnDemoStarter": "GrandStar", "TeresaChief": "Teresa", "PenguinStudent": "Penguin", "TalkSyati": "Syati", "BegomanSpringHide": "BegomanSpring", "ShellfishCoin": "Shellfish", "PenguinSkater": "Penguin", "BossKameck2": "BossKameck", "PenguinRacerLeader": "Penguin", "GoldenTurtle": "KouraShine", "ShellfishYellowChip": "Shellfish", "KoopaVs1": "Koopa", "KoopaVs2": "Koopa", "KoopaVs3": "Koopa", "TrickRabbitFreeRun": "TrickRabbit", "TrickRabbitFreeRunCollect": "TrickRabbit", "ExterminationCheckerKuribo": "Kuribo"}
+WAIT_SKINNED = ("GCaptureTarget", "SuperSpinDriver", "SpinDriver", "Kinopio", "TakoHei", "BeeFlowerHover", "JumpSpider", "YellowChip", "Penguin", "TimerPieceBlock", "KoteBug", "SmallStone", "MechanicKoopaMini", "TicoRail", "SplashPieceBlock", "BlueChip", "JetTurtle", "Meramera", "Caretaker", "WarpPod", "HoneyBee", "Teresa", "JumpStand", "AssemblyBlockPartsTimerA", "Karon", "StinkBugSmall", "SuperSpinDriverPink", "BegomanSpike", "Poihana", "StringSpider", "AssemblyBlockPartsIceB", "BlueStarCupsulePlanet", "FireBallBeamKameck", "KinopioAstro", "SuperSpinDriverGreen", "TicoGalaxy", "TicoStarRing", "Rabbit", "IceMeramera", "FireBubble", "TicoAstro", "SamboHead", "BombTeresa", "SplashCoinBlock", "StarReturnDemoStarter", "TimerCoinBlock", "PenguinRacer", "MarioLauncher", "TicoReading", "HipDropSwitch", "PenguinMaster", "CollectTico", "GrandStar", "PenguinCoach", "AstroDomeDemoStarter", "AstroDomeBlueStar", "GrandStarReturnDemoStarter", "BegomanBaby", "TeresaChief", "TicoComet", "TicoShop", "DesertLandUpSwitch", "BossBegoman", "BegomanSpring", "HipDropTimerSwitch", "PenguinStudent", "TalkSyati", "HoneyQueen", "AssemblyBlockPartsIceD", "AssemblyBlockPartsIceE", "BallBeamer", "TeresaRacer", "BombBird", "BegomanSpringHide", "ShellfishCoin", "PenguinSkater", "IceMerameraKing", "AssemblyBlockPartsIceC", "BossKameck2", "WaterBazooka", "Syati", "PenguinRacerLeader", "Polta", "DharmaSambo", "SurfRay", "ElectricBazooka", "GoldenTurtle", "ShellfishYellowChip", "KuriboChief", "StinkBugParent", "KoopaVs1", "KoopaVs2", "KoopaVs3", "Peach", "TrickRabbitFreeRun", "TrickRabbitFreeRunChild", "BossKameck", "ExterminationCheckerKuribo", "TombSpider", "TripodBossCore", "TripodBossEyeLight", "TripodBossEyeLightBloom", "RosettaReading", "BossStinkBug", "BossStinkBugWing", "BossStinkBugBombLauncher", "BossStinkBugDemo", "TombSpiderPlanet", "TombSpiderCocoon", "TombSpiderGland", "TombSpiderVitalSpot")  # RosettaReading: its DemoRosettaReading (the reading demo's talk anim)
+WAIT_ARC = {"TimerPieceBlock": "CoinBlock", "TicoRail": "Tico", "SplashPieceBlock": "CoinBlock", "JetTurtle": "Koura", "SuperSpinDriverPink": "SuperSpinDriver", "FireBallBeamKameck": "Kameck", "KinopioAstro": "Kinopio", "SuperSpinDriverGreen": "SuperSpinDriver", "TicoGalaxy": "TicoFat", "TicoStarRing": "Tico", "Rabbit": "MoonRabbit", "TicoAstro": "TicoBaby", "SplashCoinBlock": "CoinBlock", "StarReturnDemoStarter": "GrandStar", "TimerCoinBlock": "CoinBlock", "PenguinRacer": "Penguin", "TicoReading": "Tico", "CollectTico": "StrayTico", "AstroDomeDemoStarter": "SuperSpinDriver", "AstroDomeBlueStar": "GCaptureTarget", "GrandStarReturnDemoStarter": "GrandStar", "TeresaChief": "Teresa", "PenguinStudent": "Penguin", "TalkSyati": "Syati", "BegomanSpringHide": "BegomanSpring", "ShellfishCoin": "Shellfish", "PenguinSkater": "Penguin", "BossKameck2": "BossKameck", "PenguinRacerLeader": "Penguin", "GoldenTurtle": "KouraShine", "ShellfishYellowChip": "Shellfish", "KoopaVs1": "Koopa", "KoopaVs2": "Koopa", "KoopaVs3": "Koopa", "TrickRabbitFreeRun": "TrickRabbit", "TrickRabbitFreeRunChild": "TrickRabbit", "ExterminationCheckerKuribo": "Kuribo"}
 SKINNED_OBJ = ("SeaBottomTriplePropeller", "NokonokoLand", "BegomanBabyLauncher", "SandUpDownTriRock", "JellyfishElectric", "MarioFreezeIce", "MarioTornado", "MarioFireBall", "WaterColumn", "MorphItemNeoHopper", "MorphItemNeoBee", "MorphItemNeoTeresa", "MorphItemNeoIce", "MorphItemNeoFire", "MorphItemNeoFoo", "MorphBubble", "CrystalBox", "CrystalBoxBreak", "BeeMarioWing", "TeresaMario", "TeresaLuigi",  # MorphItemObjNeo (Appear), its containers, the bee's wings, Boo Mario
                "RunawayRabbit", "DemoRabbit", "TrickRabbit", "TrickRabbitBaby", "RunawayTico", "TicoBaby", "LightDome",
                "TreasureBoxKinokoOneUp", "TreasureBoxCoin", "TreasureBoxEmpty", "TreasureBoxGoldEmpty", "TreasureBoxCrackedKinokoOneUp", "TreasureBoxCrackedAirBubble", "TreasureBoxBlueChip", "TreasureBoxYellowChip", "TreasureBoxKinokoLifeUp", "TreasureBoxCrackedKinokoLifeUp", "TreasureBoxCrackedEmpty", "DesertLandDownSwitch", "DesertLandUpSwitch", "PhantomShipPropellerBig", "PhantomShipPropellerSmall", "ValveSwitch", "SpinLeverSwitch", "LavaBreakColumn", "LavaObstacleRockHomeB", "LavaFallDownColumnA", "LavaFallDownColumnB", "HeavenlyBeachUnderRock", "ShutterDoorC", "ShutterDoorD", "ShutterDoorE", "MechaKoopaPartsCaterpillar", "IceVolcanoAppearStepA", "IceVolcanoAppearStepB", "IceVolcanoClimbingWall", "IceUpDownShutterDoorA", "LavaBreakRockA", "HeavenlyBeachTopRock", "LavaBreakBridge", "LavaBreakRockB", "LavaBreakRockC", "LavaBreakRockD", "TeresaRacePartsB", "TeresaRoomDoor", "JumpBeamer", "JumpBeamerHead", "BombHei", "BigFan", "BigFanNoLeg", "BigFanWind", "DesertMovingLand", "LavaHomeVolcanoFlow", "DarknessRoomDoorA", "TeresaMansionDoorA", "TeresaMansionDoorB", "TeresaMansionEntranceDoor", "Pukupuku", "Kabokuri", "Snakehead", "SnakeheadSmall", "SunakazeKun", "TwisterSan", "TwisterSanSlim", "SunakazeKunTrap", "SeaGull", "FishA", "FishB", "FishC", "FishD", "FishE", "FishF", "TeresaWater", "CoconutTreeLeaf", "EyeBeamer", "EyeBeamerBeam", "KoopaBattleMapStair", "KoopaBattleMapStairBig", "KoopaBattleMapStairTurn", "WaterLeakPipe", "FirePressureRadiate", "WaterPressure", "WaterBullet", "Balloonfish", "FirePressure", "FireBullet", "MagicBell", "Metbo", "Mogucchi", "MogucchiHole", "Mogu", "MoguStone", "MoguHole", "Kanina", "KaninaRed", "Jellyfish", "BasaBasa", "BasaBasaIce", "Gesso", "SearchBeamer", "RingBeamer", "JumpBeamerBeam", "FlowerGroup", "FlowerBlueGroup", "CutBushGroup", "DinoPackun", "OtaKing", "OtaKingFoot", "TicoFat", "Tico", "CocoSambo", "CocoSamboHead", "HanachanHead", "HanachanBody", "HanachanBodyS", "Kuribo", "Takobo",
@@ -158,7 +158,7 @@ PROJ_AIR = ("SunsetAir", "FineAir")
 # black vignette on a plane before the arrival camera, blended by its vertex alpha (VU1 batches keep no vertex alpha:
 # it would black the screen out)
 DROP_MATERIALS = {("DemoPeachCastleGate", "Dark_v_x")}
-NO_DRAW = ("Hanachan", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "GhostPlayer", "ExterminationKuriboKeySwitch", "RunawayRabbitCollect")   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
+NO_DRAW = ("Hanachan", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "GhostPlayer", "ExterminationKuriboKeySwitch", "RunawayRabbitCollect", "TrickRabbitFreeRunCollect")   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
 OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup", "PurpleRailCoin", "CircleCoinGroup",
              "RailCoin", "SuperSpinDriver", "StarPieceGroup", "StarPieceFlow")
 # classes whose first NameObjFactory archive is not their model (OtaKing's is FireBall, Tico's TicoBaby): the model
@@ -170,7 +170,8 @@ CANM_ARC = {"GrandStarReturnDemoStarter": ("gsr", "DemoAstroReturn"), "TripodBos
             "BossStinkBug": ("bsbdemo", "BossStinkBugDemo"),
             "BossKameck": ("bkdemo", "BossKameckBattleDemo"), "BossKameck2": ("bkdemo", "BossKameckBattleDemo"),
             "TombSpider": ("tspdemo", "TombSpiderPlanet"), "KoopaVs1": ("koopa", "Koopa"), "KoopaVs2": ("koopa", "Koopa"), "KoopaVs3": ("koopa", "Koopa"), "SkeletalFishBoss": ("sfb", "SkeletalFishBoss")}  # SkeletalFishBoss::initCamera: its four event camera anims;  # TombSpiderDemo: initAnimCamera on its planet (Appear, Battle2ndStart, Death)  # BossKameckDemoPosition: initAnimCamera on BossKameckBattleDemo  # its DemoPositionControllers: initAnimCamera on BossStinkBugDemo
-MODEL_ARC = {"TamakoroTutorial": "SignBoard",  # TamakoroTutorial::init: initModelManagerWithAnm SignBoard
+MODEL_ARC = {"TrickRabbitFreeRunChild": "TrickRabbit",  # TrickRabbitSnow (TrickRabbitSnowCollect::initRabbits): initModelManagerWithAnm TrickRabbit; the collector has no model (NO_DRAW)
+             "TamakoroTutorial": "SignBoard",  # TamakoroTutorial::init: initModelManagerWithAnm SignBoard
              "Tico~5": "Tico~colorchange:5", "Koura~0": "Koura~koura:0", "Koura~1": "Koura~koura:1",  # NokonokoLand's JetTurtle: becomeSlowType / becomeFastType (Koura BRK frame 0 / 1)
              "KeySwitchOwned": "KeySwitch", "TripodBossKillerGenerater": "TripodBossKillerCannon", "TripodBossUpperKillerCannon": "TripodBossKillerCannon", "TripodBossUnderKillerCannon": "TripodBossKillerCannon", "TripodBossBottomKillerCannon": "TripodBossKillerCannon", "ChildKameck": "Kameck", "BkDemo": "BossKameckBattleDemo", "ChildKuribo": "Kuribo", "ChildIceMeramera": "IceMeramera", "LuigiEvent": "LuigiNPC", "TicoDomeLecture": "Tico", "PStar": "PowerStar", "GStar": "GrandStar", "OtaKing": "OtaKing", "KoopaJr": "KoopaJr", "Tico": "Tico", "Plant": "PlantSeed", "DinoPackunVs2": "DinoPackun2", "DinoPackunTailBallVs2": "DinoPackunTailBall^vs2", "DinoPackunEggShellVs2": "DinoPackunEggShell^vs2", "DinoPackunEggShellVs2#EggBroken": "DinoPackunEggShell^vs2#EggBroken", "DinoPackunEggShellBreakVs2": "DinoPackunEggShellBreak^vs2",
              # the Gateway intro (HeavensDoorGalaxy 1): RunawayRabbitCollect's children, DemoRabbit, the baby Lumas; the
@@ -218,12 +219,12 @@ def sky_sea(b, mat3, m):
 EXTRA = {"ConcreteBlock": ("ConcreteBlockBreak",),  # SimpleBreakableObj: its break ModelObj (game.c break_inst)
          "WaterfallCaveCover": ("WaterfallCaveCoverBreak",),  # MapObjActor::tryCreateBreakModel (statics.inc st_wcc)
          "Syati": ("PrizeRing",),  # Syati::initRings: its five PrizeRings (game.c syati.inc)
-         "TeresaRacer": ("PStar",), "PenguinRacerLeader": ("PStar",), "PenguinCoach": ("PStar",), "LuigiNPC": ("PStar",), "LuigiEvent": ("PStar",), "TrickRabbitFreeRun": ("PStar",),  # TakeOutStar's mStarModel (game.c tos_*); RabbitStateCaught's mPowerStarModel (trick.inc)
+         "TeresaRacer": ("PStar",), "PenguinRacerLeader": ("PStar",), "PenguinCoach": ("PStar",), "LuigiNPC": ("PStar",), "LuigiEvent": ("PStar",), "TrickRabbit": ("PStar",), "TrickRabbitFreeRun": ("PStar",), "TrickRabbitFreeRunCollect": ("PStar",),  # TakeOutStar's mStarModel (game.c tos_*); RabbitStateCaught's mPowerStarModel (trick.inc)
          "WatchTowerRotateStep": ("WatchTowerRotateStepLift",),  # its four PartsModels (statics.inc st_wtower)
          "UFOKinokoUnderConstruction": ("UFOKinokoLandingAstro",), "LargeChain": ("LargeChainFixPoint",),  # LargeChain: its fixed points
          "TicoGalaxy": ("TicoFatGoodsStarPiece", "Tico~5"),  # TicoFat's goods; its TicoStarRing (Tico::initBase(5): ColorChange 5)  # its init: that model once isUFOKinokoUnderConstruction is over (statics.inc)
          "Polta": ("PoltaLeftArm", "PoltaRightArm", "PoltaBodyBreak", "PoltaArmBreak", "PoltaFormationRock", "PoltaGroundRock", "PoltaGroundRockBreak", "PoltaRock#Color:0", "PoltaRock#Color:1", "PoltaRock#Color:2", "BombTeresa"),  # PoltaRock::setColorWhite / Black / Yellow (Color BVA frame 0 / 1 / 2); BombTeresaHolder
-         "SkeletalFishBaby": ("SnakeFish",), "ChildSkeletalFishBaby": ("SnakeFish",), "SkeletalFishBoss": ("SkeletalFishBossHeadA", "SkeletalFishGuard", "SkeletalFishBossBreak", "SkeletalFishBossScarFlash", "SkeletalFishBossLight"), "IceMerameraKing": ("IceManIce", "IceMerameraKingShock", "IceMerameraKingBreak"), "KoopaVs1": KOOPA_PARTS + ("KoopaBattleMapPlanet", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate"), "KoopaVs2": KOOPA_PARTS + ("KoopaBattleMapPlanetVs2", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate"), "KoopaVs3": KOOPA_PARTS + ("KoopaBattleMapPlanetVs3Lv1", "KoopaBattleMapPlanetVs3Lv2", "KoopaBattleMapPlanetVs3Lv3", "KoopaPlateDamage", "KoopaVS3HoleSunPlanet", "KoopaVS3HoleSunInsidePlanet", "KoopaRock", "KoopaRockBreak", "KoopaRollBall", "Peach", "KoopaJr", "KoopaJrShip"), "GhostPlayer": ("GhostMario", "GhostLuigi", "Koura"), "BegomanBabyLauncher": ("BegomanBaby",), "ElectricRailMoving": ("ElectricRailPoint",), "ElectricRail": ("ElectricRailPoint",), "NokonokoLand": ("Koura~0", "Koura~1"), "Penguin": ("Koura~0",), "PenguinStudent": ("KouraShine",), "Creeper": ("CreeperFlower", "CreeperLeaf"), "TripodBoss": ("TripodBossLow", "HomingKiller"), "Dodoryu": ("DodoryuHillA", "DodoryuHillB", "DodoryuHillC", "DodoryuLeadHill", "DodoryuRabbit"), "HoneyQueen": ("HoneyQueenWing",), "TicoFat": ("TicoFatGoodsStarPiece",), "TicoShop": ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp", "BenefitItemOneUp", "BenefitItemLifeUp"), "ShellfishYellowChip": ("YellowChip",), "BossKameck": ("BkDemo", "BossKameckFireBall", "Koura"), "BossKameck2": ("BkDemo", "BossKameckFireBall", "Koura", "BossKameckBarrier"), "FireBallBeamKameck": ("BossKameckFireBall",), "BreakableTrash": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "Teresa": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
+         "SkeletalFishBaby": ("SnakeFish",), "ChildSkeletalFishBaby": ("SnakeFish",), "SkeletalFishBoss": ("SkeletalFishBossHeadA", "SkeletalFishGuard", "SkeletalFishBossBreak", "SkeletalFishBossScarFlash", "SkeletalFishBossLight"), "IceMerameraKing": ("IceManIce", "IceMerameraKingShock", "IceMerameraKingBreak"), "KoopaVs1": KOOPA_PARTS + ("KoopaBattleMapPlanet", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate"), "KoopaVs2": KOOPA_PARTS + ("KoopaBattleMapPlanetVs2", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate"), "KoopaVs3": KOOPA_PARTS + ("KoopaBattleMapPlanetVs3Lv1", "KoopaBattleMapPlanetVs3Lv2", "KoopaBattleMapPlanetVs3Lv3", "KoopaPlateDamage", "KoopaVS3HoleSunPlanet", "KoopaVS3HoleSunInsidePlanet", "KoopaRock", "KoopaRockBreak", "KoopaRollBall", "Peach", "KoopaJr", "KoopaJrShip"), "GhostPlayer": ("GhostMario", "GhostLuigi", "Koura"), "BegomanBabyLauncher": ("BegomanBaby",), "ElectricRailMoving": ("ElectricRailPoint",), "ElectricRail": ("ElectricRailPoint",), "NokonokoLand": ("Koura~0", "Koura~1"), "Penguin": ("Koura~0",), "PenguinStudent": ("KouraShine",), "Creeper": ("CreeperFlower", "CreeperLeaf"), "TripodBoss": ("TripodBossLow", "HomingKiller"), "Dodoryu": ("DodoryuHillA", "DodoryuHillB", "DodoryuHillC", "DodoryuLeadHill", "DodoryuRabbit"), "HoneyQueen": ("HoneyQueenWing",), "TicoFat": ("TicoFatGoodsStarPiece",), "TicoShop": ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp", "BenefitItemOneUp", "BenefitItemLifeUp"), "ShellfishYellowChip": ("YellowChip",), "BossKameck": ("BkDemo", "BossKameckFireBall", "Koura"), "BossKameck2": ("BkDemo", "BossKameckFireBall", "Koura", "BossKameckBarrier"), "FireBallBeamKameck": ("BossKameckFireBall",), "BreakableTrash": ("BreakableCageBreak",), "BreakableCage": ("BreakableCageBreak",), "BreakableCageRotate": ("BreakableCageBreak",), "BreakableCageL": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "Teresa": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
          "Rosetta": ("LightDome", "DomeHalo"),  # RosettaDemoHeavensDoor1's parts (ライトドーム, ライト後光)
          "StarReturnDemoStarter": ("PStar", "GStar", "SpinTico", "MarioHair"), "GrandStarReturnDemoStarter": ("GStar",), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
@@ -242,6 +243,8 @@ EXTRA = {"ConcreteBlock": ("ConcreteBlockBreak",),  # SimpleBreakableObj: its br
          "WoodBox": ("#WoodBox", "WoodBoxBreak"), "KoopaStatue": ("#Break", "KoopaStatueBreak"), "CrystalCageS": ("#CrystalCageS", "CrystalCageSBreak"),
          "CrystalCageM": ("#CrystalCageM", "CrystalCageSBreak"), "CrystalCageL": ("#CrystalCageL:1", "#CrystalCageL", "CrystalCageLBreak"), "RingBeamer": ("JumpBeamerBeam",), "BallBeamer": ("JumpBeamerBeam",), "SubmarineVolcanoBigColumn": ("SubmarineVolcanoBigColumnBreak",), "Mogu": ("MoguStone", "MoguHole"), "Mogucchi": ("MogucchiHole", "MogucchiHillA", "MogucchiHillB", "MogucchiHillC"), "WaterPressure": ("WaterBullet",), "FirePressure": ("FireBullet",), "EyeBeamer": ("EyeBeamerBeam",), "BeamGoRoundPlanet": ("BeamGoRoundBeam",), "FishGroupA": ("FishA",), "FishGroupB": ("FishB",), "FishGroupC": ("FishC",), "FishGroupD": ("FishD",), "FishGroupE": ("FishE",), "FishGroupF": ("FishF",), "SeaGullGroup": ("SeaGull",), "SunakazeKun": ("SunakazeKunTrap",), "ChooChooTrain": ("ChooChooTrainBody",), "BigFan": ("BigFanWind",), "BigFanNoLeg": ("BigFanWind",), "BombHeiLauncher": ("BombHei",), "BombBird": ("BombBirdBomb",), "WaterBazooka": ("WaterBazookaCapsule", "MogucchiShooter", "WaterBazookaBreak", "WaterBullet"), "ElectricBazooka": ("WaterBazookaCapsule", "MogucchiShooter", "ElectricBazookaBreak", "ElectricBullet"), "BombLauncher": ("BombHei",), "JumpBeamer": ("JumpBeamerBeam", "JumpBeamerHead"), "JumpGuarder": ("JumpGuarderHead", "BegomanBaby")}
 # MorphItemObjNeo::makeArchiveList: Mario's (and Luigi's: the packs serve both) model of the power-up, then the container by arg3 (0 ItemBubble, -1 CrystalBox + CrystalBoxBreak; none for BenefitItemInvincible).; IceMarioHandL / R, InvincibleMarioHandL / R (initHand: game.c hands)
+EXTRA["RainCloud"] = ("RainCloudCylinder",)  # RainCloud::makeArchiveList: its rain's cylinder (game.c rc_draw); RainCloudLow / RainCloudVolume not used
+SKINNED_OBJ += ("RainCloud",)  # RainCloud.cpp: Wait / Appear / Disappear / OnBee, the Shadow joint, its Splash / Line10 / Line20 effects (game.c update_rainclouds)
 MORPH_ARCS = {"MorphItemNeoHopper": ("HopperMario", "HopperLuigi"), "MorphItemNeoBee": ("BeeMarioWing", "BeeMario", "BeeLuigi"),
               "MorphItemNeoTeresa": ("TeresaMario", "TeresaLuigi"), "MorphItemNeoIce": ("IceMario", "IceLuigi", "IceMarioHandL", "IceMarioHandR"),
               "MorphItemNeoFire": (), "MorphItemNeoFoo": (), "BenefitItemInvincible": ("InvincibleMario", "InvincibleLuigi", "InvincibleMarioHandL", "InvincibleMarioHandR")}
@@ -263,8 +266,6 @@ def morph_arcs(o):
         a = [s32(v) for v in o["args"]]
         return () if o["name"] == "WoodBox" and a[4] in (0, -1) or o["name"] == "KoopaStatue" and a[3] != 1 else (KINOKO[o["name"]],)
     if o["name"] == "Kinopio" and s32(o["args"][2]) == 8:  # mIsSpawnPowerStarMode: its TakeOutStar's star model (game.c kinopio_nerve)
-        return ("PStar",)
-    if o["name"] == "TrickRabbit" and RGPH_ON:  # RabbitStateCaught's mPowerStarModel
         return ("PStar",)
     if o["name"] not in MORPH_ARCS:
         return ()
@@ -339,11 +340,12 @@ LOGIC = ("SoundEmitterCube", "SoundEmitterSphere", "QuakeEffectAreaCube", "Playe
          "ForbidTriangleJumpCube", "HeavySteeringCube", "DashChargeCylinder", "ForbidJumpCube",  # Mario::updateCubeCode
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "CameraRepulsiveCylinder", "CameraRepulsiveSphere", "DeathCube", "DeathSphere",
          "DeathCylinder", "AreaMoveSphere", "RestartCube", "StarPieceSpot", "WaterCube", "WaterSphere", "WaterCylinder",
-         "ChangeBgmCube", "BgmProhibitArea", "AudioEffectCube", "AudioEffectSphere", "AudioEffectCylinder", "AstroChangeStageCube", "MovieStarter", "RunawayRabbitCollect", "PhantomTorch", "PhantomBonfire", "Hanachan",
+         "ChangeBgmCube", "BgmProhibitArea", "AudioEffectCube", "AudioEffectSphere", "AudioEffectCylinder", "AstroChangeStageCube", "MovieStarter", "RunawayRabbitCollect", "TrickRabbitFreeRunCollect", "PhantomTorch", "PhantomBonfire", "Hanachan",
          "PlaneCollisionCube", "BeeWallShortDistAreaCube", "GlaringLightAreaCylinder", "DarkMatterCylinder",
          "ExtraWallCheckArea", "ExtraWallCheckCylinder",  # Mario's wall shade (game.c wall_shade_calc)
          "HazeCube",  # HeatHazeDirector (game.c haze_update)
          "CollisionArea",  # (game.c update_collision_areas)
+         "ViewGroupCtrlCube",  # ViewGroupCtrl (game.c vg_update)
          # Mario's areas (MR::getAreaObj: game.c area_obj / foo_sphere)
          "CelestrialSphere", "TowerModeCylinder", "NonSleepCube", "EffectCylinder", "SmokeEffectColorAreaCube",
          "MessageAreaCube", "MessageAreaCylinder", "PullBackCylinder", "PlaneModeCube", "PlaneCircularModeCube",
@@ -394,6 +396,7 @@ def rows(b):
     mid = int_or(b, "MessageId", n, -1)
     demo, cast = int_or(b, "DemoGroupId", n, -1), int_or(b, "CastId", n, -1)  # DemoDirector::registerDemoCast
     oid = int_or(b, "Obj_ID", n, -1)  # JMapLinkInfo::setLinkInfo: the objinfo l_id it follows (BaseMatrixFollower)
+    vgroup = int_or(b, "ViewGroupId", n, -1)  # MR::getJMapInfoViewGroupID (ViewGroupCtrl; a SHORT: 0xFFFF none)
     out = []
     for i in range(n):
         out.append(dict(name=names[i], l_id=lid[i], path=path[i], camset=camset[i], pos=[fl[f][i] for f in ROW_FIELDS[:3]],
@@ -403,6 +406,7 @@ def rows(b):
                         priority=int_or(b, "Priority", n, 0)[i], inverse=int_or(b, "Inverse", n, 0)[i],
                         gtype=(B.bcsv_column(b, "Gravity_type") or ["Normal"] * n)[i],
                         sw=[sw[f][i] for f in SW_FIELDS], group=group[i], mid=mid[i], demo=demo[i], cast=cast[i], oid=oid[i],
+                        vgroup=vgroup[i] if 0 <= vgroup[i] < 0x4000 else -1,
                         cls=names[i]))
     return out
 
@@ -445,7 +449,7 @@ def stage_files(path):
     return {p.lower(): d for p, d in B.rarc_files(path.read_bytes(), paths=True)}
 
 
-TALK_NAME = {"Syati": "SyatiRing", "TalkSyati": "SyatiRing", "TamakoroTutorial": "SignBoard", "KinopioAstro": "Kinopio", "KoopaJrShip": "KoopaJr", "DemoKoopaJrShip": "KoopaJr", "Dodoryu": "DodoryuRabbit"}  # (KoopaJr: NPCActorCaps "KoopaJr" on its owner's placement)  # createTalkCtrl's message name where it is not the class's
+TALK_NAME = {"Syati": "SyatiRing", "TalkSyati": "SyatiRing", "TamakoroTutorial": "SignBoard", "KinopioAstro": "Kinopio", "KoopaJrShip": "KoopaJr", "DemoKoopaJrShip": "KoopaJr", "Dodoryu": "DodoryuRabbit", "TrickRabbitFreeRunChild": "SnowRabbit", "TrickRabbitFreeRunCollect": "SnowRabbitCollect"}  # (KoopaJr: NPCActorCaps "KoopaJr" on its owner's placement)  # createTalkCtrl's message name where it is not the class's
 
 
 def scene(fs, galaxy, scenario):
@@ -474,7 +478,7 @@ def scene(fs, galaxy, scenario):
         for layer in act[s]:
             for f in ("objinfo", "planetobjinfo", "areaobjinfo"):
                 for r in rows(files.get(f"{root}/jmp/placement/{layer}/{f}", b"")):
-                    objs.append(dict(r, zone=zid))
+                    objs.append(dict(r, zone=zid, planet=f == "planetobjinfo"))
             for r in rows(files.get(f"{root}/jmp/childobj/{layer}/childobjinfo", b"")):
                 objs.append(dict(r, zone=zid))
             mp = files.get(f"{root}/jmp/mapparts/{layer}/mappartsinfo", b"")
@@ -1920,18 +1924,11 @@ def path_entry(p):
             b"".join(struct.pack("<ii", a1[i], a2[i]) for i in range(n)))
 
 
-# TrickRabbit's rail graph, star declarer and PStar only when SMG_RGPH is set in the environment: its nerves past
-# WaitStart (game.c trick.inc trm_update) were not run in PCSX2 yet; without RGPH the engine leaves it as it was
-RGPH_ON = bool(__import__("os").environ.get("SMG_RGPH"))
-
-
 def rgph_chunk(keep, paths):
     """'RGPH': TrickRabbit's rail graph (MR::createRailGraphFromJMap, RailGraphUtil.cpp addRailToGraph): its rail and
     the rails linked from it by Path_ID; a point within 100 of a node is that node (the nearest), consecutive points
     are joined by an edge with the earlier point's args, a closed rail's last to its first. u32 n, n x {s32 row,
     u32 nnodes, u32 nedges, f32 nodes[nnodes][3], nedges x {u16 a, u16 b, s16 arg0, arg1, arg2, arg3, arg7, pad}}."""
-    if not RGPH_ON:
-        return b""
     out = []
     s16 = lambda v: max(-0x8000, min(0x7FFF, s32(v) if v >= 0 else v))
     for row, o in enumerate(keep):
@@ -2142,7 +2139,7 @@ def declare_stars(keep, scenario, appear, jp):
             k = None if 1 <= s32(r["args"][0]) <= 3 else -1
         elif r["name"] == "Kinopio":  # Kinopio::init: declarePowerStar in its power star mode (mBehavior 8)
             k = None if s32(r["args"][2]) == 8 else -1
-        elif r["name"] == "TrickRabbitFreeRun" or (r["name"] == "TrickRabbit" and RGPH_ON):  # their init: declarePowerStar
+        elif r["name"] in ("TrickRabbit", "TrickRabbitFreeRun", "TrickRabbitFreeRunCollect"):  # their init: declarePowerStar
             k = None
         elif r["name"] in ("LuigiNPC", "LuigiEvent"):  # LuigiNPC::isDeclarePowerStarType: Afraid, Event, OnTree, Arrested
             t = s32(r["args"][0]) + (2 if r["name"] == "LuigiEvent" else 0)
@@ -2258,6 +2255,9 @@ def placement(fs, galaxy, scenario):
     cams, cam_index, cam_types = camera.cameras(bcams, float_column, int_or, jp2en, rails)
     cset = [(i, r["camset"]) for i, r in enumerate(keep) if r.get("camset", -1) >= 0]  # ActorCameraInfo: CameraSetId
     out.append(chunk(b"CSET", struct.pack("<I", len(cset)) + b"".join(struct.pack("<Hh", i, v) for i, v in cset)))
+    # VGRP: (row, ViewGroupId; bit 14: a planetobjinfo row, PlanetMap's LodCtrlPlanet) for game.c vg_init (ViewGroupCtrl)
+    vgrp = [(i, r["vgroup"] | (0x4000 if r.get("planet") else 0)) for i, r in enumerate(keep) if r.get("vgroup", -1) >= 0]
+    out.append(chunk(b"VGRP", struct.pack("<I", len(vgrp)) + b"".join(struct.pack("<Hh", i, v) for i, v in vgrp)))
     out.append(demo_chunk(fsp, demos, gpos, keep, jp2en, se_table()))
     out.append(canm_chunk(Path(fs), set(types), galaxy, B.placed_scenario(sd, galaxy, scenario)))  # after demo_chunk: DEMO_CANM; StartScenario<getCurrentScenarioNo>.canm
     # GHST: GhostPlayer's packets (GhostPlayer::init: <stage>.gst / <stage>Luigi.gst of GhostData<stage>.arc, as on
@@ -2642,11 +2642,11 @@ def btp_chunk(fsp, classes):
 def clip_key(c, clip):
     """ANIM's (and BVAS') "<class>/<clip>" (lower case); over 31 chars a DemoBossKameck clip is "dbk..." (BossKameck2's
     Vs1 / Vs2 demo clips would meet at 31: game.c bk_act), PoltaLeftArm / PoltaRightArm / PoltaFormationRock "pla" / "pra" /
-    "pfr" (polta.inc pol_key)"""
+    "pfr" (polta.inc pol_key), a TrickRabbitFreeRunChild clip "trfc/..." (game.c gw_play)"""
     k = f"{c.lower()}/{clip}"
     if len(k) > 31:  # (SkeletalFishBossHeadA's too: game.c sf_clip; polta.inc pol_key)
         for a, b in (("demobosskameck", "dbk"), ("skeletalfish", "sf"), ("poltaleftarm", "pla"), ("poltarightarm", "pra"),
-                     ("poltaformationrock", "pfr"), ("dodoryuleadhill/", "ddlh/")):
+                     ("poltaformationrock", "pfr"), ("dodoryuleadhill/", "ddlh/"), ("trickrabbitfreerunchild/", "trfc/")):
             k = k.replace(a, b)
     return k
 
