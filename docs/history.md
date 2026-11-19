@@ -11,6 +11,13 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Small gaps of the class audit, part of #653 (fix/653-small-gaps, 2026-11-19, agent audit-a; **not run in PCSX2**):
+  ElectricBall::attackSensor's sendMsgPush (update_eballs: a ball touching Mario pushes him whenever the electric
+  attack is not sent: before SW_A, during the 90 frames of Attack, or refused); BallRail's onCalcGravity (tamakoro.inc:
+  its gravity where it is, each frame); CoconutTreeLeaf's first wind at once (mWindStartStep 0); FlipPanel's
+  checkPlayerOnTop: Mario rising in a jump after one frame on a panel flips it (update_flips). The rest of #653 stays
+  open (MeteorStrike's cadence and effects, ElectricRail's demo vanish, ArrowSwitch's lock and push, the placed
+  KeySwitch's appear, LavaBreakColumn's SE, MapObjConnector, the chips' cannot-get time).
 - UI audit, SysInfoWindow and the sub meter (fix/679-sysinfo-abutton, #679 #707, 2026-11-19): menu.c si_* gets
   SysInfoWindow's mIconAButton (an IconAButton at AButtonPosition: openWithoutMessage when a Type_Key window appears,
   term at Disappear's first step, killed, moved and drawn with the window: the save's done / error windows had no
