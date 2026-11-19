@@ -1669,7 +1669,7 @@ static int scene_stop;           /* MR::stopScene: frames the actors stay still 
  * LavaAppear, SE_OJ_LV_PIPE_APPEAR_MAGMA), and from the jump WaitToHideDown 40, HideDown 15 (eased back, LavaVanish,
  * SE_OJ_LV_PIPE_VANISH_MAGMA), then hidden. EarthenPipeInWater: SE_OJ_LV_PIPE_IN_WATER while its stream runs (_19C:
  * from init, with its SW_A where it has one).
- * ponytail: the water pipes' stream model and BinderWater sensors, no processBgmPlayerIn / Out; the rising pipe's
+ * ponytail: the water pipes' stream model and BinderWater sensors; the rising pipe's
  * collision at its top from the first frame; exeWait's invalidateHitSensors while a pipe's SW_A is off (EarthenPipe.cpp:225:
  * HeavensDoorGalaxy's first pipe has one, SW 1008) */
 typedef struct { V3 top, up, front; float hf, vf; int id, partner, zone, row, mode, water; u32 lv; } Pipe; /* mode arg2: 1 / 2
