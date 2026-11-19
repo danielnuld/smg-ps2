@@ -232,7 +232,7 @@ static void st_flag_test(void)
 }
 #endif
 /* ---- MapObj classes by placed type: their per-row state (StSt, kept across rebinds) ---- */
-enum { ST_NONE = 1, ST_MARBLE, ST_HDSTEP, ST_TURTLE, ST_SWFLOAT, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_WTOWER, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE, ST_FLOATERU }; enum { FU_WAIT = 1, FU_MOVE, FU_DONE }; /* st_floater nerves */
+enum { ST_NONE = 1, ST_MARBLE, ST_HDSTEP, ST_TURTLE, ST_SWFLOAT, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_WTOWER, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE, ST_FLOATERU, ST_QRARROW }; enum { FU_WAIT = 1, FU_MOVE, FU_DONE }; /* st_floater nerves */
 /* Placed classes whose Petari behaviour is the model drawn with its animations and collision (the engine's generic
  * instance does that): LavaGalaxyParts.cpp (LavaShellTowerStep, LavaStepA / B / C: startBtk / Brk / Bpk / Btp of its
  * name, collision, clipping; ponytail: the steps' DLMakerProjmapEffectMtxSetter lava glow is baked at slice time and
@@ -270,6 +270,7 @@ static int st_kind_name(const char *n)
     if (!strcmp(n, "CannonFortressBreakStepA") || !strncmp(n, "CannonFortressRotateBreakStep", 29)) return ST_CFSTEP; /* CannonFortressBreakStep */
     if (!strcmp(n, "ItemAppearStoneSpinDriver")) return ST_IASTONE; /* ItemAppearStone */
     if (!strcmp(n, "OceanFloaterTypeU")) return ST_FLOATERU; /* OceanFloaterLandParts */
+    if (!strcmp(n, "QuarterRollGravityRoomArrow")) return ST_QRARROW;
     if (!strcmp(n, "SurprisedGalaxy") || (!strncmp(n, "Surp", 4) && strlen(n) > 10 && !strcmp(n + strlen(n) - 6, "Galaxy"))) return ST_SURP;
     for (u32 k = 0; k < sizeof st_still / sizeof *st_still; k++) if (!strcmp(n, st_still[k])) return ST_STILL;
     return ST_NONE;
@@ -878,6 +879,21 @@ static void st_lavaball(Inst *in, StSt *g)
     mat_translate_rot_scale(in->m, r->pos, r->rot, s);
     in->s = s[0];
 }
+/* QuarterRollGravityRoomArrow.cpp after Petari: Wait (no clip: its bind pose); its SW_A coming on RollOnA (the
+ * RollGravityA clip, kept at its end), going off RollOffA (RollGravityAReverse, then Wait); its SW_B the same with
+ * RollOnB / RollOffB (RollGravityB / RollGravityBReverse; RollOffB is not left). n: 0 Wait, 1 RollOnA, 2 RollOffA,
+ * 3 RollOnB, 4 RollOffB; on: the switches as last seen (1 SW_A, 2 SW_B) */
+static void st_qrarrow(Inst *in, StSt *g)
+{
+    static const char *const clip[5] = {"", "rollgravitya", "rollgravityareverse", "rollgravityb", "rollgravitybreverse"};
+    const Row *r = &sc->objs[in->row];
+    int a = r->sw[SW_A] >= 0 && sw_on(r, SW_A), b = r->sw[SW_B] >= 0 && sw_on(r, SW_B);
+    if (a != (g->on & 1)) { g->n = a ? 1 : 2; g->st = 0; }      /* listenStageSwitchOnOffA: onRollA / offRollA */
+    if (b != (g->on >> 1 & 1)) { g->n = b ? 3 : 4; g->st = 0; } /* listenStageSwitchOnOffB */
+    g->on = a | b << 1;
+    if (g->n && g->st == 0) { obj_play(in, clip[g->n], 0, 0); printf("gravity room arrow %d: %s%c", in->row, clip[g->n], 10); }
+    else if (g->n == 2 && in->anim && in->anim->done) g->n = 0; /* isBckStopped */
+}
 /* TimerMoveWall.cpp after Petari (TrialBubbleTimerMoveWallA): Wait; its SW_B coming on (listenStageSwitchOnB) ->
  * MoveFront: arg0 frames (300) at arg1 / arg0 (1000 / 300) a frame along its front (TRIBBL_T_MVWALL_ST, LV_..MV) ->
  * MoveBack the same way back -> TRIBBL_T_MVWALL_ED, Wait. n: 0 Wait, 1 front, 2 back; off its place's offset */
@@ -1379,6 +1395,7 @@ static void st_objs_update(void)
         case ST_CFSTEP: if (st_cfstep(in, g, i)) return; break;
         case ST_IASTONE: if (st_iastone(in, g)) return; break;
         case ST_FLOATERU: st_floater_u(in, g); break;
+        case ST_QRARROW: st_qrarrow(in, g); break;
         case ST_TEXSW: { /* SimpleMapObj::init: TexChange (BTK) at arg1 (setupInitInfoTextureChangeArg1; -1 none),
                           * SimpleTextureSwitchChangeObj::changeTexture on its SW_A's rise: frame 1 for good (slice.py
                           * BRK_STEPS: "<class>~<frame>") */

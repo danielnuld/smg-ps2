@@ -4436,7 +4436,7 @@ static void update_ticorails(void)
  * mario_touch_jump) and it swings (SwingPlayer: POMPON_PLANT_HIT, Hit clip), its item the first time only
  * (tryGenItem: arg1 (1) coins, star pieces with arg0 0 and STAR_PIECE_BURST); the pointer on it in Wait: SwingDpd
  * (DPD_HIT, DpdHit clip, no item). row_turn the nerve (0 Wait, 1 SwingDpd, 2 SwingPlayer), dsinit its item given.
- * ponytail: a star piece (isMsgStarPieceReflect: SwingPlayer) does not reach it */
+ * A star piece shot at the flower: SwingPlayer too (isMsgStarPieceReflect; the shots' loop) */
 static int mario_touch_jump(V3 from);
 static void cursor_ray(V3 *o, V3 *d);
 static int cursor_sees(V3 p, float px);
@@ -5815,7 +5815,7 @@ static void game_rebind_(void)
         }
         if (in->seesaw == 2 && r->arg[6] != 0) in->seesaw = 3; /* setupInitInfoSeesaw: RotateAxis 0 the one axis rotator, else the two axis one */
         if (in->seesaw) { in->rotor = 0; seesaw_matrix(in); }
-        in->railer = scene_blob_g && ((r->arg[7] > 0 && (r->arg[7] >> 30 & 1)) || in->eyebeamer || st_rail_obj(name) || !strcmp(name, "OceanSmallTurtle")) && r->path >= 0 ? /* (st_rail_obj: an objinfo RailMoveObj; OceanSmallTurtle's createMapPartsRailMoverForMercator) */
+        in->railer = scene_blob_g && ((r->arg[7] > 0 && (r->arg[7] >> 30 & 1)) || in->eyebeamer || st_rail_obj(name) || !strcmp(name, "OceanSmallTurtle") || in->hazard == 1) && r->path >= 0 ? /* (st_rail_obj: an objinfo RailMoveObj; OceanSmallTurtle's createMapPartsRailMoverForMercator; SpaceMine: setupRailMover) */
                      find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->kcl = scene_kcl(s, name);
         in->kmove = -1; in->kparent = -1; in->movelimit = 0;
@@ -42857,8 +42857,12 @@ int game_test_bigbubble(int f)
  * NeedlePlant (NeedlePlant.cpp): sensor 150 * scale above its base, radius 70 * scale; touching it pricks Mario and
  * it shakes (Shake); an enemy attack (a coconut, a rock, an explosion) breaks it (Break: a coin, arg0 0 three star
  * pieces: needle_attacked). BlackHole / BlackHoleCube (BlackHole.cpp): inside the sphere of radius 500 * scale, or the cube's box
- * of +-500 * scale, Mario is inhaled: a miss; walkers in it die (nothing dropped); SW_A kills it. ponytail: no star-piece
- * shots or invincibility kills, the mine does not spin; Mario's inhale is bh_start / bh_update. BlackHole's Disappear
+ * of +-500 * scale, Mario is inhaled: a miss; walkers in it die (nothing dropped); SW_A kills it. A star piece shot
+ * blows the mine up and shakes the plant (hazard_shot), invincible Mario kills either, and an attack he does not take
+ * pushes him off; the mine turns a degree a frame, rides its rail (setupRailMover: update_railers) and with arg1 set
+ * blows up on the ground (setupBinder). SpaceMine's Appear nerve is set nowhere in Petari. ponytail: the bound mine's
+ * explosion does not reach the sensor it hit (sendMsgEnemyAttackExplosionToBindedSensor); Mario's inhale is bh_start /
+ * bh_update. BlackHole's Disappear
  * (its demo's action nerve, dx_cast_hook; row_turn 1, row_step its step): SE_OJ_BLACK_HOLE_DISAPPEAR, the core's scale
  * eased in from _9C to 0 over steps 30 .. 90 (calcNerveEaseInValue), killed at 90; nothing inhaled meanwhile
  * (attackSensor: Wait only) and no hum. ponytail: the BlackHoleRange model (not drawn) shrinks over 0 .. 90 */
@@ -42902,6 +42906,15 @@ static void needle_attacked(V3 p, float r)
     }
 }
 
+static void mario_push_out(V3 c, float r);
+static void mine_kill(Inst *in) /* SpaceMine::kill */
+{
+    fx_emit(FX_SPACEMINE_EXPLOSION, in->m);
+    se_start(SE_OJ_SPACEMINE_EXPLOSION, &in->m[12]);
+    pad_rumble(RUMBLE_MIDDLE); /* "中" */
+    row_kill(in->row);
+    printf("SpaceMine %d exploded\n", in->row);
+}
 static void update_hazards(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -42950,26 +42963,52 @@ static void update_hazards(void)
             if (in_hole && !bh.on) { printf("black hole %d at %d %d %d up %.2f %.2f %.2f\n", in->row, (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z, mario->up.x, mario->up.y, mario->up.z); bh_start(mario, in); return; }
             continue;
         }
+        if (in->hazard == 1) { /* SpaceMine::exeWait: its Y turn + mRotateSpeed (1 near and far); bound (arg1 set), it blows up */
+            const Row *rw = &sc->objs[in->row];
+            Hit h[1];
+            row_angle[in->row] = fmodf(row_angle[in->row] + 1.0f, 360.0f);
+            float rot[3] = {rw->rot[0], rw->rot[1] + row_angle[in->row], rw->rot[2]}, at[3] = {p.x, p.y, p.z};
+            mat_translate_rot_scale(in->m, at, rot, rw->scale);
+            if (rw->arg[1] != -1 && kcl_query(p, 100.0f, h, 1)) { mine_kill(in); game_rebind(); return; } /* isBinded: offBind, kill */
+        }
         if (in->hazard == 2) {
             p = vadd(p, vmul(up_at(p, mario->up), 150.0f * in->s));
             r = 70.0f * in->s;
         }
-        if (vlen(vsub(c, p)) > r + HIT_BODY_R || (in->hazard == 2 && mario->hurt_timer)) continue;
+        if (player_mode == PM_INVINCIBLE && vlen(vsub(c, p)) < (in->hazard == 1 ? 100.0f : 180.0f * in->s) + HIT_BODY_R) {
+            m_invincible_hit(p); /* receiveMsgPlayerAttack: isMsgInvincibleAttack kills either */
+            if (in->hazard == 1) { mine_kill(in); game_rebind(); return; }
+            needle_attacked(p, 0.0f);
+            continue;
+        }
+        if (vlen(vsub(c, p)) > r + HIT_BODY_R) continue;
         int took = mario_attack(in->hazard == 1 ? ATK_EXPLOSION : ATK_ENEMY, p);
+        if (!took) { mario_push_out(p, r); continue; } /* attackSensor: not taken, sendMsgPush */
         if (in->hazard == 2) { /* sendMsgEnemyAttack: emitEffectHitBetweenSensors, Shake */
-            if (took) hit_mark_between(sc->types + 32 * sc->objs[in->row].type, p, r, c, HIT_BODY_R);
+            hit_mark_between(sc->types + 32 * sc->objs[in->row].type, p, r, c, HIT_BODY_R);
             obj_play(in, "shake", 0, 0); se_start(SE_OJ_LEAVES_SWING, &in->m[12]);
         }
-        if (in->hazard == 1) {
-            fx_emit(FX_SPACEMINE_EXPLOSION, in->m);
-            se_start(SE_OJ_SPACEMINE_EXPLOSION, &in->m[12]);
-            pad_rumble(RUMBLE_MIDDLE); /* SpaceMine::kill: "中" */
-            row_kill(in->row);
-            printf("SpaceMine %d exploded\n", in->row);
-            game_rebind();
-            return;
-        }
+        if (in->hazard == 1) { mine_kill(in); game_rebind(); return; }
     }
+}
+/* a star piece shot at p: SpaceMine's isMsgStarPieceAttack kills it (1), NeedlePlant's isMsgStarPieceReflect shakes it
+ * (2: the piece bounces off); 0 neither */
+static int hazard_shot(V3 p)
+{
+    FOR_KIND(i, hazard) {
+        Inst *in = &insts[i];
+        if ((in->hazard != 1 && in->hazard != 2) || !row_shown(in->row)) continue;
+        V3 b = v3(in->m[12], in->m[13], in->m[14]);
+        if (in->hazard == 1) {
+            if (vlen(vsub(p, b)) > 100.0f) continue;
+            mine_kill(in);
+            return 1;
+        }
+        if (vlen(vsub(p, vadd(b, vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), 150.0f * in->s)))) > 180.0f * in->s) continue;
+        obj_play(in, "shake", 0, 0); se_start(SE_OJ_LEAVES_SWING, &in->m[12]);
+        return 2;
+    }
+    return 0;
 }
 
 /* AreaObj forms (Petari AreaForm.cpp; NameObjFactory: Switch / Death Cube base origin, Sphere, Cylinder base origin):
@@ -45537,6 +45576,13 @@ static void update_shots(void)
             hit = 1;
         }
         if (!hit && jstand_star(s->pos)) hit = 1; /* JumpStand: isMsgStarPieceAttack */
+        if (!hit) hit = hazard_shot(s->pos); /* SpaceMine: isMsgStarPieceAttack; NeedlePlant: isMsgStarPieceReflect */
+        for (int k = 0; k < ninsts && !hit; k++) { /* PomponPlant: isMsgStarPieceReflect, SwingPlayer (its sensor 70) */
+            Inst *in = &insts[k];
+            if (in->giver != 2 || !row_shown(in->row) || vlen(vsub(s->pos, giver_sensor(in))) > 70.0f) continue;
+            row_turn[in->row] = 2; row_step[in->row] = 0;
+            hit = 2;
+        }
         if (!hit && hhp_reflects(s->pos, 30.0f)) hit = 2; /* HammerHeadPackun: isMsgStarPieceReflect */
         if (!hit && butler_shot(s->pos)) hit = 1;
         if (!hit && gw_shot(s->pos)) hit = 1; /* RunawayRabbit: isMsgStarPieceAttack */
@@ -50272,7 +50318,7 @@ static Anim *obj_anim(int row, const Model *md, const char *cls)
         if (anim_start(a, n, 0)) return oanim[k].a;
         snprintf(n, sizeof n, "%s/wait", cls);
         for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
-        if (!strncmp(cls, "MorphItemNeo", 12) || !strncmp(cls, "ScrewSwitch", 11)) return oanim[k].a; /* initModelManagerWithAnm: no clip until appear() / exeScrew */
+        if (!strncmp(cls, "MorphItemNeo", 12) || !strncmp(cls, "ScrewSwitch", 11) || !strcmp(cls, "QuarterRollGravityRoomArrow")) return oanim[k].a; /* initModelManagerWithAnm: no clip until appear() / exeScrew / the arrow's switches */
         if (!anim_play(a, n, 1.0f, 1, 0)) { /* no wait clip: its first */
             size_t l = strlen(n) - 4;
             for (u32 c = 0; c < sc->nclips; c++)
