@@ -11,6 +11,20 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Koopa Vs3's stair meteors (feat/se-koopa-vs3-meteor, #644, 2026-11-18): KoopaParts::initVs3 makes its
+  KoopaFireStairs with mIsKoopaJr (createFireStairs(true)) and the port flew them as Vs1's (a straight line timed to
+  the break, SE_OJ_KOOPA_FIRE_SHOT). koopa.inc kp_fire_stairs / kp_fire_stairs_update (kpfst.jr): no velocity, each
+  Fly frame at the stair's calcTimeRate ((step - mFireAttackStep) / (mTimeToBreak - mFireAttackStep)) between its
+  start (クッパ階段戦の砲弾出現) and the target plus sin(180 x rate) x 1500 along _AC, its front the way it moved;
+  _AC is (0, 1, 0) turned at each launch about Koopa's front by getRandom(0, 45) or (-45, 0) degrees (the side of
+  the stair's gravity the start-to-stair x start-to-target cross points to) and never reset, as the pool's actor
+  keeps it; SE_BM_KOOPAJR_SHIP_METEORSHOT_F at appear, SE_BM_LV_KOOPAJR_SHIP_METEOR every Fly frame. Vs1's are
+  unchanged. Test: `XF=-DKP_TEST` KoopaBattleVs3Galaxy/1 ("koopa: stairs meteor" lines).
+  PCSX2 (SE_LOG): 20 stairs registered, five meteors (157-191 frames, arcs -20 to 34 degrees), `se? 00040174` every
+  frame once one is within the listener's 5000, the breaks' `se? 000501fe`, the fight on to Lv3 as before. No line
+  for SE_BM_KOOPAJR_SHIP_METEORSHOT_F (launched beyond 5000: se_start drops it before the log); the arc not looked at
+  in a picture. **Release: sound.py --pack** KoopaBattleVs3Galaxy (the two names, and SE_OJ_KOOPA_FIRE_EXPLODE which
+  answers `se?` there too). Memory: about 1 KB (320 bytes of it the pool's state).
 - OtaKing's star pieces' burst sound (feat/se-otaking-burst, #643, 2026-11-18): OtaKing::appearStarPiece plays
   SE_OJ_STAR_PIECE_BURST on its sound object with the pieces of exeDamage / exePowerUp's first step; game.c launched
   them silent (ota_se now, as its crown's SE_BM_OTAKING_CROWN_FALL). Test: `build.sh ota` (EggStarGalaxy/3).
