@@ -14025,14 +14025,17 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
 #endif
     for (int i = 0; i < ninsts && row < 0; i++)
         if ((TALK_CLS == 9 ? insts[i].dnpc == 3 : insts[i].talkcls == TALK_CLS) && (TALK_CLS == 11 || talk_row_label(insts[i].row, lab)) && TALK_PICK(i)) row = i; /* 9: Rosetta, 11: TicoShop (Common_) */
-#if defined(REACT_TEST) && TALK_CLS == 0 /* XF="-DTALK_CLS=0 -DREACT_TEST": the first NPC of npc_reaction's classes placed (one ELF for every galaxy) */
+#if defined(REACT_TEST) && TALK_CLS == 0 /* XF="-DTALK_CLS=0 -DREACT_TEST": an NPC of npc_reaction's classes placed, the first class of this list with one shown (one ELF for every galaxy) */
+    static const char *const react_cls[] = {"PenguinCoach", "Penguin", "Caretaker", "HoneyBee", "Kinopio", "Rabbit"};
     float react_h = 60.0f;
-    for (int i = 0; i < ninsts && row < 0; i++) {
-        const char *n = sc->types + 32 * sc->objs[insts[i].row].type;
-        if (!row_shown(insts[i].row)) continue;
-        if (!strcmp(n, "Kinopio") ? sc->objs[insts[i].row].arg[6] == -1 : !strcmp(n, "Penguin") || !strcmp(n, "PenguinCoach") || !strcmp(n, "Caretaker") || !strcmp(n, "HoneyBee") || !strcmp(n, "Rabbit")) row = i;
-        if (row >= 0 && !strcmp(n, "PenguinCoach")) react_h = 300.0f; /* his head sensor */
-    }
+    row = -1; /* (not the loop above's: any talker of class 0) */
+    for (int c = 0; c < 6 && row < 0; c++)
+        for (int i = 0; i < ninsts && row < 0; i++) {
+            if (!row_shown(insts[i].row) || strcmp(sc->types + 32 * sc->objs[insts[i].row].type, react_cls[c])) continue;
+            if (c == 4 && sc->objs[insts[i].row].arg[6] != -1) continue; /* a Kinopio with its body sensor */
+            row = i;
+            if (c == 0) react_h = 300.0f; /* his head sensor */
+        }
 #undef REACT_H
 #define REACT_H react_h
 #endif
