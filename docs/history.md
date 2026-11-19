@@ -11,6 +11,11 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- OtaKing's star pieces' burst sound (feat/se-otaking-burst, #643, 2026-11-18): OtaKing::appearStarPiece plays
+  SE_OJ_STAR_PIECE_BURST on its sound object with the pieces of exeDamage / exePowerUp's first step; game.c launched
+  them silent (ota_se now, as its crown's SE_BM_OTAKING_CROWN_FALL). Test: `build.sh ota` (EggStarGalaxy/3).
+  PCSX2 (SE_LOG): `se+ 00050089` after "ota king: hit 1" and "hit 2", the fight still ends with its star. Its
+  other sound calls compared site by site with OtaKing.cpp / OtaKingMagma.cpp: all made. No repack.
 - DinoPackun's star piece reaction (feat/se-dinopackun-star-piece, #642, 2026-11-18): no star piece reached it
   (dino.react was never set). game.c dino_shot (update_shots): in a battle its head (270) / body (200) take the piece
   (Vs1: isMsgStarPieceAttack, Vs2Lv1: isMsgStarPieceReflect) and start DinoPackun::startHitReaction:
