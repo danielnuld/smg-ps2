@@ -11,6 +11,21 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Mario leftovers (feat/675-mario-leftovers, #675, 2026-11-18), from the plan's "Mario statuses not ported":
+  Mario::calcTornadoTilt (MarioSpin.cpp; update_tornado_mario: _54C, TornadoMario's up, eased mTornadoTiltSpeed to his
+  head leaning mTornadoTiltAngle to the pad's direction with the stick on in a tornado, back at mTornadoTiltSpeed /
+  mTornadoTiltOffSpeed; _548 is read nowhere); procHipDrop's homing in a spin hip drop (m_hip_homing,
+  MarioJump.cpp:1880: the map faces within his height of his shadow whose host has auto_efx_bitmap's SHD homing bit:
+  PicketSwitch / Big, StinkBugSmall / Parent, Kabokuri, SurfRay, MagnumKiller, SnowMan, PunchBox, JumpStand,
+  SpinningBox, HipDropRock by ObjNameTable; his jump turned to it; a front, side or back wall ends it); the dive's
+  hard landing slides on (startSlidingTask(8, 5, 0x19): his front x 5 for 25 frames); tryWallPunch's 壁ヒット and
+  _EF6 30. Checked, nothing to port: doCubeWarp (no scenario of the 136 places a WarpCube), bodyClap (the star pieces
+  within 100 of him in a bind: collect() takes them within 120, bind or not), forceStopTornado's _40A (set, read
+  nowhere). Left: the homing's other target, MarioActor::_4A8 (the sensor under him his body sensor met: there is no
+  sensor list, each class tests Mario itself); MarioSearchLight (the jet shell's light: SearchLightCone is not in
+  resident.bin, its draw is a light volume through destination alpha (front faces added, back faces subtracted, a box
+  blended by it), its sensor sweeps 2000 ahead for TeresaWater / the SearchTurtle group); MarioStick. Not run in
+  PCSX2 (no test puts him in these); the route's star frame unchanged.
 - MarioStep seen working (fix/673-mario-step, #673, 2026-11-18): #571's step never started. m_check_step asked
   m_front_wall_norm(), zero unless the front wall is faced (_8), and at a step the floor on the wall turns _8 off
   (checkAllWall); Mario::checkStep reads mFrontWallTriangle's normal bare: m_front_tri_n, the triangle as checkAllWall

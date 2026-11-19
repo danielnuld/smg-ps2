@@ -17100,7 +17100,7 @@ static void m_cancel_tornado(Player *m) /* cancelTornadoJump */
     m->spin_lock = 1;
     ss_boost.t = 0; /* _426 */
 }
-/* resetTornado: the tornado off (_F, _544), mYAngleOffset 0. ponytail: no calcTornadoTilt (its 150 AtField: m_create_at_field) */
+/* resetTornado: the tornado off (_F, _544), mYAngleOffset 0 (its 150 AtField: m_create_at_field) */
 static void m_reset_tornado(Player *m)
 {
     m->tornado = 0; m->tornado_t = 0;
@@ -17293,8 +17293,10 @@ static int m_jump_to_hip_drop(Player *m) /* jumpToHipDrop */
     return 1;
 }
 
+static struct { V3 v; int n; } m_slide; /* Mario::startSlidingTask / taskOnSlide: _A40 added to his velocity for _A3C frames */
 /* procHipDrop: still while HipDropStart plays and mHipDropZeroGrTime after, then down at mGravityHipDrop x a rate
  * falling to 0.1 near mLimitSpeedHipDrop; the landing (HipDropLand) ends at its end, the stick after 15, A after 5 */
+static void m_hip_homing(Player *m);
 static void m_proc_hip(Player *m)
 {
     if (m->hip == HIP_START) {
@@ -17338,9 +17340,7 @@ static void m_proc_hip(Player *m)
     if (vlen(j) > MC.mLimitSpeedHipDrop) m_set_jv(m, vmul(vnorm(j), MC.mLimitSpeedHipDrop));
     if (m->hip_homing && m_clip_on("hipdrophoming")) { /* _10._27 && スピンヒップドロップ */
         mario_sound("スピン尻ドロップ落下");
-        /* ponytail: its homing (the parts under him whose name has MatrixControl's super hip drop bit, or the
-         * sensor under him _4A8: mJumpVec turned to it) is not ported: the table's data was not read */
-        if (m->wall) m->hip_homing = 0; /* _8 (_1A / _19 not kept) */
+        m_hip_homing(m);
     }
 }
 
@@ -17612,10 +17612,10 @@ static void m_do_landing(Player *m)
         }
     }
     if (m->jump_kind == 4) m_front(m, vmul(m->turn_from, -1.0f));
-    if (dive) { /* the dive met the ground: 飛び込み失敗着地, on a hard landing its roll (ponytail: startSlidingTask(8, 5, 0x19) not ported) */
+    if (dive) { /* the dive met the ground: 飛び込み失敗着地, on a hard landing its roll and startSlidingTask(8, 5, 0x19) */
         if (m_anim_on("後方飛び込みジャンプ")) m_front(m, vmul(m->face, -1.0f));
         m_stop_walk(m);
-        if (hard) { m_anim("飛び込み失敗回転着地"); camera_shake(SHAKE_NORMAL); } /* startCamVib(0) */
+        if (hard) { m_anim("飛び込み失敗回転着地"); m_slide.v = vmul(m->face, 5.0f); m_slide.n = 0x19; camera_shake(SHAKE_NORMAL); } /* startCamVib(0) */
         else m_anim("飛び込み失敗着地");
         return;
     }
@@ -19601,7 +19601,8 @@ static int m_wall_start_jump(Player *m)
     return 1;
 }
 /* tryWallPunch on land: off the wall (mWallSpinFlipGround, x mWallSpinFlipAirRatio jumping) and up mWallSpinHopGround
- * (tryForcePowerJump). ponytail: no 壁ヒット effect, no sendPunch to the wall's sensor, no skate floor code 0x21 */
+ * (tryForcePowerJump), 壁ヒット at the wall, no swing for 30 (_EF6). ponytail: no sendPunch to the wall's sensor, no skate
+ * floor code 0x21 */
 static void m_wall_punch(Player *m)
 {
     if (m->spin_lock || m_check_wall_code(WALLC_NOACTION, 0)) return;
@@ -19612,6 +19613,8 @@ static void m_wall_punch(Player *m)
     m->spin_lock = 1; /* _2B */
     m_pad_vib(2);
     mario_sound("壁反射"); mario_sound("声スピンキャンセル");
+    mario_named_fx("WallHit", NULL); /* playEffectTrans(壁ヒット, getWallPos) */
+    swing_inhibit = 30; /* MarioActor::_EF6 */
 }
 /* MarioWall::update: the binder's ground (twice running with no move along it lets go), on the ground under 80 lands,
  * let go after mWallReleaseTime + mWallStickTime or with no front wall from frame 3; A (or a recent A, or as Rabbit)
@@ -20006,6 +20009,36 @@ static void m_check_all_wall(Player *m)
         }
     }
     m_update_wall_floor_code();
+}
+
+/* procHipDrop's homing in a spin hip drop (MarioJump.cpp:1880): of the map faces within his height over the ground
+ * (mVerticalSpeed, 500 at most) of his shadow, the last whose host has auto_efx_bitmap's SHDホーミング許可(地形) bit
+ * (MarioActor::selectHomingInSuperHipDrop; the classes of those names by ObjNameTable): his jump is turned to its
+ * sensor from his centre at the same speed, or, while he moves against his jump, turned back across the gravity. A
+ * wall (front, side, back) ends the homing.
+ * ponytail: the host's sensor taken at its instance's place; with no such part Petari homes on MarioActor::_4A8, the
+ * sensor under him that his body sensor met (attackSensor, MarioActorOffensiveMsg.cpp:186): no sensor list here, each
+ * class tests Mario itself */
+static void m_hip_homing(Player *m)
+{
+    static const char *const cls[] = {"PicketSwitch", "StinkBugSmall", "StinkBugParent", "Kabokuri", "SurfRay", "MagnumKiller", "SnowMan",
+                                      "PunchBox", "JumpStand", "SpinningBox", "PicketSwitchBig", "HipDropRock"};
+    Hit h[16];
+    int n = kcl_query(mw.shadow_pos, m->height >= 500.0f ? 500.0f : m->height, h, 16), target = -1; /* checkStrikeBallToMapWithThickness */
+    for (int i = 0; i < n; i++) {
+        if (h[i].inst < 0 || insts[h[i].inst].row < 0) continue;
+        const char *tn = sc->types + 32 * sc->objs[insts[h[i].inst].row].type;
+        for (unsigned k = 0; k < sizeof cls / sizeof *cls; k++)
+            if (!strcmp(tn, cls[k])) target = h[i].inst; /* (diffAngleAbs under 45: it gives radians, always) */
+    }
+    if (target >= 0) {
+        const float *im = insts[target].m;
+        V3 jv = m_jv(m), tj = vsub(v3(im[12], im[13], im[14]), mw.c); /* its sensor - _2A0 */
+        if (vlen(tj) > 1e-6f) tj = vmul(vnorm(tj), vlen(jv));
+        if (vdot(m->last_move, jv) < 0.0f) m->hvel = vmul(m->hvel, -1.0f); /* -mJumpVec, its gravity part put back */
+        else if (vdot(jv, tj) > 0.0f) m_set_jv(m, tj);
+    }
+    if (mw.w8 || mw.w1A || mw.w19) m->hip_homing = 0;
 }
 
 /* calcFrontFloor (after the action): the wall ahead (the faced one, else a line 100 along his front from 8 up, 200 along
@@ -22907,7 +22940,11 @@ static int tor_bck_on(const char *clip) { return tor.a && tor.clip == clip && !t
 /* MarioActor::updateTornado and TornadoMario::show / hide / hideForce / control: shown in a tornado jump past its
  * second frame (_F, _544 > 1): MarioTornadoStart, then MarioTornadoLoop with SE_PM_LV_TORNADE_FLYING; out of it (but
  * 空中ひねり in a spin jump, or MarioMagic) MarioTornadoEnd, the model hidden when that stops. ponytail: drawn at his
- * place on his front and up (setTrHeight's _54C: his up), no shadow cylinder, getDrawStates _8 / _990 (hideForce) */
+ * place on his front, up Mario::calcTornadoTilt's _54C (MarioSpin.cpp, from postureCtrl): with the stick on in a
+ * tornado (or the Bee's flight) eased mTornadoTiltSpeed to his head leaning mTornadoTiltAngle to the pad's direction,
+ * else back to his head (mTornadoTiltSpeed in one, mTornadoTiltOffSpeed out of it); _548 is read nowhere.
+ * ponytail: no shadow cylinder, getDrawStates _8 / _990 (hideForce) */
+static V3 m_v54C;
 static const char TOR_START[] = "mariotornado/mariotornadostart", TOR_LOOP[] = "mariotornado/mariotornadoloop",
                   TOR_END[] = "mariotornado/mariotornadoend";
 static void update_tornado_mario(Player *m)
@@ -22915,6 +22952,15 @@ static void update_tornado_mario(Player *m)
     if (m->tornado && m->tornado_t > 0 && !m->grounded) m->tornado_t--; /* ponytail: _544's countdown is not in the
         * decompilation (only its sets and > 1 / > 2 reads): one a frame in the air from mTornadoTimeAir */
     if (!m_tornado || !tor.a) return;
+    int tilted = m->tornado || (player_mode == PM_BEE && m->jumping && m->fly11);
+    V3 to = m->up; /* mHeadVec */
+    float sp = tilted ? MC.mTornadoTiltSpeed : MC.mTornadoTiltOffSpeed;
+    if (fabsf(m_sz) >= 0.001f && tilted) { /* isStickOn */
+        to = vnorm(vadd(vmul(m_pad, MC.mTornadoTiltAngle), vmul(m->up, 1.0f - MC.mTornadoTiltAngle)));
+        sp = MC.mTornadoTiltSpeed;
+    }
+    if (vlen(m_v54C) < 0.5f || !blend_sphere(m_v54C, to, &m_v54C, sp)) m_v54C = to; /* (_54C starts as mHeadVec) */
+    m_v54C = vnorm(m_v54C);
     if (m->tornado && m->tornado_t > 1) {
         if (!tor.vis) { tor.vis = 1; tor_bck(TOR_START); tor.shown = 1; } /* show */
     } else if ((!m_anim_on("空中ひねり") || m->jump_kind != 8) && !m->magic) {
@@ -23609,6 +23655,7 @@ static void update_mario_(void)
         if (!m_anim_on("ターンブレーキ滑り床")) { m_front(m, vmul(m->slip_from, -1.0f)); m->corr_flip = 0; m->corr = 0; m->slip_task = 0; }
         else { m->slip_move = vmul(m->slip_move, MC.mInertiaSlipTurn); m->vel = vadd(m->vel, m->slip_move); }
     }
+    if (m_slide.n) { m->vel = vadd(m->vel, m_slide.v); m_slide.n--; } /* callExtraTasks: taskOnSlide */
     if (m->rot_task) { /* callExtraTasks: taskOnRotation (4) */
         if (!m_anim_on("ヘリコプタージャンプ")) { m_yangle = 0.0f; m->rot_task = 0; }
         else m_yangle += m_rising(m) ? MC.mTrampleBegomaRotRise : MC.mTrampleBegomaRotFall;
@@ -58072,7 +58119,7 @@ void game_draw(void)
     }
     if (tor.shown && tor.a && !mario_hidden && !m_hide481) { /* TornadoMario::calcAndSetBaseMtx: makeMtxUpFrontPos */
         float tm[16];
-        basis_matrix(tm, mario->pos, mario->up, mario->face, 0);
+        basis_matrix(tm, mario->pos, vlen(m_v54C) > 0.5f ? m_v54C : mario->up, mario->face, 0);
         draw_skin(m_tornado, tm, tor.a);
     }
     if (m_mario_skin && !(mario->hurt_timer & 4) && !mario_hidden && !m_hide481 && !bh.hidden && !(fp_on && !fp_delay) && !teresa_hides_mario() && !tornado_hides_mario()) { /* the eye inside his head in the view */
