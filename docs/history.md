@@ -11,6 +11,25 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Class audit A, MapObj/ A-M (fix/645-audit-a-small, #645 / PR #670, 2026-11-18, agent audit-a): every placed class of
+  `src/Game/MapObj/[A-M]*.cpp` read against the port, the table in `docs/class-audit-a.md` (102 classes: 67 ok, 12
+  fixed here, 23 in issues #646-#653). Fixed, all read from Petari and **not run in PCSX2**: DeadLeaves (update_givers:
+  every spin sets Spin: the Spin clip, SE_OJ_LEAVES_SWING, the pieces' SE_OJ_STAR_PIECE_BURST; the item once, dsinit
+  bit 1); Candlestand (update_candles: SE_OJ_FIRE_STAND_IGNIT, SE_OJ_LV_PHANTOM_TOACH_BURN through Fire / Burn / Attack,
+  SE_OJ_PHANTOM_TOACH_OFF, the Attack nerve of 30 frames after a burn (row_turn 6), the burn within 50 x scale, the
+  Flicker's Extinguish and TeresaMansion's Extinguish02 (fx_named: jpa.py NAMED_ONLY), offSwitchA and the item at
+  Extinguish's step 15, the item 220 up the world's y and the coin turned -5 degrees for TeresaMansion); LavaSteam
+  (SW_A only starts it: a later Wait is row_turn 4; the Sign effect shrunk from step 82); LavaStrangeRock (the break
+  SEs' fall-through S + L + M, the hit point Mario's centre); DesertMovingLand (DesertMovingLandSmall run too,
+  SE_OJ_LV_DESERT_LAND_SIGN); DesertLandMoveSwitch (no timer SE with Mario dead / the star get demo); the placed
+  KeySwitch (SE_OJ_KEY_SWITCH_GET, SE_SY_READ_RIDDLE_S, Get), the placed 1-up / life mushroom (Get / GetLifeUp,
+  SE_SY_1UP); MiniatureGalaxy (SE_SY_KOOPA_LAUGH at Open's step 150 for a grand star's galaxy); HeavensDoorDemoObj
+  (Vanish's tryStageEffectStart / Stop: SE_OJ_HD_INSIDE_CAGE_BREAK, SE_OJ_HD_INSIDE_SUN_OFF); LargeChain (the fixed
+  points' own Break + SE). One sub-audit claim was false and is noted in the table (ClipFieldSwitch's margin: Petari's
+  shapes ignore it). **Release: slice_all.py for the galaxies with DeadLeaves / DesertMovingLandSmall (slice.py
+  SKINNED_OBJ: their Spin / Vibration clips) and jpa for TeresaMansionCandlestand / CandlestandIceVolcano (NAMED_ONLY
+  Extinguish02 / Extinguish): covered by the full repack**; until then the clips and those two effects do not show,
+  the rest works on the old packs.
 - SwingRope (feat/568-swing-rope, #568, 2026-11-18): Ride/SwingRope.cpp and SledRopePoint.cpp in
   `engine/src/swing_rope.inc` (swr_*): the vine of HeavenlyBeachZone (one placement, scale y 14: 28 points). Its
   nerves Stop / Free / FreeInvalid / BindSlideDownStart / BindSlideDown / BindStretch / BindLoose with Petari's

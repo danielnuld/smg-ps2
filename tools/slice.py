@@ -89,6 +89,7 @@ SKINNED_OBJ += ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp")  # TicoShop: NPCDat
 SKINNED_OBJ += ("CircleShell", "CircleStrawberry")  # SmallStone.cpp: WindLoop / WindEnd, CircleShell's Kind BVA (game.c stone_pose)
 SKINNED_OBJ += ("IceMerameraKingShock", "IceMerameraKingBreak")  # IceMerameraKing: its ShockWave's Shock, its break model's Break
 SKINNED_OBJ += ("DashRing",)  # DashRing.cpp: Loop / Start / End / Revival (game.c update_drings)
+SKINNED_OBJ += ("DeadLeaves", "DesertMovingLandSmall")  # DeadLeaves.cpp: Spin (game.c update_givers); DesertMovingLand's small one: Vibration (update_dlands)
 SKINNED_OBJ += ("PrizeRing",)  # PrizeRing.cpp: Start / Loop / End, its Number BVA (game.c syati.inc)
 SKINNED_OBJ += ("JumpGuarder", "JumpGuarderHead")  # JumpGuarder (game.c update_rbeamers: rbeamer 3) and its head
 SKINNED_OBJ += ("SubmarineVolcanoBigColumnBreak",)  # SubmarineVolcanoBigColumn: its break model's Break (statics.inc)

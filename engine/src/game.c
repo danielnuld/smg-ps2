@@ -4499,8 +4499,9 @@ static void update_ticorails(void)
     }
 }
 
-/* DeadLeaves.cpp: a spin by it (its sensor 70 at 30 up) brings out its item once (arg0 0 a coin, 1 three star
- * pieces); row_turn 1 once given. PomponPlant.cpp (Pompon2Plant / Pompon4Plant) after Petari: Wait; Mario touching
+/* DeadLeaves.cpp: every spin by it (its sensor 70 at 30 up) sets Spin (the Spin clip, LEAVES_SWING, Wait again at
+ * its end), its item out the first time only (arg0 0 a coin, 1 three star pieces with STAR_PIECE_BURST); row_turn 1
+ * in Spin, dsinit bit 1 its item given. PomponPlant.cpp (Pompon2Plant / Pompon4Plant) after Petari: Wait; Mario touching
  * its flower (sensor 70 at (55, 170, -100) in its frame) outside SwingPlayer bounces off it (sendMsgTouchJump:
  * mario_touch_jump) and it swings (SwingPlayer: POMPON_PLANT_HIT, Hit clip), its item the first time only
  * (tryGenItem: arg1 (1) coins, star pieces with arg0 0 and STAR_PIECE_BURST); the pointer on it in Wait: SwingDpd
@@ -4521,7 +4522,7 @@ static void giver_give(const Inst *in, V3 at, V3 up)
     row_turn[in->row] = 1;
     if (in->giver == 1) {
         if (r->arg[0] == 0) pop_coins(at, up, 1);
-        else if (r->arg[0] == 1) drop_pieces(at, up, 3);
+        else if (r->arg[0] == 1) { drop_pieces(at, up, 3); se_start(SE_OJ_STAR_PIECE_BURST, &at.x); } /* appearStarPiece */
     } else {
         int n = r->arg[1] > 0 ? r->arg[1] : 1;
         if (r->arg[0] == 0) { drop_pieces(at, up, n); se_start(SE_OJ_STAR_PIECE_BURST, &at.x); } else pop_coins(at, up, n);
@@ -4544,8 +4545,15 @@ static void update_givers(void)
         if (!in->giver) continue;
         V3 s = giver_sensor(in), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
         float d = vlen(vsub(c, s));
-        if (in->giver == 1) {
-            if (!row_turn[in->row] && mario->spin_timer > 0 && d < 70.0f + 100.0f) giver_give(in, s, up);
+        if (in->giver == 1) { /* receiveMsgPlayerAttack: every spin attack sets Spin (dsinit bit 1 its item given, bit 2 this spin taken) */
+            if (!mario->spin_timer) in->dsinit &= ~2;
+            if (mario->spin_timer > 0 && d < 70.0f + 100.0f && !(in->dsinit & 2)) { /* exeSpin's first step */
+                in->dsinit |= 2;
+                obj_play(in, "Spin", 0, 0);
+                se_start(SE_OJ_LEAVES_SWING, &in->m[12]);
+                if (!(in->dsinit & 1)) { in->dsinit |= 1; giver_give(in, s, up); } /* its declared coin / pieces: once */
+                row_turn[in->row] = 1;
+            } else if (row_turn[in->row] == 1 && (!in->anim || in->anim->done)) row_turn[in->row] = 0; /* isBckStopped: Wait */
             continue;
         }
         signed char *n = &row_turn[in->row];
@@ -5583,7 +5591,7 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->lotus = strcmp(name, "LotusLeaf") == 0;
     ci->train = strcmp(name, "ChooChooTrain") == 0;
     ci->vflow = strcmp(name, "LavaHomeVolcanoFlow") == 0;
-    ci->dland = strcmp(name, "DesertMovingLand") == 0;
+    ci->dland = !strcmp(name, "DesertMovingLand") || !strcmp(name, "DesertMovingLandSmall"); /* both createNameObj< DesertMovingLand > */
     ci->bigfan = strcmp(name, "BigFan") == 0 || strcmp(name, "BigFanNoLeg") == 0;
     ci->eball = strcmp(name, "ElectricBall") == 0;
     ci->arrow = strcmp(name, "ArrowSwitch") == 0 ? 1 : strcmp(name, "ArrowSwitchMulti") == 0 ? 2 : 0;
@@ -7315,7 +7323,7 @@ int game_test_giver(int kind)
 {
     for (int i = 0; i < ninsts; i++) { /* Mario at the first ungiven one: by DeadLeaves spinning, into a Pompon's flower */
         const Inst *in = &insts[i];
-        if (in->giver != kind || (kind == 2 ? in->dsinit : row_turn[in->row])) continue; /* given (PomponPlant: mCanGenItem) */
+        if (in->giver != kind || (in->dsinit & 1)) continue; /* given (PomponPlant: mCanGenItem) */
         V3 s = giver_sensor(in);
         mario->pos = vsub(s, vmul(mario->up, HIT_BODY_H));
         if (kind == 1) { mario->pos = vadd(mario->pos, vmul(vnorm(v3(in->m[0], in->m[1], in->m[2])), 120.0f)); mario->spin_timer = SPIN_TIME; }
@@ -14812,34 +14820,53 @@ static void update_candles(void)
         int row = in->row;
         const Row *r = &sc->objs[row];
         V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), base = v3(in->m[12], in->m[13], in->m[14]);
-        float s = in->s, h = in->candle == 2 ? 300.0f : 220.0f, rad = (in->candle == 1 ? 50.0f : in->candle == 2 ? 70.0f : 150.0f) * s;
+        float s = in->s, h = in->candle == 2 ? 300.0f : 220.0f, rad = 50.0f * s; /* attackSensor: isNear(50 x scale + the receiver's radius) */
+        const char *cls = sc->types + 32 * r->type;
         if (in->candle == 3 && row_turn[row] == 0 && !row_step[row] && r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) row_turn[row] = 3; /* WaitFire */
         if (row_turn[row] == 3 || row_turn[row] == 4 || row_turn[row] == 5) {
-            if (row_turn[row] == 4) {
+            if (row_turn[row] == 4) { /* exeFire (FIRE_STAND_IGNIT at its start: fireball_lights_candle) */
                 fx_keep(FX_CANDLESTANDICEVOLCANO_FIRE, r, in->m);
+                in->lv[0] = se_level(SE_OJ_LV_PHANTOM_TOACH_BURN, &in->m[12], in->lv[0]);
                 if (++row_step[row] >= 60) { row_turn[row] = 0; if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
                     printf("candlestand row %d lit\n", row); }
-            } else if (row_turn[row] == 5 && ++row_step[row] >= 30) row_turn[row] = 0;
+            } else if (row_turn[row] == 5 && ++row_step[row] >= 30) row_turn[row] = 0; /* exeFlicker: Burn at step 30 */
             continue;
         }
-        if (row_turn[row] == 0) {
+        if (row_turn[row] == 0 || row_turn[row] == 6) { /* Burn, Attack (30 frames after a burn: its fire stays, no attack, no spin) */
+            int attack = row_turn[row] == 6;
+            if (attack && ++row_step[row] >= 30) { row_turn[row] = 0; attack = 0; } /* exeAttack: isStep(30) -> Burn, no level SE that frame */
+            else in->lv[0] = se_level(SE_OJ_LV_PHANTOM_TOACH_BURN, &in->m[12], in->lv[0]); /* exeBurn / exeAttack: sBurnSound */
             if (in->candle == 3) fx_keep(FX_CANDLESTANDICEVOLCANO_FIRE, r, in->m);
             else if (in->candle == 1) fx_keep(FX_PHANTOMCANDLESTAND_FIRE, r, in->m);
             else { fx_keep(FX_TERESAMANSIONCANDLESTAND_FIRE01, r, in->m); fx_keep(FX_TERESAMANSIONCANDLESTAND_FIRE02, (const char *)r + 1, in->m); }
             V3 flame = vadd(base, vmul(up, h * s));
-            if (vlen(vsub(c, flame)) < rad + HIT_BODY_R && !mario->hurt_timer) { /* sendMsgEnemyAttackFire */
-                mario_attack(ATK_FIRERUN, flame);
+            if (attack) continue;
+            if (vlen(vsub(c, flame)) < rad + HIT_BODY_R && !mario->hurt_timer && mario_attack(ATK_FIRERUN, flame)) { /* sendMsgEnemyAttackFire: Attack */
+                row_turn[row] = 6; row_step[row] = 0;
                 printf("candlestand row %d burns Mario" "\n", row);
+                continue;
             }
             if (mario->spin_timer > 0 && vlen(vsub(c, vadd(base, vmul(up, 100.0f * s)))) < 350.0f * s) { /* isInSpinStormRange */
-                if (in->candle == 3) { row_turn[row] = 5; row_step[row] = 0; continue; } /* Flicker */
+                se_start(SE_OJ_PHANTOM_TOACH_OFF, &in->m[12]); /* exeFlicker / exeExtinguish's first step */
+                if (in->candle == 3) { /* mCanUseSwitch: Flicker (deleteEffectFire, Extinguish) */
+                    fx_named(cls, "Extinguish", in->m, NULL, NULL);
+                    row_turn[row] = 5; row_step[row] = 0; continue;
+                }
                 row_turn[row] = 1; row_step[row] = 0;
                 fx_emit(in->candle == 1 ? FX_PHANTOMCANDLESTAND_EXTINGUISH : FX_TERESAMANSIONCANDLESTAND_EXTINGUISH01, in->m);
+                if (in->candle == 2) fx_named(cls, "Extinguish02", in->m, NULL, NULL); /* emitEffectExtinguishFire */
                 printf("candlestand row %d: put out" "\n", row);
             }
-        } else if (row_turn[row] == 1 && ++row_step[row] >= 15) { /* appearItem */
-            V3 at = vadd(base, vmul(up, in->candle == 1 ? 0.0f : 220.0f * s));
-            if (r->arg[0] == -1) pop_coins(at, up, 1); else if (r->arg[0] == 0) drop_pieces(at, up, 1);
+        } else if (row_turn[row] == 1 && ++row_step[row] >= 15) { /* exeExtinguish's step 15: offSwitchA, appearItem */
+            V3 at = base, dir = up;
+            if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 0);
+            if (in->candle == 2) { /* mItemHeight 220 on the world's y (not scaled: mCanUseSwitch off), mCoinAngle -5 about its front */
+                V3 fr = vnorm(v3(in->m[8], in->m[9], in->m[10]));
+                at.y += 220.0f;
+                dir = vadd(vmul(up, 0.9961947f), vmul(vcross(fr, up), -0.08715574f)); /* makeRotate(front, -5 degrees) x up */
+            }
+            if (r->arg[0] == -1) pop_coins(at, dir, 1); /* appearCoinPop / appearCoinPopToDirection */
+            else if (r->arg[0] == 0) { drop_pieces(at, up, 1); se_start(SE_OJ_STAR_PIECE_BURST, &at.x); } /* appearStarPiece */
             row_turn[row] = 2;
         }
     }
@@ -14942,6 +14969,7 @@ static int fireball_lights_candle(V3 p) /* Candlestand::receiveMsgPlayerAttack: 
         if (vlen(vsub(p, flame)) > 150.0f * in->s + 80.0f) continue;
         row_turn[in->row] = 4; row_step[in->row] = 1;
         fx_emit(FX_CANDLESTANDICEVOLCANO_IGNITION, in->m);
+        se_start(SE_OJ_FIRE_STAND_IGNIT, &in->m[12]); /* exeFire's first step */
         return 1;
     }
     return 0;
@@ -40099,14 +40127,17 @@ static void update_lavarocks(void)
         float range = in->lavarock == 2 ? 1300.0f : in->lavarock == 3 ? 730.0f : 870.0f;
         float rad = (in->lavarock == 2 ? 200.0f : in->lavarock == 3 ? 285.0f : 150.0f) * r->scale[1];
         V3 a = row_pos(r), up = vnorm(v3(in->m[4], in->m[5], in->m[6])), b = vadd(a, vmul(up, range));
-        V3 p = vsub(mc, vadd(mario->hvel, vmul(mario->up, mario->vup))), d = vsub(b, a); /* centre less its velocity */
+        V3 p = mc, d = vsub(b, a); /* *getPlayerCenterPos() (exeWait's centre less the velocity is computed and not used) */
         float t = vdot(vsub(p, a), d) / vdot(d, d);
         V3 q = vadd(a, vmul(d, t < 0 ? 0 : t > 1 ? 1 : t)), off = vsub(p, q);
         if (vlen(off) >= rad) continue; /* checkHitSegmentSphere */
         if (mode == 1) {
             if (mario->launch < 0) continue;
             fx_named(sc->types + 32 * r->type, "Break", in->m, NULL, NULL);
-            se_start(in->lavarock == 1 ? SE_OJ_STRANGEROCK_BREAK_S : in->lavarock == 2 ? SE_OJ_STRANGEROCK_BREAK_L : SE_OJ_STRANGEROCK_BREAK_M, &in->m[12]);
+            /* exeWait's switch has no breaks: Type_0 plays S, L and M, Type_1 L and M, Type_2 M */
+            if (in->lavarock == 1) se_start(SE_OJ_STRANGEROCK_BREAK_S, &in->m[12]);
+            if (in->lavarock <= 2) se_start(SE_OJ_STRANGEROCK_BREAK_L, &in->m[12]);
+            se_start(SE_OJ_STRANGEROCK_BREAK_M, &in->m[12]);
             row_kill(in->row); game_rebind();
             return;
         }
@@ -41518,6 +41549,7 @@ static void update_dlands(void)
                 if (dl_ufo_demo()) bgm_stop(60);
                 camera_shake_infinity(o, 0.15f, 1.2f);
             }
+            { static u32 sign_lv; sign_lv = se_level(SE_OJ_LV_DESERT_LAND_SIGN, NULL, sign_lv); } /* exeMoveSign's level SE */
             if ((in->anim ? in->anim->done && st > 0 : st >= 60)) { /* isBckStopped */
                 if (o->nrv == DL_SIGNDOWN && dl_ufo_demo()) bgm_start("MBGM_GALAXY_02_HURRY"); /* startEventBGM(EventBgmID_Hurry) */
                 dl_set(k, o->nrv == DL_SIGNUP ? DL_UP : DL_DOWN);
@@ -41919,7 +41951,8 @@ static void update_dswitches(void)
             if (*st == 1 && r->sw[SW_A] >= 0) sw_set((Row *)r, SW_A, 1);
             if (t > 0) {
                 int left = t - *st; /* updateTimerSE */
-                if (*st == t) se_start(SE_SY_TIMER_A_0, NULL);
+                if (miss_running() || star_demo) ; /* updateTimerSE: not with isPlayerDead / isPowerStarGetDemoActive */
+                else if (*st == t) se_start(SE_SY_TIMER_A_0, NULL);
                 else if (left > 0 && left % 60 == 0) se_start(left > 600 ? SE_SY_TIMER_A_2 : left > 120 ? SE_SY_TIMER_A_1 : SE_SY_TIMER_A_QUASI_0, NULL);
                 if (*st >= t) { *n = 3; *st = 0; }
             } else if (*st > 1 && r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) { *n = 3; *st = 0; }
@@ -43752,18 +43785,25 @@ static void update_steam(void)
         const Row *r = &sc->objs[in->row];
         unsigned short *t = &row_step[in->row];
         signed char *ph = &row_turn[in->row];
-        if (*ph == 0 && *t == 0 && r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) *ph = 3; /* also back to waiting if it goes off */
+        if (*ph == 0 && *t == 0 && r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) *ph = 3; /* init: WaitForSwitchOn (once: listenStageSwitchOnA only starts it; a later Wait is row_turn 4) */
         if (*ph == 3) {
             if (!sw_on(r, SW_A)) continue;
             *ph = 1; *t = 0;
         }
         ++*t;
-        if (*ph == 0 && *t >= 120) { *ph = 1; *t = 0; }
+        int wait = *ph == 0 || *ph == 4;
+        if (wait && *t >= 120) { *ph = 1; *t = 0; wait = 0; }
         else if (*ph == 1 && *t >= 90) { *ph = 2; *t = 0; }
-        else if (*ph == 2 && *t >= 90) { *ph = 0; *t = 0; }
+        else if (*ph == 2 && *t >= 90) { *ph = 4; *t = 0; wait = 1; }
         V3 p = v3(in->m[12], in->m[13], in->m[14]), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
         int near = vlen(vsub(p, cam_pos)) < 6000.0f;
-        if (*ph == 0 && *t < 90 && near) fx_keep(FX_LAVASTEAM_SIGN, t, in->m);
+        if (wait && *t < 90 && near) { /* the Sign effect, shrunk from step 82 (mEffectScale) */
+            float sm[16], k = 1.0f;
+            if (*t > 82) k = 0.001f + 0.999f * (1.0f - cosf((90 - *t) / 8.0f * 1.5707963f)); /* getEaseInValue((90 - step) / 8, 0.001, 1, 1) */
+            memcpy(sm, in->m, 64);
+            for (int j = 0; j < 12; j++) sm[j] *= k;
+            fx_keep(FX_LAVASTEAM_SIGN, t, sm);
+        }
         if (*ph != 1) continue;
         insts[i].lv[0] = se_level(SE_OJ_LV_LAVA_STEAM_OUT, &in->m[12], in->lv[0]); /* exeSteam */
         if (near) fx_keep(FX_LAVASTEAM_STEAM, t, in->m);
@@ -45318,8 +45358,12 @@ static void update_items(void)
             mario->hvel = v3(0, 0, 0); mario->vup = 0;
             basis_matrix(star_demo_m, sp, su, mario->face, 0);
         }
-        else if (in->item == ITEM_ONEUP) printf("1-up, lives %d\n", ++lives);
-        else if (in->item == ITEM_LIFEUP) change_item_status(10); /* BenefitItemLifeUp::exeCatch */
+        else if (in->item == ITEM_ONEUP) { /* BenefitItemObj::exeCatch: runEfx("Get"), requestOneUp (SE_SY_1UP), incPlayerLeft */
+            fx_named("KinokoOneUp", "Get", in->m, NULL, NULL);
+            se_start(SE_SY_1UP, NULL);
+            printf("1-up, lives %d\n", ++lives);
+        }
+        else if (in->item == ITEM_LIFEUP) { change_item_status(10); fx_named("BenefitItemObj", "GetLifeUp", in->m, NULL, NULL); } /* BenefitItemLifeUp::exeCatch, runEfx("Get") */
         else if (in->item == ITEM_INVINCIBLE) { se_start(SE_SY_POWER_UP_2, NULL); change_item_status(7); } /* BenefitItemInvincible::exeCatch */
         else if (in->item == ITEM_QCOIN) {
             fx_emit(FX_QUESTIONCOIN_GET, in->m);
@@ -45351,8 +45395,11 @@ static void update_items(void)
             chip_notice_get(yel, cr->arg[0], in->row); /* MR::noticeGetChip */
         }
         else if (in->item == ITEM_KEY) { /* KeySwitch::kill: onSwitchA */
+            se_start(SE_OJ_KEY_SWITCH_GET, &in->m[12]);
             pad_rumble(RUMBLE_MIDDLE); /* receiveOtherMsg */
             if (sc->objs[in->row].sw[SW_A] >= 0) sw_set(&sc->objs[in->row], SW_A, 1);
+            se_start(SE_SY_READ_RIDDLE_S, NULL);
+            fx_named("KeySwitch", "Get", in->m, NULL, NULL);
             printf("key switch %d taken\n", in->row);
         }
         row_kill(in->row);
@@ -46367,13 +46414,15 @@ static void hdo_update(void)
     for (int k = 0; k < 2; k++) {
         if (hdo[k].row < 0 || hdo[k].step < 0) continue;
         int st = hdo[k].step++;
-        const Inst *in = row_inst(hdo[k].row);
+        Inst *in = row_inst(hdo[k].row);
         if (st == 0) {
             if (k == 0 && in) fx_named("HeavensDoorInsideCage", "Break", in->m, NULL, NULL);
+            if (in) stage_edge(in, 0, 0); /* tryStageEffectStart: SE_OJ_HD_INSIDE_CAGE_BREAK / SE_OJ_HD_INSIDE_SUN_OFF */
             if (k == 1) bgm_stop(75);
         }
         if (st > (k == 0 ? 39 : 119)) { /* isBtkStopped */
             if (k == 1) bgm_start("STM_STAR_EXIST_2");
+            if (in) stage_edge(in, 1, 0); /* tryStageEffectStop */
             if (k == 0) { camera_shake_stop(&hdo[0]); hdo[0].rumble = 0; } /* stopShakingCameraMoving */
             row_kill(hdo[k].row); game_rebind(); /* (the drawn and colliding instances: dead rows left out) */
             printf("heavens door demo obj: row %d killed\n", hdo[k].row);
@@ -49829,7 +49878,11 @@ static void dm_galaxy_update(int i)
             g->state = 3; g->zoom_out = 1; g->level = 20; dm_galaxy_scale(i, 0.65f);
             if (dm_galaxy_grand(g->name)) { bgm_start("BGM_KOOPA_APPEAR"); snprintf(bgm_next, sizeof bgm_next, "MBGM_ASTRO_DOME_2"); } /* setNextStageBGM */
         }
-        if (g->n.step == 150) { dm.invalid = 0; dn_set(&dm.hd, HD_WAIT); dn_set(&g->n, MG_WAIT); } /* validatePointing */
+        if (g->n.step == 150) { /* isStep(cOpenTotalFrame): validatePointing, Koopa's laugh for a grand star's galaxy */
+            dm.invalid = 0; dn_set(&dm.hd, HD_WAIT);
+            if (dm_galaxy_grand(g->name)) se_start(SE_SY_KOOPA_LAUGH, NULL);
+            dn_set(&g->n, MG_WAIT);
+        }
         break;
     }
     dn_end(&g->n);
