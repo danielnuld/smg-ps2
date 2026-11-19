@@ -873,7 +873,7 @@ static unsigned bh_free_at;    /* MarioActor _3AC: no take for 60 frames after a
 static int m_carry_jet(void) { return (jet.inst >= 0 && jet.phase == 1) || kmj_carry() || bh_held >= 0; } /* MarioActor _468 / getCarrySensor */
 static struct { int inst, phase, t, spins, wtimer; V3 up, front, tup, wdir; float wdist; } flf = {.inst = -1, .wtimer = -1}; /* the Fluff Mario rides (fluff_update): mUp, mFront, mTargetUpVec, mWindDir, mWindDistance, mWindSpinTimer */
 static int nfwind = -1; /* FluffWindHolder's rails (fluff_wind_init), -1 not gathered */
-static struct { int inst, phase, t, wait; V3 vel; } coc = {.inst = -1, .wait = -1}; /* SpaceCocoon Mario hangs on (cocoon_update) */
+static struct { int inst, phase, t, wait, clip; V3 vel; } coc = {.inst = -1, .wait = -1}; /* SpaceCocoon Mario hangs on (cocoon_update); clip his: 0 CocoonLand, 1 CocoonWait, 2 CocoonStretch, 3 CocoonReaction */
 static int sls_pad = -1;  /* the SpiderAttachPoint (SlingShooter) in its pointer command stream (mPadChannel 0), -1 none */
 static int bgb_gen_type = -1; /* BigBubbleGenerator: shown before its SW_APPEAR (only its activity listens to it) */
 static int sls_ride = -1; /* the SpiderAttachPoint Mario is bound to (its mRider), -1 none */
@@ -10247,6 +10247,7 @@ static int cocoon_try(Player *m)
         in->hvel = vtangent(vadd(m->hvel, vmul(m->up, m->vup)), up); /* mSpringVel: his speed along side and front */
         m->hip = 0; m->spin_timer = 0;
         if (mario_anim) mario_play("cocoonland", 1.0f, 0);
+        coc.clip = 0;
         printf("space cocoon row %d: Mario hangs on" "\n", in->row);
         return 1;
     }
@@ -10292,14 +10293,22 @@ static int cocoon_update(Player *m)
         cocoon_release(m, v3(0, 0, 0));
         return 0;
     }
-    if (coc.phase == 1 && cursor_sees(in->head, 40.0f) && menu_pointer_touch(in, 1)) /* updateBindWait: pointed (touch, "弱") */
+    if (coc.phase == 1 && cursor_sees(in->head, 40.0f) && menu_pointer_touch(in, 1)) { /* updateBindWait: pointed (touch, "弱") */
         menu_pointer_request(SPM_BLUESTARREADY);
+        if (coc.clip == 1 && mario_anim) { mario_play("cocoonreaction", 1.0f, 0); coc.clip = 3; } /* exeBindWait: tryTouch, CocoonReaction */
+    }
+    if (coc.phase == 1 && coc.clip != 1 && coc.clip != 2 && mario_anim && mario_anim->done) { /* exeBindLand's isBckStopped: BindWait;
+        * exeBindWait's isBckOneTimeAndStopped: startBckPlayer CocoonWait */
+        mario_play("cocoonwait", 1.0f, 1); coc.clip = 1;
+    }
     if (coc.phase == 1 && pointer_a() && cursor_sees(in->head, 40.0f)) { /* BindAim */
         coc.phase = 2; coc.t = 0; cocoon_cam(in, "狙い中");
         se_start(SE_OJ_SPACE_COCOON_DRAG_ST, &in->head.x);
     }
     if (coc.phase == 2) {
         float dist = vlen(vsub(in->head, n));
+        if (mario_anim && dist < 200.0f && coc.clip != 1) { mario_play("cocoonwait", 1.0f, 1); coc.clip = 1; }    /* updateHang: sAimDistanceToWait */
+        if (mario_anim && dist > 300.0f && coc.clip != 2) { mario_play("cocoonstretch", 1.0f, 1); coc.clip = 2; } /* sAimDistanceToStretch */
         if (dist >= 100.0f) { /* sAimDistanceMin .. sDistanceMax */
             float t = fminf((dist - 100.0f) / 400.0f, 1.0f);
             in->lv[0] = se_level(SE_OJ_LV_SPACE_COCOON_DRAG, &in->head.x, in->lv[0]);
