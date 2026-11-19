@@ -518,6 +518,7 @@ static unsigned *row_larea_t;
 static struct { int area, from, t, n; RenderLight cur; } plight; /* the player's ActorLightCtrl (area -1: none yet) */
 static int area_inside(const Row *r, V3 p);
 static int area_obj(const char *cls, V3 p);
+static void mario_set_raster(int t, int x, int y); /* MR::setRasterScroll (race.inc) */
 /* clip_area.inc */
 static void snow_init(const Scene *s), snow_update(void), snow_draw(V3 eye); /* snow_floor.inc */
 static int ca_shape_of(const char *name);
@@ -829,7 +830,9 @@ static struct { int inst, phase, t, drop, row, dground, dwall; V3 dir, head, vel
                                                                 * (update_jets; row / head / vel kept for a rebind); drop:
                                                                 * MarioSwim::dropJet's releaseThrowMemoSensor asked */
 static int kmj_carry(void);
-static int m_carry_jet(void) { return (jet.inst >= 0 && jet.phase == 1) || kmj_carry(); } /* MarioActor _468 / getCarrySensor */
+static int bh_held = -1;       /* the BombHei Mario carries (its mCarrySensor is his), a walker index; -1 none */
+static unsigned bh_free_at;    /* MarioActor _3AC: no take for 60 frames after a throw (releaseThrowMemoSensor) */
+static int m_carry_jet(void) { return (jet.inst >= 0 && jet.phase == 1) || kmj_carry() || bh_held >= 0; } /* MarioActor _468 / getCarrySensor */
 static struct { int inst, phase, t, spins, wtimer; V3 up, front, tup, wdir; float wdist; } flf = {.inst = -1, .wtimer = -1}; /* the Fluff Mario rides (fluff_update): mUp, mFront, mTargetUpVec, mWindDir, mWindDistance, mWindSpinTimer */
 static int nfwind = -1; /* FluffWindHolder's rails (fluff_wind_init), -1 not gathered */
 static struct { int inst, phase, t, wait; V3 vel; } coc = {.inst = -1, .wait = -1}; /* SpaceCocoon Mario hangs on (cocoon_update) */
@@ -1124,6 +1127,19 @@ static void pole_init(void);
 static void dossun_place(Inst *in);
 static int nrbms, nsbms; static const Model *m_jghead, *m_jbhead, *m_rbeam, *m_mogustone, *m_moguhole;
 const char *game_stage_name = ""; /* the galaxy being played (main.c: its pack name) */
+int game_scenario_no(void) /* GameSystemSceneController::getCurrentScenarioNo: the number trySetCurrentScenarioNo placed */
+{
+    char gal[48];
+    const char *sl = strchr(game_stage_name, '/');
+    if (!sl) return -1;
+    snprintf(gal, sizeof gal, "%.*s", (int)(sl - game_stage_name), game_stage_name);
+    return gd_placed_scenario(gal, atoi(sl + 1));
+}
+int game_stage_scenario(const char *galaxy, int no)
+{
+    size_t l = strlen(galaxy);
+    return !strncmp(game_stage_name, galaxy, l) && game_stage_name[l] == '/' && game_scenario_no() == no;
+}
 static void draw_mogu_extras(void), draw_mogucchi_extras(void), draw_whirls(void), update_whirls(void);
 static int t_whirl = -1;
 #define MAX_WBULLETS 16
@@ -2761,6 +2777,7 @@ void game_init(const Scene *s, const unsigned char *blob)
             npieces += star_group(NULL, &s->objs[i], blob);
         else if (s->objs[i].type == t_flow)
             npieces += star_flow(NULL, 0, &s->objs[i], blob);
+    bh_held = -1; bh_free_at = 0;
     nkuribo = count_type("Petari", 0) + count_type("Poihana", 0) + count_type("Unizo", 0) + count_type("UnizoLand", 0) + count_type("UnizoShoal", 0) + count_type("StinkBugSmall", 0) + count_type("Kuribo", 0) + count_type("TakoHei", 0) + count_type("PackunPetit", 0) + count_type("KoteBug", 0) +
               count_type("JumpSpider", 0) + count_type("Meramera", 0) + count_type("IceMeramera", 0) + count_type("Takobo", 0) +
               count_type("MechanicKoopaMini", 0) + count_type("Karikari", 0) +
@@ -2920,6 +2937,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     { /* AstroMapBoard's picture, the mirror's, the raster scroll's bands (a TeresaRacer of a racer id): their VRAM out of the cache */
         int tr = scene_type(s, "TeresaRacer"), raster = 0;
         for (u32 i = 0; tr >= 0 && i < s->nobjs; i++) raster |= (int)s->objs[i].type == tr && s->objs[i].arg[0] != -1;
+        raster |= scene_type(s, "RasterScrollCube") >= 0; /* (MarioCollision's setRasterScroll in it) */
         render_target_reserve(st_mapboard || scene_type(s, "MirrorAreaCube") >= 0 || raster);
     }
     gw_init();
@@ -3235,8 +3253,8 @@ void game_init(const Scene *s, const unsigned char *blob)
         char gal[48];
         const char *sl = strchr(game_stage_name, '/');
         snprintf(gal, sizeof gal, "%.*s", sl ? (int)(sl - game_stage_name) : (int)strlen(game_stage_name), game_stage_name);
-        opening_visited = sl && gd_visited(gal, atoi(sl + 1));
-        if (sl) gd_set_visited(gal, atoi(sl + 1));
+        opening_visited = sl && gd_visited(gal, game_scenario_no());
+        if (sl) gd_set_visited(gal, game_scenario_no());
     }
 }
 
@@ -15564,7 +15582,7 @@ static float m2_signed_h(V3 a, V3 b, V3 axis) /* MR::diffAngleSignedHorizontal *
 static V3 m2_norm0(V3 v, int *zero) { *zero = vdot(v, v) < 1e-12f; return *zero ? v : vnorm(v); } /* MR::normalizeOrZero */
 static void m2_adjust_ground(Player *m, float *rx, float *ry) /* stick2DadjustGround */
 {
-    if (!strcmp(game_stage_name, "HellProminenceGalaxy/3")) return; /* isStageCameraRotate2D */
+    if (game_stage_scenario("HellProminenceGalaxy", 3)) return; /* isStageCameraRotate2D */
     if (m2.t10 && m->grounded && !m->jumping) { m2.t10 = 0; m2_clear(); m2.b66C = 0; }
     m2.side = m2.fx; m2.up = m2.fy; m2.nrm = vmul(m2.fz, -1.0f);
     m2.v6A0 = m2.nrm;
@@ -23105,7 +23123,7 @@ static void update_mario_(void)
     int zero = vlen(gup) < 0.5f;
     if (!zero) m->up = gup;
     else if (m->grounded && vlen(m->ground_n) > 0.5f) m->up = vnorm(m->ground_n);
-    if (fo.on && !strcmp(game_stage_name, "HeavensDoorGalaxy/2")) { /* Mario::isUseFooSpecialGravity: towards one point */
+    if (fo.on && game_stage_scenario("HeavensDoorGalaxy", 2)) { /* Mario::isUseFooSpecialGravity: towards one point */
         V3 d = vsub(m->pos, v3(14760.0f, -10676.2f, 6770.0f));
         if (vlen(d) > 1e-6f) m->up = vnorm(d);
     }
@@ -23361,6 +23379,17 @@ static void update_mario_(void)
             m_tower.c = vadd(row_pos(r), vmul(m_tower.up, 250.0f * r->scale[1]));
             m_tower.r = 500.0f * r->scale[0];
         }
+    }
+    { /* MarioCollision.cpp:2296: in a RasterScrollCube, setRasterScroll(its arg0, arg1, arg2) */
+        int rs = area_obj("RasterScrollCube", m->pos);
+        if (rs >= 0) mario_set_raster(sc->objs[rs].arg[0], sc->objs[rs].arg[1], sc->objs[rs].arg[2]);
+#ifdef RASTER_TEST /* XF=-DRASTER_TEST HeavenlyBeachGalaxy/1: Mario put in the cube from frame 300 to 600 */
+        if (game_frame >= 300 && game_frame < 600) {
+            int t = scene_type(sc, "RasterScrollCube");
+            for (u32 i = 0; t >= 0 && i < sc->nobjs; i++) if ((int)sc->objs[i].type == t) { m->pos = vadd(row_pos(&sc->objs[i]), vmul(m->up, 200.0f)); m->hvel = v3(0, 0, 0); m->vup = 0; break; }
+        }
+        if (game_frame % 30 == 0) printf("raster test f %u: cube %d%c", game_frame, rs, 10);
+#endif
     }
     { /* updateCubeCode: in a PullBackCube or PullBackCylinder, doRecovery (a cylinder without arg0 1: its base and up
        * for MarioRecovery's _4C / _58, _12) */
@@ -32948,9 +32977,19 @@ dead:
  * lights it; a trample or hip drop lights it and presses it (Pressed 60, then Pursue); a spin (Bob-omb) lights it and
  * knocks it up (Spin, 10; Physics: rolling on the ground at 0.5, Stop under 5). A launcher (its own model and
  * collision) throws its bomb up 35 and forward 1 (Open SE), waits 120 (Stop), and once the bomb is gone counts 60
- * before the next (not while Mario stands on it; its SW_A on / off starts / stops it). ponytail: no carrying /
- * throwing by Mario (Taken / Thrown), no ball roll pose, the explosion hurts Mario only, no star pointer bind */
-enum { BH_LAUNCH, BH_STARTING, BH_WAIT, BH_WALK, BH_PURSUE, BH_PURSUEFAST, BH_SPINHIT, BH_TRAMPLE, BH_PHYSICS, BH_STOP, BH_EXPLODE, BH_GONE };
+ * before the next (not while Mario stands on it; its SW_A on / off starts / stops it).
+ * Carrying (MarioActor's attackSensor on ATYPE_BOMBHEI sends ACTMES_ITEM_GET; receiveOtherMsg): rolling or stopped
+ * (Physics / Stop), 30 frames into SpinHit or 120 into Thrown, Mario touching it takes it: Taken (Carry, its fuse lit,
+ * SE_PV_LIFT_UP + SE_EM_BOMB_LIFT, the body sensor off) held before him; his spin throws it (receiveMsgThrow: 25 along
+ * his front, 18 up; Thrown: Stop, SE_PV_THROW + SE_EM_BOMB_THROW, its gravity kept 30 frames, 0.75 a frame x 0.98, on
+ * the ground the bound sound, Bound and Physics); a damage or rush drop lets it go (drop_taking: ACTMES_DAMAGEDROP /
+ * RUSHDROP, Thrown where it is); it blows up in his hands (EnemyAttackExplosion to its carrier).
+ * ponytail: held where the port holds a JetTurtle (70 ahead, 60 up: not his hand joint and its rotation,
+ * MarioActor::updateTakingPosition), thrown along his front (getThrowVec's swim / target cases), Mario's take as the
+ * JetTurtle's port (no isActionOk, no doTrampleJump from the air onto a still one), Thrown does not rebound off
+ * enemies / NPCs (calcReflectionVector 0.8), no ball roll pose, the explosion hurts Mario only, no star pointer bind */
+enum { BH_LAUNCH, BH_STARTING, BH_WAIT, BH_WALK, BH_PURSUE, BH_PURSUEFAST, BH_SPINHIT, BH_TRAMPLE, BH_PHYSICS, BH_STOP, BH_EXPLODE, BH_GONE,
+       BH_TAKEN, BH_THROWN };
 enum { BLN_WAIT, BLN_STOP };
 static int bh_launcher(const Kuribo *k) { const char *c = walker_cls(k); return !strcmp(c, "BombHeiLauncher") ? 1 : !strcmp(c, "BombLauncher") ? 2 : 0; }
 static int bh_fuse_len(const Kuribo *k) { const Row *r = &sc->objs[k->row]; return !bh_launcher(k) && r->arg[0] > 0 ? r->arg[0] : 600; }
@@ -32997,9 +33036,23 @@ static void bomb_update(Kuribo *k)
         }
         if (k->nrv == BH_GONE) return;
     } else if (k->nrv == BH_GONE) return;
-    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
+    int me = (int)(k - kuribo);
+    if (bh_held == me && k->nrv != BH_TAKEN && k->nrv != BH_EXPLODE) bh_held = -1;
+    if (k->nrv != BH_THROWN || k->step >= 30) k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f); /* (Thrown: offCalcGravity for hThrownOffCalcGravityTime) */
     V3 up = vmul(k->grav, -1.0f);
     int st = ++k->step;
+#ifdef BH_TEST /* XF=-DBH_TEST (CannonFleetGalaxy/1): the first Bob-omb, brought to Mario (update_kuribo), spun (100 frames
+                * on), touched once it rolls, thrown 90 frames after he took it; its nerves logged */
+    {
+        static int t, took, last = -1;
+        if (!launcher && vlen(vsub(mario->pos, k->pos)) < 800.0f) {
+            if (last != k->nrv) { printf("bh test f %d: row %d nerve %d fuse %d%c", t, k->row, k->nrv, k->timer, 10); last = k->nrv; }
+            if (++t == 100 && k->nrv != BH_EXPLODE) { w_nrv(k, BH_SPINHIT); bh_light(k); st = ++k->step; }
+            if ((k->nrv == BH_PHYSICS || k->nrv == BH_STOP) && bh_held < 0 && !took) { mario->pos = k->pos; mario->hvel = v3(0, 0, 0); }
+            if (k->nrv == BH_TAKEN && ++took == 90) mario->spin_timer = SPIN_TIME - 1;
+        }
+    }
+#endif
     if (in_death(k->pos) && k->nrv != BH_EXPLODE) w_nrv(k, BH_EXPLODE), st = ++k->step; /* control: isInDeath */
     if (k->timer > 0 && k->nrv != BH_EXPLODE) { /* control: the fuse */
         k->lv2[0] = se_level(SE_EM_LV_BOMB_FUSE, &k->pos.x, k->lv2[0]);
@@ -33059,9 +33112,30 @@ static void bomb_update(Kuribo *k)
         k->vel = vadd(k->vel, k->on_ground ? vmul(k->gn, -1.0f) : k->grav);
         k->vel = vmul(k->vel, k->on_ground ? 0.8f : 0.98f);
         break;
+    case BH_TAKEN: /* exeTaken (sendMsgTaken: the body sensor off); receiveMsgThrow, ACTMES_DAMAGEDROP */
+        if (st == 0) { w_act(k, "Carry"); mario_se(SE_PV_LIFT_UP); w_se(k, SE_EM_BOMB_LIFT); k->bind_off = 1; }
+        k->grav = vmul(mario->up, -1.0f); up = mario->up; k->front = mario->face; k->vel = v3(0, 0, 0);
+        k->pos = vadd(vadd(mario->pos, vmul(mario->face, 70.0f)), vmul(up, 60.0f - 60.0f * scl));
+        if (mario->spin_timer == SPIN_TIME - 1) { /* isPlayerSwingAction: releaseThrowMemoSensor (ACTMES_THROW) */
+            k->vel = vadd(vmul(mario->face, 25.0f), vmul(up, 18.0f)); /* hThrowVelH / hThrowVelV */
+            bh_held = -1; bh_free_at = game_frame + 60;
+            w_nrv(k, BH_THROWN);
+            printf("bomb hei row %d thrown%c", k->row, 10);
+        }
+        break;
+    case BH_THROWN: { /* exeThrown */
+        if (st == 0) { w_act(k, "Stop"); mario_se(SE_PV_THROW); w_se(k, SE_EM_BOMB_THROW); k->bind_off = 0; }
+        V3 vh = vtangent(k->vel, k->grav);
+        if (vlen(vh) > 1e-3f) k->front = vnorm(vh); /* turnVecToVecRadian(hTurnLimitRadian 3) */
+        k->vel = vmul(k->vel, 0.98f);               /* hThrownDampVel */
+        if (!ground) k->vel = vadd(k->vel, vmul(k->grav, 0.75f)); /* hGravityThrown */
+        else { w_se(k, SE_EM_BOMB_BOUND); w_act(k, "Bound"); w_nrv(k, BH_PHYSICS); } /* startBoundSound */
+        break;
+    }
     case BH_EXPLODE: {
         V3 c = vadd(k->pos, vmul(up, 200.0f * scl));
         float rad = (r->arg[1] > 0 && !launcher ? (float)r->arg[1] : 500.0f) * scl * (st > 8 ? 8 : st) / 8.0f;
+        if (st == 0 && bh_held == me) { bh_held = -1; if (!mario->hurt_timer) mario_attack(ATK_EXPLOSION, c); } /* RUSHDROP, sendMsgEnemyAttackExplosion(mCarrySensor) */
         if (st == 0) {
             float m[16];
             basis_matrix(m, k->pos, up, k->front, 0);
@@ -33083,24 +33157,31 @@ static void bomb_update(Kuribo *k)
     }
     }
     k->act_t += k->act_rate;
-    if (k->nrv == BH_LAUNCH || k->nrv == BH_PHYSICS) { /* reboundVelocityFromCollision(0.1, 6, 1) */
+    if (k->nrv == BH_LAUNCH || k->nrv == BH_PHYSICS || k->nrv == BH_THROWN) { /* reboundVelocityFromCollision(0.1, 6, 1) */
         if (k->on_ground && vdot(k->vel, k->gn) < -6.0f) k->vel = vsub(k->vel, vmul(k->gn, 1.1f * vdot(k->vel, k->gn)));
         else if (k->on_ground && vdot(k->vel, k->gn) < 0) k->vel = vtangent(k->vel, k->gn);
     }
     w_bind(k, 53.0f);
     k->qy = k->up = up; k->qz = vnorm(vtangent(k->front, up)); /* calcMtxFromGravityAndZAxis */
     if (vlen(k->qz) < 1e-3f) k->qz = k->front;
-    if (k->nrv == BH_LAUNCH) return;
+    if (k->nrv == BH_LAUNCH || k->nrv == BH_TAKEN) return;
     V3 body = vadd(k->pos, vmul(up, 60.0f * scl));
     int msg = mario_offence(k, body, 60.0f * scl, k->grav);
     if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) {
-        if (k->nrv == BH_PHYSICS || k->nrv == BH_STOP || k->nrv == BH_SPINHIT) return;
+        if (k->nrv == BH_PHYSICS || k->nrv == BH_STOP || k->nrv == BH_SPINHIT || k->nrv == BH_THROWN) return;
         bh_light(k); w_nrv(k, BH_TRAMPLE);
         if (msg == MSG_TRAMPLE) mario_trample();
         return;
     }
-    if (msg == MSG_HITALL && !bomb && k->nrv != BH_SPINHIT) { m_punch(k, body, 0); w_nrv(k, BH_SPINHIT); bh_light(k); scene_stop = 3; return; }
+    if (msg == MSG_HITALL && !bomb && k->nrv != BH_SPINHIT && !(k->nrv == BH_THROWN && k->step < SPIN_TIME)) { /* (not the spin that threw it) */ m_punch(k, body, 0); w_nrv(k, BH_SPINHIT); bh_light(k); scene_stop = 3; return; }
     if (mario_touch(body, 60.0f * scl)) { /* sendMsgPushAndKillVelocityToTarget */
+        /* isMsgItemGet (Mario's body on it): Stop, Physics, Thrown past hThrownCanNotGotTime, SpinHit past hSpinHitCanGetTime */
+        if ((k->nrv == BH_STOP || k->nrv == BH_PHYSICS || (k->nrv == BH_THROWN && st > 120) || (k->nrv == BH_SPINHIT && st > 30)) &&
+            !m_carry_jet() && !mario->hurt_timer && game_frame >= bh_free_at) {
+            bh_held = me; w_nrv(k, BH_TAKEN); bh_light(k);
+            printf("bomb hei row %d taken%c", k->row, 10);
+            return;
+        }
         V3 d = vtangent(vsub(mario->pos, k->pos), up);
         if (vlen(d) > 1e-3f) mario->pos = vadd(mario->pos, vmul(vnorm(d), 4.0f));
         bh_light(k);
@@ -34313,7 +34394,30 @@ static void walker_push_pass(void) /* ponytail: the first WP_MAX walkers with se
 }
 static void update_kuribo(void)
 {
+#ifdef BH_TEST /* the first Bob-omb dropped 200 before Mario, 120 frames after he is free, and updated here from then
+                * on (its zone may not be streamed in: update_kuribo_one would wait for its ground) */
+    static int bh_ti = -1;
+    {
+        static int t;
+        int game_test_free(void);
+        int go = game_test_free() && t < 120 && ++t == 120;
+        if (bh_ti >= 0 && kuribo[bh_ti].state != KURIBO_DEAD) bomb_update(&kuribo[bh_ti]);
+        for (int i = 0; go && i < nkuribo; i++) {
+            Kuribo *k = &kuribo[i];
+            if (k->kind != WALK_BOMBHEI || bh_launcher(k) || k->state == KURIBO_DEAD) continue;
+            k->pos = vadd(vadd(mario->pos, vmul(mario->face, 200.0f)), vmul(mario->up, 100.0f));
+            k->vel = v3(0, 0, 0); k->grav = vmul(mario->up, -1.0f); k->clipped = 0; k->timer = -1;
+            w_nrv(k, BH_LAUNCH);
+            printf("bh test: row %d brought to Mario%c", k->row, 10);
+            bh_ti = i;
+            break;
+        }
+    }
+#endif
     for (int i = 0; i < nkuribo; i++) {
+#ifdef BH_TEST
+        if (i == bh_ti) continue;
+#endif
         Kuribo *k = &kuribo[i];
         if (k->state == KURIBO_DEAD || !row_shown(k->row)) continue;
         if (k->clipped && k->kind != WALK_KARIKARI && !test_noclip && !(k->kind == WALK_BOMBTERESA && !k->lvt[1]) && !(k->kind == WALK_MERAKING && mk_noclip(k)) && !(k->kind == WALK_MERAMERA && k->lvt[2]) && !(k->kind == WALK_TERESA && k->lvt[1]) && !(k->kind == WALK_MKOOPA && k->lvt[2]) && !(k->kind == WALK_BOMBBIRD && bbd_noclip(k)) && !(k->kind == WALK_POIHANA && k->dir)) { if (k->kind == WALK_MERAMERA) k->sstep = -1; continue; } /* startClipped: no movement (Karikari may ride on Mario; a BombTeresa's invalidateClipping: lvt[1] 0) */
@@ -42639,7 +42743,8 @@ int game_test_movie(int which) /* tests: the appear switch of the MovieStarter o
     return -1;
 }
 
-static int ac_row = -1, ac_wait;
+static int ac_row = -1, ac_wait, ac_capture; /* ac_capture: 1 capture the next frame, 2 draw it (SystemWipeHolder) */
+static const Scene *ac_scene;
 #ifdef ASTRO_DOOR
 /* astro test with XF=-DASTRO_DOOR=1: Mario 600 out of dome 1's door (its cube's side of the dome's centre), walked by the stick through its door to its
  * AstroChangeStageCube (its Open collision: the Close one stops him at the door, as with =0, no grand star) */
@@ -42677,18 +42782,32 @@ int game_test_astro_cube(int mode) /* tests: Mario put in the first AstroChangeS
 }
 static void astro_cube(int row, const Row *r)
 {
-    int id = r->arg[0] == 0 ? (game_stage_name[strlen(game_stage_name) - 1] - '0') : r->arg[1];
+    int id = r->arg[0] == 0 ? game_scenario_no() : r->arg[1]; /* _3C: getCurrentScenarioNo */
+    if (ac_scene != sc) { ac_scene = sc; ac_row = -1; ac_capture = 0; }
     if (ac_row >= 0) {
-        if (row != ac_row || ac_wait++ != 5) return;
+        if (row != ac_row) return;
+        if (ac_wait < 5) { ac_wait++; return; } /* cChangeStageWaitFrame */
+        if (ac_wait == 5) { /* closeSystemWipeCircleWithCaptureScreen(cWipeFrame 110), setWipeCircleCenterPos */
+            ac_wait++;
+            render_target_reserve(1); /* (the capture's blocks: taken only now, the scene ends) */
+            ac_capture = 1;
+            menu_wipe_circle(1, 110);
+            float x, y;
+            V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+            if (screen_pos(c, &x, &y)) menu_wipe_circle_center(x, y);
+            return;
+        }
+        if (ac_wait != 6 || menu_wipe_active()) return; /* the change stage request: done once the ring is shut */
+        ac_wait++;
         switch (r->arg[0]) {
-        case 0: case 4: menu_fade_move(110, SEQ_MOVE, "AstroGalaxy", -1, id, 0); break;
-        case 2: menu_fade_move(110, SEQ_MOVE, "AstroGalaxy", 1, id, 0); break;
+        case 0: case 4: menu_fade_move(1, SEQ_MOVE, "AstroGalaxy", -1, id, 0); break;
+        case 2: menu_fade_move(1, SEQ_MOVE, "AstroGalaxy", 1, id, 0); break;
         case 1:
-            if (gd_flag_is_on("RosettaTalkAboutTico")) menu_fade_move(110, SEQ_SCENARIO_SELECT, "HeavensDoorGalaxy", -1, -1, 0);
-            else menu_fade_move(110, SEQ_MOVE, "HeavensDoorGalaxy", 2, id, 0);
+            if (gd_flag_is_on("RosettaTalkAboutTico")) menu_fade_move(1, SEQ_SCENARIO_SELECT, "HeavensDoorGalaxy", -1, -1, 0);
+            else menu_fade_move(1, SEQ_MOVE, "HeavensDoorGalaxy", 2, id, 0);
             break;
-        case 3: menu_fade_move(110, SEQ_MOVE, "LibraryRoom", 1, id, 0); break;
-        case 5: menu_fade_move(110, SEQ_MOVE, "AstroDome", r->arg[2], id, 0); break;
+        case 3: menu_fade_move(1, SEQ_MOVE, "LibraryRoom", 1, id, 0); break;
+        case 5: menu_fade_move(1, SEQ_MOVE, "AstroDome", r->arg[2], id, 0); break;
         }
         return;
     }
@@ -44851,9 +44970,9 @@ static void update_items(void)
                 memset(&res, 0, sizeof res);
                 snprintf(res.stage, sizeof res.stage, "%s", gal);
                 res.star = id; res.prev_stars = gd_star_num(); res.coins = got_coins; res.pieces = got_pieces;
-                res.prev_max_coin = gd_max_coins(gal, sl ? atoi(sl + 1) : 1);
+                res.prev_max_coin = gd_max_coins(gal, id);
                 gd_set_star(gal, id);
-                gd_update_max_coins(gal, sl ? atoi(sl + 1) : 1, got_coins); /* the coin best score */
+                gd_update_max_coins(gal, id, got_coins); /* reflectStageResultSequenceCoin: the cleared star's */
                 res.after_stars = gd_star_num();
                 seq_set_result(&res);
                 seq_set_cleared(id); /* GameSequenceFunction::getClearedPowerStarId */
@@ -45369,8 +45488,10 @@ static void bgm_play(const char *track)
 void game_bgm_stage(void) /* startCurrentStageBGM; sequenced ones (LibraryRoom...) are not streams: galaxy 01 */
 {
     const char *track = "SMG_galaxy01_strm";
+    char scen[48]; /* startStageBGMFromStageName(getCurrentStageName, getCurrentScenarioNo) */
+    snprintf(scen, sizeof scen, "%.*s/%d", (int)strcspn(game_stage_name, "/"), game_stage_name, game_scenario_no());
     for (u32 i = 0; i < sizeof music_tab / sizeof music_tab[0]; i++)
-        if (!strcmp(music_tab[i].scen, game_stage_name)) track = music_tab[i].track;
+        if (!strcmp(music_tab[i].scen, scen)) track = music_tab[i].track;
     bgm_last[0] = 0;
     bgm_play(track);
 }
@@ -45540,9 +45661,8 @@ static int starter_bgm_on_welcome(void) /* ScenarioStarter::isStartBgmOnWelcome 
 {
     const char *c = bgm_comet();
     if (!strcmp(c, "Red") || !strcmp(c, "Black")) return 0;
-    return !strcmp(game_stage_name, "EggStarGalaxy/1") || !strcmp(game_stage_name, "HoneyBeeKingdomGalaxy/1") ||
-           !strcmp(game_stage_name, "FactoryGalaxy/1") || !strcmp(game_stage_name, "FactoryGalaxy/2") ||
-           !strcmp(game_stage_name, "FactoryGalaxy/3");
+    return game_stage_scenario("EggStarGalaxy", 1) || game_stage_scenario("HoneyBeeKingdomGalaxy", 1) ||
+           (on_stage("FactoryGalaxy") && game_scenario_no() <= 3);
 }
 static int bgm_permitted(void) /* DemoSoundKeeper::isPermitBgmChange: not with a red / black comet in the stage */
 {
@@ -46900,6 +47020,9 @@ static void put_test(void)
             if (sc->objs[i].sw[SW_A] == PUT_SW_B_OF && sc->objs[i].sw[SW_B] >= 0) sw_set(&sc->objs[i], SW_B, 1);
 #endif
     }
+#ifdef PUT_HOLD /* -DPUT_HOLD: held where he was put (an area he would fall out of) */
+    { static V3 at; if (t == PUT_AT) at = mario->pos; else if (row >= 0 && t > PUT_AT) mario->pos = at; }
+#endif
     if (row >= 0 && t % 60 == 0) {
         const Inst *in = NULL;
         for (int i = 0; i < ninsts; i++) if (insts[i].row == row) { in = &insts[i]; break; }
@@ -48489,9 +48612,99 @@ static void ambient_effects(void)
     }
 }
 
+/* SoundEmitterCube.cpp / SoundEmitterSphere.cpp after Petari (their movement, every frame, demos too): an ambient level sound (arg0: the cube's SE_AT_LV_GRAVE / KOOPA_WIND / WIND_DESERT / WIND_ICE_MT_TOP, the
+ * sphere's MAGMA_AMBIENT / FLOATING_SAND / WIND_DESERT / MAGMA_WIND_VOLCANO / KOOPA_FLOAT_SAND / WIND_RABBIT_MAZE)
+ * played at the camera's watch point (cube 0 / 3, sphere 1 / 2 / 4 / 5) or the microphone, moved into the area: the
+ * cube's world bounding box, the sphere's surface. PlayerSeArea.cpp (placed as PlayerSeCube / Sphere / Cylinder; arg0
+ * 0): SE_PM_LV_LONG_FALL while Mario is in it and not rising in a jump. ponytail: the microphone (AudMicWrap::getMicPos) taken as the camera's eye */
+static struct { short row; unsigned char kind; u32 h; } snd_em[48];
+static int n_snd_em = -1;
+static const Scene *snd_em_sc;
+static void update_sound_emitters(void)
+{
+    static const u32 cube_se[4] = {SE_AT_LV_GRAVE, SE_AT_LV_KOOPA_WIND, SE_AT_LV_WIND_DESERT, SE_AT_LV_WIND_ICE_MT_TOP};
+    static const u32 sphere_se[6] = {SE_AT_LV_MAGMA_AMBIENT, SE_OJ_LV_FLOATING_SAND, SE_AT_LV_WIND_DESERT,
+                                     SE_AT_LV_MAGMA_WIND_VOLCANO, SE_AT_LV_KOOPA_FLOAT_SAND, SE_AT_LV_WIND_RABBIT_MAZE};
+    if (snd_em_sc != sc || n_snd_em < 0) {
+        int t[5] = {scene_type(sc, "SoundEmitterCube"), scene_type(sc, "SoundEmitterSphere"), scene_type(sc, "PlayerSeCube"),
+                    scene_type(sc, "PlayerSeSphere"), scene_type(sc, "PlayerSeCylinder")};
+        snd_em_sc = sc; n_snd_em = 0;
+        for (u32 i = 0; i < sc->nobjs && n_snd_em < 48; i++)
+            for (int k = 0; k < 5; k++)
+                if (t[k] >= 0 && (int)sc->objs[i].type == t[k]) { snd_em[n_snd_em].row = (short)i; snd_em[n_snd_em].kind = (unsigned char)k; snd_em[n_snd_em++].h = 0; }
+    }
+    if (!n_snd_em) return;
+    V3 eye, watch, cu;
+    float fovy;
+    camera_pose(&eye, &watch, &cu, &fovy);
+    for (int k = 0; k < n_snd_em; k++) {
+        const Row *r = &sc->objs[snd_em[k].row];
+        int a0 = r->arg[0];
+        V3 c = row_pos(r), q;
+        if (snd_em[k].kind == 0) { /* SoundEmitterCube (a base origin cube) */
+            if (a0 < 0 || a0 > 3) continue;
+            V3 x, z, lo, hi;
+            row_axes(r, &x, &z);
+            V3 y = vcross(z, x);
+            q = a0 == 0 || a0 == 3 ? watch : eye;
+            lo = hi = vadd(vadd(c, vmul(x, -500.0f * r->scale[0])), vmul(z, -500.0f * r->scale[2]));
+            for (int n = 1; n < 8; n++) { /* the box of its eight corners */
+                V3 v = vadd(vadd(vadd(c, vmul(x, (n & 1 ? 500.0f : -500.0f) * r->scale[0])), vmul(y, (n & 2 ? 1000.0f : 0.0f) * r->scale[1])),
+                            vmul(z, (n & 4 ? 500.0f : -500.0f) * r->scale[2]));
+                lo = v3(fminf(lo.x, v.x), fminf(lo.y, v.y), fminf(lo.z, v.z));
+                hi = v3(fmaxf(hi.x, v.x), fmaxf(hi.y, v.y), fmaxf(hi.z, v.z));
+            }
+            q = v3(fminf(fmaxf(q.x, lo.x), hi.x), fminf(fmaxf(q.y, lo.y), hi.y), fminf(fmaxf(q.z, lo.z), hi.z));
+            snd_em[k].h = se_level(cube_se[a0], &q.x, snd_em[k].h);
+        } else if (snd_em[k].kind == 1) { /* SoundEmitterSphere */
+            if (a0 < 0 || a0 > 5) continue;
+            float rad = 500.0f * r->scale[0], d;
+            q = a0 == 1 || a0 == 2 || a0 == 4 || a0 == 5 ? watch : eye;
+            d = vlen(vsub(q, c));
+            if (!(row_shown(snd_em[k].row) && d < rad) && d > 1e-6f) q = vadd(c, vmul(vsub(q, c), rad / d)); /* !isInVolume */
+            snd_em[k].h = se_level(sphere_se[a0], &q.x, snd_em[k].h);
+        } else if (a0 == 0 && row_shown(snd_em[k].row) && area_inside(r, mario->pos) && !(mario->jumping && m_rising(mario)))
+            snd_em[k].h = se_level(SE_PM_LV_LONG_FALL, &mario->pos.x, snd_em[k].h); /* PlayerSeArea::movement: startLevelSoundPlayer */
+#ifdef PUT_TEST
+        { static u32 was[48]; if (!was[k] && snd_em[k].h) printf("sound emitter: row %d kind %d arg0 %d, handle %u" "\n", snd_em[k].row, snd_em[k].kind, a0, (unsigned)snd_em[k].h); was[k] = snd_em[k].h; }
+#endif
+    }
+}
+
+/* QuakeEffectGenerator.cpp after Petari (made with the scene: SceneObjHolder): with Mario in a QuakeEffectArea
+ * (placed as QuakeEffectAreaCube) every
+ * sQuakeInterval 400 frames it quakes sCamShakeFrame 120: shakeCameraInfinity(0.05, 1.5) and SE_AT_LV_EARTHQUAKE */
+static void update_quake(void)
+{
+    static const Scene *at;
+    static int nrv, step, has; /* 0 Wait, 1 WaitInArea, 2 Quaking */
+    static u32 lv;
+    if (at != sc) { at = sc; nrv = step = 0; lv = 0; has = scene_type(sc, "QuakeEffectAreaCube") >= 0; }
+    if (!has) return;
+    int in = area_obj("QuakeEffectAreaCube", mario->pos) >= 0, next = -1;
+    switch (nrv) {
+    case 0: if (in) next = 1; break;
+    case 1:
+        if (!in) next = 0;
+        else if (step != 0 && step % 400 == 0) next = 2;
+        break;
+    case 2:
+        if (step == 0) camera_shake_infinity(&nrv, 0.05f, 1.5f);
+        lv = se_level(SE_AT_LV_EARTHQUAKE, NULL, lv); /* startAtmosphereLevelSE */
+        if (step == 120) { camera_shake_stop(&nrv); next = in ? 1 : 0; }
+        break;
+    }
+#ifdef PUT_TEST
+    if (next >= 0) printf("quake: nerve %d -> %d at step %d, SE handle %u" "\n", nrv, next, step, (unsigned)lv);
+#endif
+    if (next >= 0) { nrv = next; step = 0; } else step++;
+}
+
 static void keep_effects(void)
 {
     ambient_effects();
+    update_sound_emitters();
+    update_quake();
     float m[16];
     for (int i = 0; i < npieces; i++)
         if (pickup_shown(&pieces[i]) && vlen(vsub(pieces[i].pos, cam_pos)) < 4000.0f) {
@@ -50931,6 +51144,11 @@ static void drop_taking(int damage)
         jet.drop = 0;
         if (damage) { jet.inst = -1; jet.phase = 0; jet_vanish(in); }
         else { jet.phase = 3; jet.t = 0; jet.dground = jet.dwall = 0; jet.dgrav = vmul(mario->up, -1.0f); printf("jet turtle row %d: dropped (rush)" "%c", in->row, 10); }
+    }
+    if (bh_held >= 0) { /* a BombHei: ACTMES_DAMAGEDROP / RUSHDROP (receiveOtherMsg): Thrown where it is */
+        Kuribo *k = &kuribo[bh_held];
+        bh_held = -1;
+        if (k->nrv == BH_TAKEN) { w_nrv(k, BH_THROWN); printf("bomb hei row %d dropped%c", k->row, 10); }
     }
     if (damage) m_release_bomb_teresa(mario);
 }
@@ -55837,8 +56055,8 @@ static void wipe_ring_center(void) /* WipeRing::updatePlayerPos: getMarioCenterP
     if (game_frame == 600) { menu_wipe_circle(1, 900); printf("wipe test: close" "\n"); }
     if (game_frame == 1800) { menu_wipe_circle(0, 900); printf("wipe test: open" "\n"); }
 #endif
-    if (!strcmp(game_stage_name, "IceVolcanoGalaxy/1") && vlen(vsub(mario->pos, v3(15060.0f, -11800.0f, 1260.0f))) < 600.0f) return;
-    if (!strcmp(game_stage_name, "CosmosGardenGalaxy/4")) return; /* isStageSuddenDeathDodoryu */
+    if (game_stage_scenario("IceVolcanoGalaxy", 1) && vlen(vsub(mario->pos, v3(15060.0f, -11800.0f, 1260.0f))) < 600.0f) return;
+    if (game_stage_scenario("CosmosGardenGalaxy", 4)) return; /* isStageSuddenDeathDodoryu */
     if (screen_pos(c, &x, &y)) menu_wipe_circle_center(x, y);
     else menu_wipe_circle_center(320.0f, 224.0f);
 }
@@ -57972,6 +58190,8 @@ void game_draw(void)
     PROF(6);
     render_world_done(); /* the blended instances (an Air's sky) under the HUD and talks */
     mario_draw_raster(); /* MarioActor::drawRasterScroll (its draw: the 3D done) */
+    if (ac_capture == 1) { render_screen_capture(); ac_capture = 2; } /* SystemWipeHolder::startGameScreenCapture */
+    else if (ac_capture == 2) render_screen_captured(); /* the captured screen under the wipe ring */
     talk_draw();
     wipe_draw();
     menu_draw();

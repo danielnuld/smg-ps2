@@ -22,6 +22,57 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   wall with a floor on it under mWalkStepHeight sets him on it, his drawn matrix eased; m_check_all_wall keeps the
   floor and slope ahead (_4D8 / _50C, _4DC / _518). _4DC never holds as decompiled: MarioBump can not start. PCSX2:
   EggStar 1's route unchanged (star at f 4281) with no "step:" line (XF=-DSTEP_TEST): no step taken was seen yet.
+- RasterScrollCube, AstroChangeStageCube's capture wipe (feat/492-raster-astro-wipe, 2026-11-07): MarioCollision.cpp:2296
+  (Mario in a RasterScrollCube: setRasterScroll(arg0, arg1, arg2); slice.py LOGIC RasterScrollCube, HeavenlyBeach's
+  only; its scene reserves the target blocks). AstroChangeStageCube after its 5 frames: closeSystemWipeCircleWithCapture
+  Screen(110) centred on Mario's centre (render_screen_capture: the frame at 320 x 224 in the target blocks, reserved
+  at that moment; render_screen_captured draws it back over the screen under the ring each frame), the stage change once
+  the ring is shut. Tests: `astro` AstroGalaxy/1 (the dome's cube: the ring closes over the frozen frame, AstroDome);
+  plain XF "-DRASTER_TEST -DPACKS_OVERLAY=..." HeavenlyBeachGalaxy/1 (Mario in the cube 300-600: the waves).
+  ponytail: the capture at half size. Repack: slice_all.py HeavenlyBeachGalaxy (LOGIC RasterScrollCube).
+- Sound emitter areas and the quake (feat/580-sound-emitter-areas, #580, 2026-11-18): `update_sound_emitters`
+  (keep_effects, every frame): SoundEmitterCube (arg0: SE_AT_LV_GRAVE / KOOPA_WIND / WIND_DESERT / WIND_ICE_MT_TOP)
+  and SoundEmitterSphere (SE_AT_LV_MAGMA_AMBIENT / SE_OJ_LV_FLOATING_SAND / SE_AT_LV_WIND_DESERT /
+  MAGMA_WIND_VOLCANO / KOOPA_FLOAT_SAND / WIND_RABBIT_MAZE) play their level sound at the camera's watch point or
+  the microphone, moved into the cube's world bounding box / onto the sphere; PlayerSeCube / Sphere / Cylinder
+  (PlayerSeArea, arg0 0): SE_PM_LV_LONG_FALL while Mario is inside and not rising in a jump. `update_quake`
+  (QuakeEffectGenerator: Wait / WaitInArea / Quaking): with Mario in a QuakeEffectAreaCube, every 400 frames
+  shakeCameraInfinity(0.05, 1.5) and SE_AT_LV_EARTHQUAKE for 120. sound.py scenario_keep: QuakeEffectGenerator.cpp's
+  names where a QuakeEffectArea is placed (createSceneObj, no `new`: sfxcut did not follow it). Test: plain with
+  `XF="-DPACKS_OVERLAY=<overlay> -DSE_LOG -DPUT_TEST=QuakeEffectAreaCube -DPUT_UP=100 -DPUT_NOCAM -DPUT_HOLD"`
+  (PUT_HOLD: Mario held where he was put; with PUT_TEST "sound emitter: row ..." at an emitter's first handle and
+  "quake: nerve a -> b"), HellProminenceGalaxy/1 and KoopaBattleVs1Galaxy/1 with their scene and sound packs made
+  again. ponytail: the microphone (AudMicWrap::getMicPos) taken as the camera's eye. **Release: slice_all.py +
+  sound.py --pack** BattleShipGalaxy, CosmosGardenGalaxy, FactoryGalaxy, FloaterOtakingGalaxy,
+  HellProminenceGalaxy, HoneyBeeKingdomGalaxy, IceVolcanoGalaxy, KoopaBattleVs1Galaxy, KoopaBattleVs2Galaxy,
+  KoopaBattleVs3Galaxy, SandClockGalaxy, StarDustGalaxy (slice.py LOGIC: the areas were not in the packs; their SE
+  names are new in game.c).
+- Hidden stars' scenario number (fix/508-placed-scenario-no, #508, 2026-11-18): game_scenario_no /
+  game_stage_scenario are GameSystemSceneController::getCurrentScenarioNo, the number
+  ScenarioSelectScene::trySetCurrentScenarioNo placed (gamedata.c gd_placed_hidden_star_scenario,
+  cPlacedHiddenStarInfoTable); game_stage_name keeps the selected one. Its users: the stage BGM, isStartBgmOnWelcome,
+  the visited flag, isStageCameraRotate2D, isUseFooSpecialGravity, AstroChangeStageCube, WipeRing, Dodoryu's sudden
+  death, the star piece group limit, the story's before scenario; the coin best goes to the cleared star. PCSX2: a
+  plain EggStarGalaxy/6 flies in and plays the stage's music. Repack: every galaxy with a hidden star (slice.py:
+  StartScenario<placed>.canm, findStarID by the placed number). Not checked one by one: each user above.
+- BombHei carried and thrown (feat/600-bombhei-carry, #600, 2026-11-18): BombHei.cpp's Taken and Thrown nerves in
+  game.c bomb_update. Rolling or stopped (Physics / Stop), 30 frames into SpinHit or 120 into Thrown, Mario touching it
+  takes it (receiveOtherMsg isMsgItemGet, sent by MarioActor's attackSensor on ATYPE_BOMBHEI): Taken (Carry,
+  SE_PV_LIFT_UP + SE_EM_BOMB_LIFT, its fuse lit, the body sensor off), held before him (bh_held: m_carry_jet counts it,
+  so his carrying limits apply); his spin throws it (receiveMsgThrow: 25 along his front, 18 up; no take for 60
+  frames, _3AC): Thrown (Stop, SE_PV_THROW + SE_EM_BOMB_THROW, its gravity kept 30 frames, 0.75 a frame x 0.98, the
+  rebound; on the ground the bound sound, Bound, Physics); drop_taking (#591) lets it go on a damage or a rush
+  (ACTMES_DAMAGEDROP / RUSHDROP: Thrown where it is); blowing up in his hands it hurts him at once. A launcher's bomb
+  (Physics from its landing) can be taken straight away, as in Petari.
+  ponytail: held where the port holds a JetTurtle (70 ahead, 60 up; Petari: his hand joint, updateTakingPosition),
+  thrown along his front (getThrowVec), no isActionOk / doTrampleJump in the take, the spin that threw it does not hit
+  it again (the port's rule: 25 frames), Thrown does not bounce off enemies / NPCs.
+  Test: plain with XF="-DBH_TEST -DSE_LOG" on CannonFleetGalaxy/1 (the hook drops the scenario's Bob-omb before Mario
+  at his start, spins it, puts him on it once it rolls, spins 90 frames after he took it): Launch, Starting, Wait,
+  Pursue, SpinHit, Physics, Stop, `taken` (SE_PV_LIFT_UP plays, SE_EM_BOMB_LIFT asked: `se?` until the pack is cut),
+  `thrown` (SE_PV_THROW, SE_EM_BOMB_THROW asked), the bound, the explosion at the fuse's end. (That Bob-omb's own
+  place cannot be used: a death area and a black hole are next to it.)
+  Repack: sound.py --pack BattleShipGalaxy, CannonFleetGalaxy, TamakoroExLv2Galaxy (SE_EM_BOMB_LIFT / SE_EM_BOMB_THROW).
 - Mario's sounds the port never played (feat/575-mario-sounds, #575, 2026-11-18): the press (プレスダメージ), the bee
   wall landing, Teresa's float, Luigi's slide, the spin back; jumpToHipDrop's spin hip drop (_3E5); tryJump's /
   tryBackJump's dive into deep water (sw_under_water_full: 飛び込みジャンプ, 声高飛び込み) and its failure landing;

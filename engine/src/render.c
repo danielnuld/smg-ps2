@@ -2179,6 +2179,45 @@ void render_raster_scroll(float amplitude, int period, float wavelength, int t)
     flush_vif();
     cur_tex = -1;
 }
+void render_screen_capture(void)
+{
+    if (block_end != TGT_TBP) return;
+    render_world_done();
+    u32 fb = frame[back].address, fw = SCREEN_W >> 6;
+    ad_open(20);
+    AD(GS_SET_FRAME(TGT_TBP >> 5, 5, GS_PSM_16, 0), GS_REG_FRAME);
+    AD(GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, ZTEST_METHOD_ALLPASS), GS_REG_TEST);
+    AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 1), GS_REG_ZBUF);
+    AD(GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
+    AD(GS_SET_DTHE(0), GS_REG_DTHE);
+    ad_source_psm(fb, fw, FB_PSM, 10, FB_TH, SCREEN_W, SCREEN_H, 0);
+    ad_sprite(0, 0, 320, 224, 0, 0, SCREEN_W, SCREEN_H, 0x80);
+    AD(GS_SET_FRAME(fb >> 11, fw, FB_PSM, 0), GS_REG_FRAME);
+    AD(test_z, GS_REG_TEST);
+    AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 0), GS_REG_ZBUF);
+    AD(GS_SET_DTHE(FB_PSM != GS_PSM_32), GS_REG_DTHE);
+    AD(0, GS_REG_TEXFLUSH);
+    ad_close();
+    flush_vif();
+    cur_tex = -1;
+}
+void render_screen_captured(void)
+{
+    if (block_end != TGT_TBP) return;
+    render_world_done();
+    ad_open(16);
+    AD(GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, ZTEST_METHOD_ALLPASS), GS_REG_TEST);
+    AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 1), GS_REG_ZBUF);
+    AD(GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
+    ad_source_psm(TGT_TBP << 6, 5, GS_PSM_16, 9, 8, 320, 224, 0);
+    ad_sprite(0, 0, SCREEN_W, SCREEN_H, 0, 0, 320, 224, 0x80);
+    AD(test_z, GS_REG_TEST);
+    AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 0), GS_REG_ZBUF);
+    AD(0, GS_REG_TEXFLUSH);
+    ad_close();
+    flush_vif();
+    cur_tex = -1;
+}
 void render_mirror_capture(void)
 {
     if (block_end != TGT_TBP) return;

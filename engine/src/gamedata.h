@@ -15,6 +15,8 @@ int gd_power_star_num(const char *galaxy);      /* getPowerStarNum: its scenario
 int gd_scenario_star_mask(const char *galaxy, int scenario); /* PowerStarId (a mask of its stars) */
 const char *gd_scenario_comet(const char *galaxy, int scenario); /* Comet ("" none) */
 int gd_scenario_hidden(const char *galaxy, int scenario);    /* IsHidden */
+int gd_placed_hidden_star_scenario(const char *galaxy, int star); /* MR::getPlacedHiddenStarScenarioNo */
+int gd_placed_scenario(const char *galaxy, int scenario);   /* a selected scenario's placed one (hidden: getCurrentScenarioNo) */
 
 int gd_has_star(const char *galaxy, int star);  /* GameDataHolder::hasPowerStar (star 1..) */
 void gd_set_star(const char *galaxy, int star);

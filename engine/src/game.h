@@ -3,7 +3,9 @@
 
 #include "blob.h"
 
-extern const char *game_stage_name; /* set before game_init: "<Galaxy>/<n>" */
+extern const char *game_stage_name; /* set before game_init: "<Galaxy>/<n>", n the selected scenario (getCurrentSelectedScenarioNo) */
+int game_scenario_no(void); /* MR::getCurrentScenarioNo: the placed scenario (a hidden star's: getPlacedHiddenStarScenarioNo) */
+int game_stage_scenario(const char *galaxy, int no); /* isEqualStageName(galaxy) && getCurrentScenarioNo() == no */
 void game_init(const Scene *s, const unsigned char *blob);
 void game_set_time_limit(int seconds);
 int game_time_left(void);
