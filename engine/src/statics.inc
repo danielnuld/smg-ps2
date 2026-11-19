@@ -244,7 +244,7 @@ static void st_flag_test(void)
 }
 #endif
 /* ---- MapObj classes by placed type: their per-row state (StSt, kept across rebinds) ---- */
-enum { ST_NONE = 1, ST_MARBLE, ST_HDSTEP, ST_TURTLE, ST_SWFLOAT, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_WTOWER, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE, ST_FLOATERU, ST_QRARROW, ST_SCPRESS }; enum { FU_WAIT = 1, FU_MOVE, FU_DONE }; /* st_floater nerves */
+enum { ST_NONE = 1, ST_MARBLE, ST_HDSTEP, ST_TURTLE, ST_SWFLOAT, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_WTOWER, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE, ST_FLOATERU, ST_QRARROW, ST_SCPRESS, ST_QBOX }; enum { FU_WAIT = 1, FU_MOVE, FU_DONE }; /* st_floater nerves */
 /* Placed classes whose Petari behaviour is the model drawn with its animations and collision (the engine's generic
  * instance does that): LavaGalaxyParts.cpp (LavaShellTowerStep, LavaStepA / B / C: startBtk / Brk / Bpk / Btp of its
  * name, collision, clipping; ponytail: the steps' DLMakerProjmapEffectMtxSetter lava glow is baked at slice time and
@@ -284,6 +284,7 @@ static int st_kind_name(const char *n)
     if (!strcmp(n, "OceanFloaterTypeU")) return ST_FLOATERU; /* OceanFloaterLandParts */
     if (!strcmp(n, "QuarterRollGravityRoomArrow")) return ST_QRARROW;
     if (!strcmp(n, "SandCapsulePressGround")) return ST_SCPRESS;
+    if (!strncmp(n, "QuestionBoxMoveStep", 19)) return ST_QBOX; /* QuestionBoxGalleryObj */
     if (!strcmp(n, "SurprisedGalaxy") || (!strncmp(n, "Surp", 4) && strlen(n) > 10 && !strcmp(n + strlen(n) - 6, "Galaxy"))) return ST_SURP;
     for (u32 k = 0; k < sizeof st_still / sizeof *st_still; k++) if (!strcmp(n, st_still[k])) return ST_STILL;
     return ST_NONE;
@@ -299,6 +300,7 @@ typedef struct { int row, n, st, on, t2, t3; const unsigned char *kcl; u32 lv[3]
 static StSt st_st[128];
 static void st_column(Inst *in, StSt *g); /* SubmarineVolcanoBigColumn (below) */
 static void st_flex(Inst *in, StSt *g, int i); /* FlexibleSphere (below) */
+static void st_qbox(Inst *in, StSt *g); /* QuestionBoxGalleryObj (below) */
 static int nst_st;
 static const Scene *st_st_sc;
 static StSt *st_get(int row)
@@ -1491,6 +1493,7 @@ static void st_objs_update(void)
         case ST_FLOATERU: st_floater_u(in, g); break;
         case ST_QRARROW: st_qrarrow(in, g); break;
         case ST_SCPRESS: if (st_scpress(in, g, i)) return; break;
+        case ST_QBOX: st_qbox(in, g); break;
         case ST_TEXSW: { /* SimpleMapObj::init: TexChange (BTK) at arg1 (setupInitInfoTextureChangeArg1; -1 none),
                           * SimpleTextureSwitchChangeObj::changeTexture on its SW_A's rise: frame 1 for good (slice.py
                           * BRK_STEPS: "<class>~<frame>") */
@@ -1739,6 +1742,33 @@ static void st_columns_draw(void)
         Anim *a = obj_anim(16 * (int)sc->nobjs + in->row, md, "SubmarineVolcanoBigColumnBreak");
         if (a) draw_skin(md, in->m, a); /* (its base matrix, the column's) */
     }
+}
+
+/* QuestionBoxGalleryObj.cpp after Petari (QuestionBoxMoveStepA / B / C): OnWait (arg0 set) or OffWait at first, its On
+ * / Off clip held at its end; its SW_A coming on: SE_OJ_Q_BOX_LIGHT_ON, OnStart (On played, then OnWait); its SW_B
+ * coming on: SE_OJ_Q_BOX_LIGHT_OFF, OffStart (Off played, then OffWait). Its rail mover / rotator and their stage
+ * effects are the generic ones (update_railers, stage_se). StSt: n 1 OnWait, 2 OffWait, 3 OnStart, 4 OffStart (0 not
+ * set up), on its SW_A / SW_B a frame ago (bits 1 / 2). The clips need the classes skinned (slice.py SKINNED_OBJ) */
+static void st_qbox_hold(Inst *in, const char *clip) /* startAllAnim, setBckFrameAndStop(getBckFrameMax) */
+{
+    if (!in->anim || !obj_play(in, clip, 0, 0)) return;
+    in->anim->frame = (float)anim_length(in->anim); in->anim->speed = 0; in->anim->loop = 0;
+}
+static void st_qbox(Inst *in, StSt *g)
+{
+    const Row *r = &sc->objs[in->row];
+    int a = r->sw[SW_A] >= 0 && sw_on(r, SW_A), b = r->sw[SW_B] >= 0 && sw_on(r, SW_B);
+    if (!g->n) { /* init: getJMapInfoArg0NoInit as a bool */
+        g->n = r->arg[0] != -1 && r->arg[0] != 0 ? 1 : 2; g->st = 0;
+        g->on = a | b << 1;
+    }
+    if (a && !(g->on & 1)) { se_start(SE_OJ_Q_BOX_LIGHT_ON, &in->m[12]); g->n = 3; g->st = 0; printf("question box %d: on%c", in->row, 10); } /* startSwitchOn */
+    if (b && !(g->on & 2)) { se_start(SE_OJ_Q_BOX_LIGHT_OFF, &in->m[12]); g->n = 4; g->st = 0; printf("question box %d: off%c", in->row, 10); } /* startSwitchOff */
+    g->on = a | b << 1;
+    int st = g->st++;
+    if (g->n == 1 || g->n == 2) { if (st == 0 || (in->anim && in->anim->speed != 0)) st_qbox_hold(in, g->n == 1 ? "on" : "off"); return; } /* (again after a rebind) */
+    if (st == 0) { if (in->anim) { obj_play(in, g->n == 3 ? "on" : "off", 0, 0); in->anim->speed = 1.0f; } }
+    else if (!in->anim || in->anim->done) { g->n = g->n == 3 ? 1 : 2; g->st = 0; } /* isBckStopped */
 }
 
 /* FlexibleSphere.cpp after Petari (FlexibleSandPlanetPartsA): idle until its SW_A is on (Wind effect), or without
