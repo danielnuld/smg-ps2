@@ -37305,7 +37305,9 @@ static int explosion_breaks_inst(int i)
 {
     if (pol_inst_explosion(i)) return 1; /* Polta's ground rocks */
     if (i < 0 || i >= ninsts || row_dead[insts[i].row]) return 0;
-    if (insts[i].breaks != 5 && (insts[i].breaks != 1 || strcmp(sc->types + 32 * sc->objs[insts[i].row].type, "WoodBox"))) return 0;
+    if (insts[i].breaks != 5 && (insts[i].breaks != 1 || (strcmp(sc->types + 32 * sc->objs[insts[i].row].type, "WoodBox") &&
+                                                           strcmp(sc->types + 32 * sc->objs[insts[i].row].type, "PunchBox")))) return 0; /* (PunchBox::receiveMsgEnemyAttack:
+        * its body sensor is invalid, so only an attack sent to the sensor of its collision reaches it) */
     break_inst(&insts[i], 1);
     game_rebind();
     return 1;
@@ -44443,8 +44445,8 @@ int game_test_bigbubble(int f)
  * of +-500 * scale, Mario is inhaled: a miss; walkers in it die (nothing dropped); SW_A kills it. A star piece shot
  * blows the mine up and shakes the plant (hazard_shot), invincible Mario kills either, and an attack he does not take
  * pushes him off; the mine turns a degree a frame, rides its rail (setupRailMover: update_railers) and with arg1 set
- * blows up on the ground (setupBinder). SpaceMine's Appear nerve is set nowhere in Petari. ponytail: the bound mine's
- * explosion does not reach the sensor it hit (sendMsgEnemyAttackExplosionToBindedSensor); Mario's inhale is bh_start /
+ * blows up on the ground (setupBinder). SpaceMine's Appear nerve is set nowhere in Petari. The bound mine's explosion
+ * goes to what it hit (sendMsgEnemyAttackExplosionToBindedSensor: explosion_breaks_inst); Mario's inhale is bh_start /
  * bh_update. BlackHole's Disappear
  * (its demo's action nerve, dx_cast_hook; row_turn 1, row_step its step): SE_OJ_BLACK_HOLE_DISAPPEAR, the core's scale
  * eased in from _9C to 0 over steps 30 .. 90 (calcNerveEaseInValue), killed at 90; nothing inhaled meanwhile
@@ -44552,7 +44554,10 @@ static void update_hazards(void)
             row_angle[in->row] = fmodf(row_angle[in->row] + 1.0f, 360.0f);
             float rot[3] = {rw->rot[0], rw->rot[1] + row_angle[in->row], rw->rot[2]}, at[3] = {p.x, p.y, p.z};
             mat_translate_rot_scale(in->m, at, rot, rw->scale);
-            if (rw->arg[1] != -1 && kcl_query(p, 100.0f, h, 1)) { mine_kill(in); game_rebind(); return; } /* isBinded: offBind, kill */
+            if (rw->arg[1] != -1 && kcl_query(p, 100.0f, h, 1)) { /* isBinded: sendMsgEnemyAttackExplosionToBindedSensor, offBind, kill */
+                explosion_breaks_inst(h[0].inst);
+                mine_kill(in); game_rebind(); return;
+            }
         }
         if (in->hazard == 2) {
             p = vadd(p, vmul(up_at(p, mario->up), 150.0f * in->s));
