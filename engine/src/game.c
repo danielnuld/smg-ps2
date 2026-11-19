@@ -3772,8 +3772,17 @@ static void update_assembly(void)
 
 /* Tsukidashikun.cpp: on its rail from the nearest point to its placement; Relax until SW_B (if it has one), Wait arg1
  * frames (default 120), Sign 60, Move at arg0 (default 10) to the rail's end, reverse, Wait, Sign, Move back... row_turn
- * 0 not started, 1 relax, 2 wait, 3 sign, 4 move; row_rdir its direction (+1 / -1); row_coord, row_step. ponytail: no
- * Sign shake (its BCK) */
+ * 0 not started, 1 relax, 2 wait, 3 sign, 4 move; row_rdir its direction (+1 / -1); row_coord, row_step. exeSign: its
+ * Sign clip, put back on frame 0 at sStepForSign 60 (setBckFrameAndStop); its face BVAs (tsuki_bva): Relax BSign, Wait
+ * BWait (WaitBack: before it goes forward) or FWait, Sign FSign (SignForward) or BSign */
+static void tsuki_bva(const Inst *in, const char **key, float *frame) /* startBva of its nerve, from the nerve's first step */
+{
+    if (!in->tsuki) return;
+    int n = row_turn[in->row], fwd = row_rdir[in->row] >= 0;
+    *key = n == 2 ? (fwd ? "tsukidashikun/bwait" : "tsukidashikun/fwait") : n == 3 ? (fwd ? "tsukidashikun/fsign" : "tsukidashikun/bsign") :
+           n == 4 ? (fwd ? "tsukidashikun/fsign" : "tsukidashikun/bsign") : "tsukidashikun/bsign";
+    *frame = n == 4 ? 60.0f + (float)row_step[in->row] : (float)row_step[in->row]; /* (Move starts none: the Sign's goes on) */
+}
 static float tsuki_len(const unsigned char *e)
 {
     u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
@@ -3841,8 +3850,14 @@ static void update_tsuki(void)
             if (vlen(vsub(mario->pos, vadd(a, vmul(ab, u)))) < 700.0f) pad_rumble(RUMBLE_WEAK);
             in->lv[0] = se_level(SE_OJ_LV_TSUKIDASHI_VIB, &in->m[12], in->lv[0]);
         }
-        if (*ph == 2 && *t >= (r->arg[1] >= 0 ? r->arg[1] : 120)) { *ph = 3; *t = 0; }
-        else if (*ph == 3 && *t >= 60) { *ph = 4; *t = 0; se_start(SE_OJ_TSUKIDASHI_START, &in->m[12]); } /* exeMove's first step */
+        if (*ph == 2 && *t >= (r->arg[1] >= 0 ? r->arg[1] : 120)) { /* exeSign's first step: startBck Sign */
+            *ph = 3; *t = 0;
+            if (obj_play(in, "sign", 0, 0) || in->anim) { in->anim->frame = 0.0f; in->anim->speed = 1.0f; in->anim->done = 0; }
+        }
+        else if (*ph == 3 && *t >= 60) { /* setBckFrameAndStop(0); exeMove's first step */
+            if (in->anim) { in->anim->frame = 0.0f; in->anim->speed = 0.0f; }
+            *ph = 4; *t = 0; se_start(SE_OJ_TSUKIDASHI_START, &in->m[12]);
+        }
         else if (*ph == 4) {
             float old[16], len = tsuki_len(in->tsuki), n = row_coord[row] + (r->arg[0] > 0 ? r->arg[0] : 10) * row_rdir[row];
             memcpy(old, in->m, 64);
@@ -52399,7 +52414,7 @@ static Anim *obj_anim(int row, const Model *md, const char *cls)
         if (anim_start(a, n, 0)) return oanim[k].a;
         snprintf(n, sizeof n, "%s/wait", cls);
         for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
-        if (!strncmp(cls, "MorphItemNeo", 12) || !strncmp(cls, "ScrewSwitch", 11) || !strcmp(cls, "QuarterRollGravityRoomArrow") || !strcmp(cls, "SnowMan") || !strcmp(cls, "SandCapsulePressGround")) return oanim[k].a; /* initModelManagerWithAnm: no clip until appear() / exeScrew / the arrow's switches */
+        if (!strncmp(cls, "MorphItemNeo", 12) || !strncmp(cls, "ScrewSwitch", 11) || !strcmp(cls, "QuarterRollGravityRoomArrow") || !strcmp(cls, "SnowMan") || !strcmp(cls, "SandCapsulePressGround") || !strcmp(cls, "Tsukidashikun")) return oanim[k].a; /* initModelManagerWithAnm: no clip until appear() / exeScrew / the arrow's switches */
         if (!anim_play(a, n, 1.0f, 1, 0)) { /* no wait clip: its first */
             size_t l = strlen(n) - 4;
             for (u32 c = 0; c < sc->nclips; c++)
@@ -59114,6 +59129,7 @@ static void inst_draw(const Inst *in, const Model *md, const float m[16])
         bva_key = "stinkbugparent/childdeath"; bva_frame = 1e9f; /* startBva ChildDeath: its last frame kept */
     }
     sy_bva(in, &bva_key, &bva_frame); /* Syati's eyes (startBva Open / Blink) */
+    tsuki_bva(in, &bva_key, &bva_frame); /* Tsukidashikun's faces */
     if (md->skin) { if (in->anim && md == in->md) { draw_skin(md, m, in->anim); if (in->talkcls == 11) shop_goods_draw(in, m); } }
     else render_model(md, m, 0x70, 0xB0, 0x60);
 }

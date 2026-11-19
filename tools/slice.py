@@ -266,6 +266,7 @@ for _box, _item in (("TreasureBoxBlueChip", "BlueChip"), ("TreasureBoxYellowChip
 EXTRA["WaterLeakPipe"] = EXTRA.get("WaterLeakPipe", ()) + ("IceStepNoSlip",)
 SKINNED_OBJ += ("IceStepNoSlip",)
 SKINNED_OBJ += ("SandCapsulePressGround",)  # its MoveAway clip (DisappearDemo: game.c statics.inc st_scpress)
+SKINNED_OBJ += ("Tsukidashikun",)  # its Sign clip and its face BVAs (game.c tsuki_bva)
 SKINNED_OBJ += ("SnowMan",)  # SnowMan.cpp: MeltHead / MeltBody / DownHead / DownBody (game.c update_snowmen)
 
 
