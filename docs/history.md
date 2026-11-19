@@ -11,6 +11,14 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- LavaProminenceTriple / LavaProminenceEnvironment (feat/705-lava-prominence-triple, #705, 2026-11-18):
+  MapObj/LavaProminenceTriple.cpp in `engine/src/lava_prominence_triple.inc` (lpt_*): HellPoolAZone's three wheels
+  of fire and HellProminenceGalaxy's seven Environment ones. The appear time (arg1), the turn arg0 / 100 degrees a
+  frame about its Y, SE_OJ_LV_PROMINENCE_T_MOVE, the Drop effects on its Head joints (off while out of the view),
+  the Triple's attack sensor (80 x scale y on the ring of 1900 at Mario's angle, clamped into a head's arc:
+  sNoSensorTable; sendMsgEnemyAttackFireStrong). State in MEM_OBJECTS. `tools/jpa.py` NAMED (the Drop effects).
+  Test: plain `XF=-DLPT_TEST`, HellProminenceGalaxy/3: in PCSX2 the three Triples appear on their switch, turn 0.4 degrees a frame, their Drops go on and off with the view, their sensor follows Mario's angle; **the fire hit and the look of the effects were not seen** (Mario was not on a sensor in the run); its level sound answers `se?` (a sound pack to cut again). ponytail: the Head joints' places read offline from the BDLs; no bloom model. Cost:
+  about 2.2 KB of the ELF (nm lpt_*), its state in MEM_OBJECTS; memcheck on a plain build of main with the six classes of this batch: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB; route test with them: star got. **Release: slice_all.py resident.bin + resident_luigi.bin** (the effects).
 - UI and flow audit, first pass (feat/ui-audit-miss-left, #640 #641 #658 #659, 2026-11-18): Petari's Screen/ classes
   against menu.c / game.c, the table in `docs/ui-audit.md` (ok / fixed / issue / Wii-only / not re-read yet). Fixed:
   PlayerMissLeft (menu.c pms_*: after a miss's wipe the PlayerLeft layout's CenterPlayerLeft over the black screen,
