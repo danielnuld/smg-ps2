@@ -22573,6 +22573,55 @@ void game_test_sink_input(int frame, int code)
                m_floor_severe(m, code), m->hip, ground_attr & 0x3F, tri_attr(&mw.shadow) & 0x3F,
                vdot(vsub(mw.shadow_pos, mw.ground_pos), vmul(m->up, -1.0f)), mw.s2);
 }
+#ifdef STEP_TEST
+/* Test builds (XF=-DSTEP_TEST=<k>, 1 the first): from Mario's first free frame every 30 frames the collision is
+ * searched for a step: an upright face with a level floor on it 15 to 45 over the level floor before it, room on
+ * both; he is put 250 before the k-th and walks at it (MarioStep: "step:" from m_start_step), then on for 300 */
+void game_test_step_input(int frame)
+{
+    static int free_at = -1, at = -1;
+    static V3 goal, wn, low;
+    Player *m = mario;
+    if (free_at < 0) { if (demo_on || !m->grounded || m->launch >= 0 || starter >= 0) return; free_at = frame; }
+    frame -= free_at;
+    if (at < 0) {
+        if (frame < 10 || frame % 30) return;
+        int n = 0;
+        for (int i = 0; i < ninsts && at < 0; i++) {
+            if (!insts[i].kcl) continue;
+            const unsigned *h = (const unsigned *)insts[i].kcl;
+            int np = (int)((h[3] - h[2]) / 16);
+            for (int p = 1; p < np && at < 0; p++) {
+                Tri t = {i, 0, p, insts[i].kcl};
+                V3 fn = tri_n(&t), c = vmul(vadd(vadd(tri_pos(&t, 0), tri_pos(&t, 1)), tri_pos(&t, 2)), 1.0f / 3.0f), up = up_at(c, m->up);
+                V3 top, bot, st, far, dn = vmul(up, -300.0f);
+                Tri tt, tb;
+                if (fabsf(vdot(fn, up)) > 0.1f) continue;
+                c = vadd(c, vmul(up, 120.0f));
+                if (!map_poly(vsub(c, vmul(fn, 25.0f)), dn, &top, &tt) || vdot(tri_n(&tt), up) < 0.97f) continue;
+                if (!map_poly(vadd(c, vmul(fn, 60.0f)), dn, &bot, &tb) || vdot(tri_n(&tb), up) < 0.97f) continue;
+                float hgt = vdot(vsub(top, bot), up);
+                if (hgt < 15.0f || hgt > 45.0f) continue;
+                if (!map_poly(vadd(c, vmul(fn, 250.0f)), dn, &st, NULL) || fabsf(vdot(vsub(st, bot), up)) > 5.0f) continue;
+                if (!map_poly(vsub(c, vmul(fn, 200.0f)), dn, &far, NULL) || fabsf(vdot(vsub(far, top), up)) > 5.0f) continue;
+                if (++n < STEP_TEST) continue;
+                at = frame; test_nolost = 1; goal = far; wn = fn; low = bot;
+                m->pos = vadd(st, vmul(up, 20.0f)); m->hvel = v3(0, 0, 0); m->vup = 0; m_front(m, vmul(fn, -1.0f));
+                printf("step test: row %d, a step of %.0f, put at %.0f %.0f %.0f\n", insts[i].row, hgt, m->pos.x, m->pos.y, m->pos.z);
+            }
+        }
+        if (at < 0) printf("step test f %d: %d steps found, none taken\n", frame, n);
+        return;
+    }
+    int t = frame - at;
+    if (t > 300) { pad_force_stick = 0; return; }
+    test_walk_to(goal, 0.0f);
+    if (t % 2 == 0)
+        printf("step f %d: on %d t %.1f grounded %d w8 %d f15 %d f39 %d f4D8 %d up %.1f wall %.0f a4 %.0f walk %.2f clip %s\n", t, stp.on, stp.t, m->grounded,
+               mw.w8, mw.f15, mw.f39, mw.f4D8, vdot(vsub(m->pos, low), m->up), vdot(vsub(m->pos, low), wn), vdot(vsub(mw.p4A4, m->pos), m->up), m->walk,
+               mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-");
+}
+#endif
 /* Test builds (MARIO2D_TEST): from Mario's first free frame, if he is in no 2D area he is held in the first
  * PlaneModeCube's first floor under its top (TeresaMario2DGalaxy, KoopaBattleVs galaxies); then the stick right 120 frames, left 120, up
  * 60 (no move in 2D), right with A at 360; his distance off the plane (along _6A0) logged */
