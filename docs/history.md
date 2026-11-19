@@ -129,6 +129,17 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   it leaves the floater still), tools/jpa.py NAMED: their effects (**repack** those seven galaxies and
   resident.bin). Test: plain with `XF=-DST_FLOAT_TEST` ("floater row", "float test" lines). Left out:
   SimpleFloaterObj (IceMountainFloaterA), calcMapGroundUpper for _9C, the lava glow's matrix, LodCtrlPlanet.
+- SoundEmitter after Petari, part of #15 (feat/15-sound-emitter, 2026-11-19; written without the emulator: **not
+  run in PCSX2** until its PR says so): the actor SoundEmitter (116 rows on the disc, all in the stages' `soundinfo`
+  tables: rivers, waterfalls, forest insects, winds, the ships' propellers and siren, the Observatory's engine and
+  loft wind, the Toads' cheers ...) had no code and tools/slice.py did not read `soundinfo` at all. Now slice.py
+  reads it with objinfo (LOGIC SoundEmitter: **repack**, every galaxy), `update_sound_emitters` plays sSeTable[arg0]
+  as a level sound (kind 5: StandBy until its appear switch, its place or its rail's place nearest the camera, the
+  three insects hushed within 1000 of Mario, 22 / 23 not in ロゼッタ状況説明デモ, 30 the riddle chime once, SW_A
+  kills it), and tools/sfxcut.py keeps the table's 33 names for a scenario that places one (`TABLE_SE`: the class
+  plays by id, its source has no SE_ string: **sound packs**, every scenario). Check at the repack: the sound packs'
+  sizes (ambient loops) and that soundinfo's l_ids (their own numbering, as areaobjinfo's) upset no link by l_id.
+  Left out: 26's fifth startLevelSound argument, its clipping sphere.
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /

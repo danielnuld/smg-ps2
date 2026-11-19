@@ -52574,8 +52574,13 @@ static void ambient_effects(void)
  * sphere's MAGMA_AMBIENT / FLOATING_SAND / WIND_DESERT / MAGMA_WIND_VOLCANO / KOOPA_FLOAT_SAND / WIND_RABBIT_MAZE)
  * played at the camera's watch point (cube 0 / 3, sphere 1 / 2 / 4 / 5) or the microphone, moved into the area: the
  * cube's world bounding box, the sphere's surface. PlayerSeArea.cpp (placed as PlayerSeCube / Sphere / Cylinder; arg0
- * 0): SE_PM_LV_LONG_FALL while Mario is in it and not rising in a jump. ponytail: the microphone (AudMicWrap::getMicPos) taken as the camera's eye */
-static struct { short row; unsigned char kind; u32 h; } snd_em[48];
+ * 0): SE_PM_LV_LONG_FALL while Mario is in it and not rising in a jump. ponytail: the microphone (AudMicWrap::getMicPos) taken as the camera's eye.
+ * SoundEmitter.cpp (the actor; the soundinfo rows, 116 on the disc: rivers, waterfalls, insects, winds, propellers, the
+ * Observatory's engine ...): StandBy until its appear switch when it reads one, then PlaySound: sSeTable[arg0] as a level
+ * sound at its place, or on its rail at the place nearest the camera (13 / 17 / 18: nearest the camera's watch point);
+ * 9 .. 11 not with Mario within 1000, 22 / 23 not in ロゼッタ状況説明デモ, 30 SE_SY_READ_RIDDLE_S once and kill; its SW_A on
+ * kills it. ponytail: 26's fifth startLevelSound argument (5) is not passed; setClippingTypeSphere 20000 not kept */
+static struct { short row; unsigned char kind; u32 h; } snd_em[96]; /* kind 5: a SoundEmitter, | 0x40 playing (out of StandBy), | 0x80 killed */
 static int n_snd_em = -1;
 static const Scene *snd_em_sc;
 /* MarioActor::calcViewWallShadowModel (MarioActorShadow.cpp:208) and drawWallShade (MarioActorSpecialDraw.cpp:505): in
@@ -52971,11 +52976,11 @@ static void update_sound_emitters(void)
     static const u32 sphere_se[6] = {SE_AT_LV_MAGMA_AMBIENT, SE_OJ_LV_FLOATING_SAND, SE_AT_LV_WIND_DESERT,
                                      SE_AT_LV_MAGMA_WIND_VOLCANO, SE_AT_LV_KOOPA_FLOAT_SAND, SE_AT_LV_WIND_RABBIT_MAZE};
     if (snd_em_sc != sc || n_snd_em < 0) {
-        int t[5] = {scene_type(sc, "SoundEmitterCube"), scene_type(sc, "SoundEmitterSphere"), scene_type(sc, "PlayerSeCube"),
-                    scene_type(sc, "PlayerSeSphere"), scene_type(sc, "PlayerSeCylinder")};
+        int t[6] = {scene_type(sc, "SoundEmitterCube"), scene_type(sc, "SoundEmitterSphere"), scene_type(sc, "PlayerSeCube"),
+                    scene_type(sc, "PlayerSeSphere"), scene_type(sc, "PlayerSeCylinder"), scene_type(sc, "SoundEmitter")};
         snd_em_sc = sc; n_snd_em = 0;
-        for (u32 i = 0; i < sc->nobjs && n_snd_em < 48; i++)
-            for (int k = 0; k < 5; k++)
+        for (u32 i = 0; i < sc->nobjs && n_snd_em < 96; i++)
+            for (int k = 0; k < 6; k++)
                 if (t[k] >= 0 && (int)sc->objs[i].type == t[k]) { snd_em[n_snd_em].row = (short)i; snd_em[n_snd_em].kind = (unsigned char)k; snd_em[n_snd_em++].h = 0; }
     }
     if (!n_snd_em) return;
@@ -52986,6 +52991,34 @@ static void update_sound_emitters(void)
         const Row *r = &sc->objs[snd_em[k].row];
         int a0 = r->arg[0];
         V3 c = row_pos(r), q;
+        if ((snd_em[k].kind & 0x3F) == 5) { /* SoundEmitter (the actor: soundinfo rows) */
+            static const u32 se[33] = { /* sSeTable */
+                SE_AT_LV_RIVER_S, SE_AT_LV_WATERFALL_S, SE_AT_LV_WATERFALL_L, SE_AT_LV_WATERFALL_UPPER_S, SE_AT_LV_WATERFALL_UPPER_L,
+                SE_AT_LV_DUNGEON_WIND_1, SE_OJ_LV_SHIP_PROPELLER_S, SE_OJ_LV_SHIP_PROPELLER_L, SE_AT_LV_RIVER_M, SE_AT_LV_FOREST_INSECT_1,
+                SE_AT_LV_FOREST_INSECT_2, SE_AT_LV_FOREST_INSECT_3, SE_AT_LV_SPACE_WIND, SE_OJ_LV_FLOATING_SAND, SE_AT_LV_WIND_DESERT,
+                SE_AT_LV_SAND_FALL, SE_AT_LV_SAND_FALL_BASIN, SE_OJ_LV_TWIN_FALL, SE_OJ_LV_TWIN_FALL_BASIN, SE_AT_LV_MAGMA_IN_BTLSHIP,
+                SE_SV_LV_KINOPIO_NOISILY_SCREAM, SE_SV_LV_KINOPIO_NOISILY_CHEER, SE_AT_LV_BATHROOM_FOUNTAIN, SE_AT_LV_BATHROOM_WATERFALL,
+                SE_OJ_LV_LAVA_ROT_STEPS_PLN, SE_AT_LV_LAVA_MINI_SUN, SE_AT_LV_B_SHIP_SIREN, SE_OJ_LV_ASTRO_ENGINE_3, SE_AT_LV_ASTRO_LOFT_WIND,
+                SE_AT_LV_MAGMA_AMBIENT, SE_SY_READ_RIDDLE_S, SE_AT_LV_LAVA_TAMAKORO_ZONE, SE_OJ_LV_GRAVITY_LIGHT};
+            if (snd_em[k].kind & 0x80) continue; /* killed */
+            if (r->sw[SW_A] >= 0 && sw_on(r, SW_A)) { snd_em[k].kind |= 0x80; continue; } /* control: its SW_A kills it */
+            if (!(snd_em[k].kind & 0x40)) { /* exeStandBy: until its appear switch is on (none: PlaySound from init) */
+                if (r->sw[SW_APPEAR] >= 0 && !sw_on(r, SW_APPEAR)) continue;
+                snd_em[k].kind |= 0x40;
+            }
+            /* exePlaySound */
+            if (r->path >= 0 && scene_blob_g) { /* on a rail: at its place nearest the camera (13 / 17 / 18: nearest what it watches) */
+                u32 np = 0;
+                int closed = 0;
+                const float *pts = find_rail(scene_blob_g, r->zone, r->path, &np, &closed);
+                if (pts && np > 1) c = rail_at(pts, np, rail_nearest(pts, (int)np, a0 == 13 || a0 == 17 || a0 == 18 ? watch : eye));
+            }
+            if (a0 >= 9 && a0 <= 11 && vlen(vsub(mario->pos, c)) < 1000.0f) continue; /* the insects hush with Mario within 1000 */
+            if ((a0 == 22 || a0 == 23) && dx.on && !strcmp(demos[dx.cur].h->name, "ロゼッタ状況説明デモ")) continue;
+            if (a0 == 30) { se_start(SE_SY_READ_RIDDLE_S, NULL); snd_em[k].kind |= 0x80; continue; } /* startSystemSE, kill */
+            if (a0 >= 0 && a0 < 33) snd_em[k].h = se_level(se[a0], &c.x, snd_em[k].h); /* startLevelSound(sSeTable[_8C]) */
+            continue;
+        }
         if (snd_em[k].kind == 0) { /* SoundEmitterCube (a base origin cube) */
             if (a0 < 0 || a0 > 3) continue;
             V3 x, z, lo, hi;
