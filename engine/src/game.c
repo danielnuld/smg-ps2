@@ -4073,7 +4073,9 @@ static void update_flows(void)
  * comes in along the rail's start direction from 300 before it at arg1 a frame, default 20), MoveLoop along the rail
  * to its length - arg3, MoveEndExtra on along the end direction until 300 past the end, hidden, Wait again; its body
  * (120 x scale) burns Mario. row_turn 0 wait, 1 sign, 2 coming in, 3 on the rail, 4 going out; row_step its frames.
- * ponytail: no Sign / Start / End / drop effects, the ball not turned to the rail (its front as placed) */
+ * Its sounds: SE_OJ_LV_PROMINENCE_SIGN through Sign (at the rail's start) and MoveStartExtra, SE_OJ_PROMINENCE_START
+ * at MoveStartExtra's first step, SE_OJ_LV_PROMINENCE_MOVE from there to the end, SE_OJ_LV_PROMINENCE_END through
+ * MoveEndExtra. ponytail: no Sign / Start / End / drop effects, the ball not turned to the rail (its front as placed) */
 static float prom_len(const Inst *in)
 {
     float l = 0;
@@ -4113,6 +4115,13 @@ static void update_prom(void)
         else if (*ph == 2 && *t >= (int)(300.0f / speed)) { *ph = 3; *t = 0; }
         else if (*ph == 3 && speed * *t >= prom_len(in) - (r->arg[3] > 0 ? r->arg[3] : 0)) { *ph = 4; *t = 0; }
         else if (*ph == 4 && speed * *t > 300.0f) { *ph = 0; *t = 0; }
+        if (*ph) {
+            Inst *w = &insts[i];
+            V3 sp = *ph == 1 ? v3(in->prom[0], in->prom[1], in->prom[2]) : prom_pos(in);
+            if (*ph == 2 && *t == 0) se_start(SE_OJ_PROMINENCE_START, &sp.x);
+            if (*ph >= 2) w->lv[0] = se_level(SE_OJ_LV_PROMINENCE_MOVE, &sp.x, w->lv[0]);
+            if (*ph != 3) w->lv[1] = se_level(*ph == 4 ? SE_OJ_LV_PROMINENCE_END : SE_OJ_LV_PROMINENCE_SIGN, &sp.x, w->lv[1]);
+        }
         if (*ph < 2) continue;
         if (vlen(vsub(c, prom_pos(in))) < 120.0f * r->scale[0] + HIT_BODY_R && !mario->hurt_timer) {
             mario_attack(ATK_FIRERUN_STRONG, prom_pos(in));
@@ -42529,7 +42538,8 @@ static void update_msteam(void)
 }
 /* LavaSteam.cpp: Wait 120 frames (its Sign effect the first 90), Steam 90 (burns: a 330 cylinder up its y, a sphere
  * of 70 at 400), SteamEnd 90, again; with SW_A it waits for the switch, then steams and cycles. row_turn: 0 wait, 1
- * steam, 2 end, 3 waiting for SW_A; row_step its frames. ponytail: a burn is an ordinary hurt */
+ * steam, 2 end, 3 waiting for SW_A; row_step its frames; SE_OJ_LV_LAVA_STEAM_OUT through Steam. ponytail: a burn is
+ * an ordinary hurt */
 static void update_steam(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -42552,6 +42562,7 @@ static void update_steam(void)
         int near = vlen(vsub(p, cam_pos)) < 6000.0f;
         if (*ph == 0 && *t < 90 && near) fx_keep(FX_LAVASTEAM_SIGN, t, in->m);
         if (*ph != 1) continue;
+        insts[i].lv[0] = se_level(SE_OJ_LV_LAVA_STEAM_OUT, &in->m[12], in->lv[0]); /* exeSteam */
         if (near) fx_keep(FX_LAVASTEAM_STEAM, t, in->m);
         V3 d = vsub(c, p);
         float h = vdot(d, up), rr = 0.7f * HIT_BODY_R;
@@ -42603,6 +42614,11 @@ static void update_geyser(void)
         else if (*ph == 4 && *t >= 60) { *ph = 0; *t = 0; }
         V3 p = v3(in->m[12], in->m[13], in->m[14]), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
         if (*ph == 1 && vlen(vsub(p, cam_pos)) < 6000.0f) fx_keep(FX_LAVAGEYSER_SIGN, t, in->m);
+        /* exeSign .. exeShootKeep: SE_OJ_LV_LAVA_GEYSER_SIGN; exeShootUp's first step SE_OJ_LAVA_GEYSER_SHOOT;
+         * exeShootUp .. exeShootDown: SE_OJ_LV_LAVA_GEYSER_KEEP */
+        if (*ph == 2 && *t == 0) se_start(SE_OJ_LAVA_GEYSER_SHOOT, &in->m[12]);
+        if (*ph >= 1 && *ph <= 3) insts[i].lv[0] = se_level(SE_OJ_LV_LAVA_GEYSER_SIGN, &in->m[12], in->lv[0]);
+        if (*ph >= 2 && *ph <= 4) insts[i].lv[1] = se_level(SE_OJ_LV_LAVA_GEYSER_KEEP, &in->m[12], in->lv[1]);
         float top = geyser_height(in) * in->s - 100.0f;
         if (top < 0.0f) continue;
         V3 d = vsub(c, p);
