@@ -2214,16 +2214,29 @@ static int cam_gravity(V3 p, V3 *g) { return gravity_at(grav, ngrav, (const floa
 static int area_obj(const char *cls, V3 p);
 static int cam_repulsion(V3 pos, V3 *rep)
 {
+#ifdef CAM_REPULSE_TEST /* XF=-DCAM_REPULSE_TEST=<radius>: an endless cylinder of that radius about Mario's up, from
+                         * frame 300 (no stage of RMGE01 places a CameraRepulsiveArea); logged every 60 calls */
+    static int t;
+    if (!mario || ++t < 300) return 0;
+    V3 up = mario->up, ret = vsub(pos, mario->pos);
+    float rad = CAM_REPULSE_TEST;
+#else
     int a = area_obj("CameraRepulsiveCylinder", pos);
     if (a < 0) { if (area_obj("CameraRepulsiveSphere", pos) < 0) return 0; *rep = v3(0, 0, 0); return 1; }
     const Row *r = &sc->objs[a];
     V3 x, z;
     row_axes(r, &x, &z);
     V3 up = vcross(z, x), ret = vsub(pos, row_pos(r));
+    float rad = 500.0f * r->scale[0];
+#endif
     ret = vsub(ret, vmul(up, vdot(up, ret)));
-    float base = vlen(vcross(ret, up)) * 2.0f / (500.0f * r->scale[0]);
+    float base = vlen(vcross(ret, up)) * 2.0f / rad;
     if (base < 1e-6f) { *rep = v3(0, 0, 0); return 1; }
     *rep = vmul(ret, 1.0f / (base * base * base));
+#ifdef CAM_REPULSE_TEST
+    if (vlen(ret) >= rad) return 0; /* (isInVolume) */
+    if (t % 60 == 0) printf("cam repulsion: eye %d off the axis, pushed %d (radius %d)" "\n", (int)vlen(ret), (int)vlen(*rep), (int)rad);
+#endif
     return 1;
 }
 static int cam_map_poly(V3 a, V3 d, V3 *hp)
