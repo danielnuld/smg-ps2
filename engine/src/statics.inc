@@ -28,8 +28,9 @@ typedef struct {
     V3 fix[10];
     u8 col[10 * 10]; /* mColors of the points (the fix points' stay white) */
 } StFlag;
-static StFlag st_flags[ST_FLAG_MAX];
-static StFlagPt st_flag_pts[ST_FLAG_PTS];
+static StFlag *st_flags;      /* [st_flag_cap] */
+static StFlagPt *st_flag_pts; /* [st_flag_pts_cap]: both from the arena (st_flag_alloc) */
+static int st_flag_cap, st_flag_pts_cap;
 static int st_nflags;
 static const Scene *st_flag_sc;
 static int st_flag_class(const char *n)
@@ -38,6 +39,17 @@ static int st_flag_class(const char *n)
                                     "FlagPeachCastleB", "FlagPeachCastleC", "FlagTamakoro"};
     for (u32 i = 0; i < sizeof k / sizeof *k; i++) if (!strcmp(n, k[i])) return 1;
     return 0;
+}
+/* from game_init (st_flag_init waits for the first update: the zones' models; an allocation there a zone swap would
+ * release): a StFlag a placed Flag, at most ST_FLAG_MAX, and their points, 10 x 10 each at most, ST_FLAG_PTS in all */
+static void st_flag_alloc(void)
+{
+    int n = 0;
+    for (u32 i = 0; i < sc->nobjs; i++) n += st_flag_class(sc->types + 32 * sc->objs[i].type);
+    st_flag_cap = n < ST_FLAG_MAX ? n : ST_FLAG_MAX;
+    st_flag_pts_cap = n * 100 < ST_FLAG_PTS ? n * 100 : ST_FLAG_PTS;
+    st_flags = n ? mem_alloc(MEM_OBJECTS, (u32)st_flag_cap * sizeof *st_flags) : NULL;
+    st_flag_pts = n ? mem_alloc(MEM_OBJECTS, (u32)st_flag_pts_cap * sizeof *st_flag_pts) : NULL;
 }
 static void st_flag_init(void) /* Flag::init + appear, every placed Flag of the scene */
 {
@@ -48,7 +60,7 @@ static void st_flag_init(void) /* Flag::init + appear, every placed Flag of the 
         const char *n = sc->types + 32 * r->type;
         if (!st_flag_class(n)) continue;
         const Model *md = scene_model(sc, n);
-        if (!md || !md->vu_ngroups || st_nflags == ST_FLAG_MAX) continue;
+        if (!md || !md->vu_ngroups || st_nflags == st_flag_cap) continue;
         StFlag *f = &st_flags[st_nflags];
         memset(f, 0, sizeof *f);
         f->row = (int)i; f->tex = md->vu[0].tex;
@@ -66,7 +78,7 @@ static void st_flag_init(void) /* Flag::init + appear, every placed Flag of the 
         } else if (!strcmp(n, "FlagPeachCastleB") || !strcmp(n, "FlagPeachCastleC")) {
             f->nv = 5; f->nu = 5; f->iu = 500.0f / f->nu; f->iv = 400.0f / (f->nv - 1);
         } else if (!strcmp(n, "FlagRaceA")) f->nosnd = 1;
-        if (used + f->nu * f->nv > ST_FLAG_PTS) { printf("flag %u: no room for its points%c", i, 10); continue; } /* ponytail: ST_FLAG_PTS a scene */
+        if (used + f->nu * f->nv > st_flag_pts_cap) { printf("flag %u: no room for its points%c", i, 10); continue; } /* ponytail: ST_FLAG_PTS a scene */
         f->p = &st_flag_pts[used]; used += f->nu * f->nv;
         float m[16], one[3] = {1, 1, 1};
         mat_translate_rot_scale(m, r->pos, r->rot, one);
@@ -1085,6 +1097,11 @@ static int st_chain(Inst *in, StSt *g) /* 1: rebound */
     m[13] += 200.0f * step;
     fx_named("LargeChain", "Break", m, NULL, g); /* LargeChainParts::kill */
     se_start(SE_OJ_LARGE_CHAIN_BREAK, &m[12]);
+    if (step == 0 || step == n - 1) { /* exeBreak: the lower fixed point goes with part 0, else the upper one (200 over the last part) with the last: each its own kill */
+        if (step) m[13] += 200.0f;
+        fx_named("LargeChain", "Break", m, NULL, NULL);
+        se_start(SE_OJ_LARGE_CHAIN_BREAK, &m[12]);
+    }
     g->on = step + 1;
     printf("large chain %d: part %d broken%c", in->row, step, 10);
     if (step >= n - 1) { g->n = 2; row_kill(in->row); }
