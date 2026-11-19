@@ -1217,7 +1217,7 @@ static int ntzs, tz_ride = -1; /* the Trapeze Mario holds, -1 none */
 static int swr_hold(Player *m); static float swr_reach(void); static V3 swr_body(void); static void swr_update(void), swr_draw(void), swr_reset(void); /* swing_rope.inc */
 static int nonis, nfprs; static void oni_place(Inst *in), update_onimasu(void), update_lavarocks(void), update_fpressures(void), fpr_joints(Inst *in);
 static int nspms; static void update_spmothers(void);
-static void update_leakpipes(void), leak_joints(Inst *in), st_bell_joints(Inst *in);
+static void update_leakpipes(void), leak_joints(Inst *in), st_bell_joints(Inst *in), update_snowmen(void), snow_joints(Inst *in);
 static int nkss; static void update_stairs(void), ks_place(Inst *in);
 static int nebs; static const Model *m_ebeam; static int eb_patrol(int row); static void update_eyebeamers(void), eb_place(Inst *in), draw_eyebeams(void);
 static int nmhills; static const Model *m_mhole, *m_mhill[3];
@@ -6553,7 +6553,7 @@ static void game_rebind_(void)
                                                * pose, the pool full at rebind: kcl_query poses it once it has one) */
         const Inst *o = &insts[i];
         const char *cn = o->md ? s->types + 32 * s->objs[o->row].type : "";
-        if (!o->md || !o->md->skin || o->kparent >= 0 || (strcmp(cn, "HoneyQueen") && strcmp(cn, "SandUpDownTriRock") && strcmp(cn, "SeaBottomTriplePropeller") && strcmp(cn, "BeamGoRoundPlanet"))) continue;
+        if (!o->md || !o->md->skin || o->kparent >= 0 || (strcmp(cn, "HoneyQueen") && strcmp(cn, "SandUpDownTriRock") && strcmp(cn, "SeaBottomTriplePropeller") && strcmp(cn, "BeamGoRoundPlanet") && strcmp(cn, "SnowMan"))) continue;
         for (int j = 0; j < o->md->skin->njoints; j++)
             for (int p = 0; ninsts < insts_cap; p++) {
                 char kn[48];
@@ -10618,34 +10618,71 @@ static void jet_reset(Inst *in, int reason) /* JetTurtle::reset */
  * up, mJumpDistFlow 2 ahead, mGravityFlow 0.3 a frame: about 540 up; refused while flowing), else a push. Bee Mario:
  * EnemyAttackFlipWeak (on the ground) / Flip, then its sensor off till 60 frames on and Mario on the ground
  * (mSpoutTimer). row_turn its nerve, row_step its step */
-/* SnowMan.cpp: a fire ball on its head or body melts that part (MeltHead / MeltBody: SW_A, SW_B), the second
- * one brings it down (kill: SW_DEAD). Head sensor 100 at 250 up, body 150 at 100 (scale). row_turn bit 1 head
- * melted, bit 2 body melted. ponytail: no melting animation (the model squashes as parts go), spins only shake it */
+/* SnowMan.cpp after Petari. Wait; a fire ball on its head (damageHead): MeltHead from Wait, DownHead from WaitHead; on
+ * its body (damageBody): MeltBody from Wait, DownBody from WaitBody. MeltHead: its HeadCol off, the MeltHead clip,
+ * SE_OJ_SNOW_MAN_MELT, shakeCameraWeak, SW_A; at sStepForMelt 20 the bucket hidden (hideMaterial SnowManBucketMat_v:
+ * its Bucket joint, 2, scaled away) and WaitBody. MeltBody: BodyCol off, the clip, the SE, the shake, SW_A and SW_B;
+ * at 20 WaitHead. DownHead / DownBody: both collisions off, the clip, the SE, the shake (DownBody: SW_B), killed at
+ * the clip's end (its dead switch). Its collisions are HeadCol on the Head joint (3) and BodyCol on Body (1) (slice.py
+ * KCL_PARTS / JOINT_KCL_ONLY: "SnowMan#3.0", "SnowMan#1.0"). The fire ball's part by its place: 100 at 250 up, 150 at
+ * 100 up (x its scale). row_turn the nerve, row_step its step.
+ * ponytail: no AnimScaleController hit reaction at a spin (0.95 / 1.05, 0.6 / 0.8) */
+enum { SNM_WAIT, SNM_MELTHEAD, SNM_MELTBODY, SNM_WAITBODY, SNM_WAITHEAD, SNM_DOWNHEAD, SNM_DOWNBODY };
 static int fireball_hits_snowman(V3 p)
 {
     FOR_KIND(i, snowman) {
         Inst *in = &insts[i];
-        if (!in->snowman || row_dead[in->row]) continue;
-        const Row *r = &sc->objs[in->row];
+        if (!in->snowman || in->kparent >= 0 || row_dead[in->row]) continue;
         V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), base = v3(in->m[12], in->m[13], in->m[14]);
         int head = vlen(vsub(p, vadd(base, vmul(up, 250.0f * in->s)))) < 100.0f * in->s + 80.0f;
         int body = !head && vlen(vsub(p, vadd(base, vmul(up, 100.0f * in->s)))) < 150.0f * in->s + 80.0f;
         if (!head && !body) continue;
-        signed char *st = &row_turn[in->row];
-        if (*st) { /* the second part: down */
-            if (r->sw[SW_DEAD] >= 0) sw_set(r, SW_DEAD, 1);
-            row_kill(in->row);
-            printf("snowman row %d melted down" "\n", in->row);
-        } else {
-            *st = head ? 1 : 2;
-            if (head && r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
-            if (!head && r->sw[SW_B] >= 0) sw_set(r, SW_B, 1);
-            for (int j = 4; j < 7; j++) in->m[j] *= 0.6f; /* a part gone */
-            printf("snowman row %d: %s melted" "\n", in->row, head ? "head" : "body");
-        }
+        signed char *n = &row_turn[in->row];
+        int to = head ? (*n == SNM_WAIT ? SNM_MELTHEAD : *n == SNM_WAITHEAD ? SNM_DOWNHEAD : -1)  /* damageHead */
+                      : (*n == SNM_WAIT ? SNM_MELTBODY : *n == SNM_WAITBODY ? SNM_DOWNBODY : -1); /* damageBody */
+        if ((head && (*n == SNM_WAITBODY || *n == SNM_MELTHEAD)) || (body && (*n == SNM_WAITHEAD || *n == SNM_MELTBODY))) continue; /* (that part is gone) */
+        if (to >= 0) { *n = (signed char)to; row_step[in->row] = 0; printf("snowman row %d: nerve %d%c", in->row, to, 10); }
         return 1;
     }
     return 0;
+}
+static void snow_joints(Inst *in) /* the bucket gone with the head (hideMaterial) */
+{
+    Anim *a = in->anim;
+    int n = row_turn[in->row];
+    if (!a || !a->skin || a->skin->njoints < 4 || (n != SNM_WAITBODY && n != SNM_DOWNBODY)) return;
+    for (int k = 0; k < 12; k++) if (k % 4 != 3) a->world[2][k] = 0.0f;
+}
+static void update_snowmen(void)
+{
+    static const char *const clip[7] = {"", "melthead", "meltbody", "", "", "downhead", "downbody"};
+    FOR_KIND(i, snowman) {
+        Inst *in = &insts[i];
+        if (!in->snowman || in->kparent >= 0 || row_dead[in->row] || !row_shown(in->row)) continue;
+        Row *r = (Row *)&sc->objs[in->row];
+        int n = row_turn[in->row], st = row_step[in->row];
+        if (row_step[in->row] < 0xFFFF) row_step[in->row]++;
+        if (st == 0 && clip[n][0]) { /* the nerve's first step */
+            obj_play(in, clip[n], 0, 0);
+            se_start(SE_OJ_SNOW_MAN_MELT, &in->m[12]);
+            camera_shake(SHAKE_WEAK);
+            if ((n == SNM_MELTHEAD || n == SNM_MELTBODY) && r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
+            if ((n == SNM_MELTBODY || n == SNM_DOWNBODY) && r->sw[SW_B] >= 0) sw_set(r, SW_B, 1);
+        }
+        if (st == 20 && n == SNM_MELTHEAD) { row_turn[in->row] = SNM_WAITBODY; row_step[in->row] = 0; }
+        else if (st == 20 && n == SNM_MELTBODY) { row_turn[in->row] = SNM_WAITHEAD; row_step[in->row] = 0; }
+        else if ((n == SNM_DOWNHEAD || n == SNM_DOWNBODY) && st > 0 && (!in->anim || in->anim->done)) { /* isBckStopped: kill */
+            row_kill(in->row);
+            printf("snowman row %d melted down%c", in->row, 10);
+            game_rebind();
+            return;
+        }
+        int head_off = n == SNM_MELTHEAD || n == SNM_WAITBODY || n >= SNM_DOWNHEAD, body_off = n == SNM_MELTBODY || n == SNM_WAITHEAD || n >= SNM_DOWNHEAD;
+        for (int j = i + 1; j < ninsts; j++) { /* HeadCol / BodyCol: invalidateCollisionParts */
+            if (insts[j].kparent != i || insts[j].row != in->row) continue;
+            if ((insts[j].kmove == 3 && head_off) || (insts[j].kmove == 1 && body_off)) insts[j].kcl = NULL;
+        }
+    }
 }
 
 /* CollectTico.cpp / StrayTico.cpp: a stray Luma waits (in its bubble, turning to Mario 2 degrees a frame within 1000)
@@ -53068,7 +53105,7 @@ static Anim *obj_anim(int row, const Model *md, const char *cls)
         if (anim_start(a, n, 0)) return oanim[k].a;
         snprintf(n, sizeof n, "%s/wait", cls);
         for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
-        if (!strncmp(cls, "MorphItemNeo", 12) || !strncmp(cls, "ScrewSwitch", 11) || !strcmp(cls, "QuarterRollGravityRoomArrow")) return oanim[k].a; /* initModelManagerWithAnm: no clip until appear() / exeScrew / the arrow's switches */
+        if (!strncmp(cls, "MorphItemNeo", 12) || !strncmp(cls, "ScrewSwitch", 11) || !strcmp(cls, "QuarterRollGravityRoomArrow") || !strcmp(cls, "SnowMan")) return oanim[k].a; /* initModelManagerWithAnm: no clip until appear() / exeScrew / the arrow's switches */
         if (!anim_play(a, n, 1.0f, 1, 0)) { /* no wait clip: its first */
             size_t l = strlen(n) - 4;
             for (u32 c = 0; c < sc->nclips; c++)
@@ -54405,6 +54442,7 @@ static void update_obj_anims(void)
             if (insts[i].pressure) { anim_pose(insts[i].anim); pr_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].fpressure) { anim_pose(insts[i].anim); fpr_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].leaves) { anim_pose(insts[i].anim); leaf_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
+            if (insts[i].snowman) { anim_pose(insts[i].anim); snow_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].leakpipe == 1) { anim_pose(insts[i].anim); leak_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].bell) { anim_pose(insts[i].anim); st_bell_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].anim->done && !insts[i].anim->loop && !insts[i].vine && !obj_play(&insts[i], sc->types + 32 * sc->objs[insts[i].row].type, 1, 0))
@@ -59506,6 +59544,7 @@ void game_update(void)
     update_fpressures();
     update_spmothers();
     update_leakpipes();
+    update_snowmen();
     update_stairs();
     update_eyebeamers();
     update_beam_go_round();

@@ -266,6 +266,7 @@ for _box, _item in (("TreasureBoxBlueChip", "BlueChip"), ("TreasureBoxYellowChip
 # update_leakpipes)
 EXTRA["WaterLeakPipe"] = EXTRA.get("WaterLeakPipe", ()) + ("IceStepNoSlip",)
 SKINNED_OBJ += ("IceStepNoSlip",)
+SKINNED_OBJ += ("SnowMan",)  # SnowMan.cpp: MeltHead / MeltBody / DownHead / DownBody (game.c update_snowmen)
 
 
 def morph_arcs(o):
@@ -290,7 +291,7 @@ def morph_arcs(o):
 STAR_DECLARERS = {"FlipPanelObserver": 7, "CrystalCageL": 0, "BreakableCage": None, "BreakableCageRotate": None,
                   "BreakableCageL": None}
 COIN100 = "１００枚コイン"
-JOINT_KCL_ONLY = {"HoneyQueen", "SandUpDownTriRock", "SeaBottomTriplePropeller"}  # every collision on a joint by index (KCL_PARTS: "<class>#<n>.<k>"), none at the model
+JOINT_KCL_ONLY = {"HoneyQueen", "SandUpDownTriRock", "SeaBottomTriplePropeller", "SnowMan"}  # every collision on a joint by index (KCL_PARTS: "<class>#<n>.<k>"), none at the model
 KCL_JOINT = {"BallBeamer": "Head", "JumpStand": "JumpStandJoint03", "ScrewSwitch": "Screw", "ScrewSwitchReverse": "Screw"}  # collision at that joint's (bind pose) place
 # drawn and collided at the last frame of a BCK, the named KCLs added at their joint (PhantomShipBridge.cpp:
 # setStateMoveA, the bridge down without SW_A; createCollisionPartsFromLiveActor "Move" on joint Move).
@@ -307,7 +308,8 @@ ASTRO_MODELS = {
 POSE = {"NutShipFleetBridge": ("MoveA", {"move.kcl": "Move"})}
 # collisions on a joint of a skinned model (createCollisionPartsFromLiveActor with getJointMtx): KCL "<class>#<joint>"
 # in that joint's space, the engine moves it with the joint (PhantomShipBridge.cpp: "Move" on joint Move)
-KCL_PARTS = {"MarblePlanet": {"watermelon.kcl": "WaterMelon"},  # MarblePlanet's WaterMelon collision (createCollisionPartsFromLiveActor), on once the core breaks
+KCL_PARTS = {"SnowMan": {"headcol.kcl": "Head", "bodycol.kcl": "Body"},  # SnowMan::init: HeadCol / BodyCol on their joints (game.c update_snowmen)
+             "MarblePlanet": {"watermelon.kcl": "WaterMelon"},  # MarblePlanet's WaterMelon collision (createCollisionPartsFromLiveActor), on once the core breaks
              "PhantomShipBridge": {"move.kcl": "Move"}, "SkeletalFishBoss": dict([(f"backbone{i:02}.kcl", f"BackBone{i:02}") for i in range(1, 12)] + [("backfin.kcl", "BackFin"), ("leftfinjoint.kcl", "LeftFinJoint"), ("rightfinjoint.kcl", "RightFinJoint")]),  # SkeletalFishBoss::initCollision (sColInfo)
              "SkeletalFishBossHeadA": {"head.kcl": "Head", "jow.kcl": "Jow"},  # SkeletalFishBossHead: Head / Jow on their joints
              "DarknessRoomDoorA": {"open.kcl": "Open"},
