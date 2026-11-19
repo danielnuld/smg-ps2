@@ -11,6 +11,26 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Enemy audit, second batch, and Kiraira (feat/689-enemy-audit-2, #689 / #690, PR #693, 2026-11-18): the table is
+  `docs/class-audit-enemy.md`. PackunPetit: a fire ball / the rainbow attack punchDown (packun_hit), a shell with the
+  scene stop, the stop only for the spin / kick / shell, a failed attack pushes. Unizo: enemy attacks not from a Unizo
+  doBreak (walker_blow), no rainbow kill, doAttack only when taken, UnizoLand's SearchSmoke. KoteBug / Poihana / Gesso /
+  Mogu: their own answers to fire balls, shells, the rainbow attack and explosions (kb_hitall, ge_hitall, mg_hitall).
+  BombHei (#600's leftovers): held at Mario's HandR (MarioActor::updateTakingPosition: _49C, the FixedPosition (1.8,
+  52.51, 39.58) at HandR, + his velocity) with カブ抜き then カブウエイト over his body and 両手投げ at the throw; Thrown
+  rebounds off the enemies it touches (calcReflectionVector 0.8, in walker_push_pass); taken, it has no body sensor.
+  BegomanSpringHide: its BegomanBaby (one hosted walker a Hide row) out in Shake's first step when dead (50 up, 10
+  aside, SE_EM_BEGOMAN_LAUNCH_BABY), only when the pack has the BegomanBaby model (slice.py EXTRA).
+  Kiraira (it was an early stand-in: touch, 480 frames down): update_kiraira after Kiraira.cpp, its nerve in
+  row_turn's low bits with mEyesOpen / mIsForceDetonated above, mFront its matrix's Z: Wait, FaceToMario (2.8 degrees a
+  frame), FaceToMarioAndStare (SE_OJ_KIRAIRA_STARE at step 5), Explode from Mario's touch or spin (an explosion attack
+  he takes), a star piece, a thrown shell (force-detonated: the explosion to Mario within its eye's 600, the walkers,
+  the other Kirairas: BeExploded, 10 frames), the strong rumble / shake within 3000, Dead 300 with the group's alarm
+  (they turn 20 degrees a frame and stare), RecoverSign 120, Recover (60 frames: no clips); down, its body pushes.
+  Its Explosion effect once jpa.py names Kiraira (SpaceMine's until then). Left (#691): the model with its clips.
+  Test: built plain (EggStarGalaxy/1), host tests, the route test, memcheck; NOT run in PCSX2
+  (D:/smg-ps2-wt/unverified-2026-11-18.md). **Release: slice_all.py** the galaxies with a BegomanSpringHide
+  (CannonFleetGalaxy: BegomanBaby) and with a Kiraira / KirairaRail (jpa.py NAMED Kiraira: its effects).
 - Enemy audit against Petari, first batch (feat/676-enemy-audit-1, #676 / PR #688, 2026-11-18): the enemies read class by class
   against vendor/Petari/src/Game/Enemy (the table: `docs/class-audit-enemy.md`, one row a class with what was fixed and
   what is left). The cause shared by most: `fireball_hit_walkers`, the thrown shell's loop and `walker_blow`'s callers
