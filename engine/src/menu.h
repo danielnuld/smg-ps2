@@ -44,6 +44,7 @@ int menu_dome_confirm(void);         /* 0 choosing, 1 yes, 2 no */
 void menu_dome_plate(int i, const char *galaxy, int type, int immediate, float x, float y); /* GalaxyNamePlate */
 /* the miss / game over sequences' layouts (game.c miss_*) */
 void menu_miss_start(void);          /* MissLayout ("TooBad") */
+int menu_miss_anim_end(void);        /* its Appear over (or not started) */
 void menu_wipe_koopa(int frames);    /* WipeKoopa: closes over frames (<= 0: 90) */
 int menu_wipe_koopa_closed(void);
 void menu_miss_left_start(int left); /* PlayerMissLeft::appear (left: the lives now) */

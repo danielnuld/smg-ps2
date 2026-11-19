@@ -1611,6 +1611,12 @@ int main(void)
 #ifdef HOLE_TEST /* (a plain build, XF=-DHOLE_TEST: the miss events on) Mario into the first black hole */
         { static int done; if (!done && frame > 120 && game_test_free()) { done = 1; printf("hole test f %u: black hole row %d" "\n", frame, game_test_hole()); } }
 #endif
+#ifdef DOWN_TEST /* (a plain build, XF=-DDOWN_TEST=1: the last life at a needle's prick, EventFireDown; 2: EventDown; 3: EventAbyss; 0: in turn) */
+#ifdef ROUTE_TEST /* (a route build with XF="-DMISS_EVENTS=1 -DDOWN_TEST=0": the route in EggStar 1, this test in the other stages) */
+        if (!game_stage_scenario("EggStarGalaxy", 1))
+#endif
+        { extern int game_test_down(int); game_test_down(DOWN_TEST); }
+#endif
 #ifdef HAZARD_TEST
         if (frame == 120)
             printf("hazard test: mine row %d\n", game_test_hazard(1));
