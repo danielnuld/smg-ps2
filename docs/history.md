@@ -30,6 +30,59 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   SKINNED_OBJ: their Spin / Vibration clips) and jpa for TeresaMansionCandlestand / CandlestandIceVolcano (NAMED_ONLY
   Extinguish02 / Extinguish): covered by the full repack**; until then the clips and those two effects do not show,
   the rest works on the old packs.
+- NPC demo sounds (feat/620-npc-demo-sounds, #620, 2026-11-18): the Gateway's spin demo and Kinopio. gw_update:
+  TicoDemoGetPower::exeDemo's sounds on the baby Luma by the demo's part steps (デモ3: SE_SM_TICO_OP_APPEAR 110, _END
+  140, SE_SV_TICO_OP_APPEAR 180; デモ4: SE_SM_LV_TICO_WAIT to 65, SE_SM_TICO_FLASH_SPIN 72, _FLASH_LIGHT 170,
+  SE_SM_TICO_FUSION 255, SE_PV_POWER_STAR_GET 420); ro_update: RosettaDemoHeavensDoor1::exeDemo's (デモ3:
+  SE_SV_ROSETTA_SWING 70, SE_SM_ROSETTA_OP_SWING 80; SE_SM_LV_TICO_OP_WAIT through 会話1 .. 4, デモ1 .. 5 and デモ6's
+  first 10 steps, then SE_SM_LV_ROSETTA_OP_HIDE). Kinopio (kinopio_nerve, from update_npc_turn): its Escape nerve (a
+  Kinopio that reads an appear switch with arg4 0: its Escape action once, SE_SV_KINOPIO_PUHA, SE_SM_NPC_FLY_OUT) and
+  its power star mode (arg2 8: StarWait's MBGM_KINOPIO_TANKEN_B at its first talk, its eventFunc the TakeOutStar, then
+  startLastStageBGM unless in FishTunnelGalaxy; kino_took lets its star out, slice.py declares it and gives it the
+  PStar model). The star was shown from the start before (no declarer). Not ported: Kinopio's Appear nerve (arg4 not
+  0: the fall to the ground, the NPCs have no binder), Caretaker's BGM calls (BGM_MINIGAME_START, MBGM_RACE_01: its
+  tidy-up mission CareTaker.cpp:113-546 is not ported); "Penguin's turtle jet sounds" are JetTurtle's (SE_OJ_ /
+  SE_SY_GET_TURTLE_JET: on main since #608), TalkBalloon's volume on main since #597. Test: `talk` with
+  XF=-DTALK_CLS=3 on FishTunnelGalaxy/1 (the Kinopio appears: Escape, the talk, the BGM, TakeOutStar, "its star
+  out"); `gateway` for the spin demo. **Release: slice_all.py FishTunnelGalaxy, HoneyBeeKingdomGalaxy** (the declarer
+  and PStar of the two arg2 8 Kinopios).
+- NPC reactions run (verify/npc-react, #619, 2026-11-18): what #604 / #615 merged without a run. `talk` with
+  XF="-DTALK_CLS=0 -DREACT_TEST" picks an NPC of npc_reaction's classes by name (PenguinCoach, Penguin, Caretaker,
+  HoneyBee, a Kinopio with its body sensor, Rabbit: the first of that order with one shown), so one ELF runs every
+  galaxy through out/boot.txt. Seen in PCSX2, each with its four reaction lines (trampled, spun, pointed, star piece)
+  and its SE lines (`se?` for the voices the packs lack until the repack): Rabbit (HeavenlyBeachGalaxy/1), HoneyBee
+  (HoneyBeeKingdomGalaxy/1), Caretaker (FactoryGalaxy/1), Kinopio (BeltConveyerExGalaxy/1), Penguin
+  (OceanRingGalaxy/1); PenguinCoach (HeavenlyBeachGalaxy/1) pointed and star piece only (his talk opens with Mario
+  before him and holds Mario through the test's drop and spin); the Gateway rabbits' hop (SE_SM_RABBIT_JUMP each Run loop,
+  `gateway` with XF=-DSE_LOG). Nothing to fix in the engine.
+- Per-class tables out of bss, 1 (perf/tables-arena-1, #630, 2026-11-18): the ELF reserved every class's worst-case
+  table in every galaxy. `creepers` (128 KB), `vines` (120 KB), `bridges` (96 KB) and CocoSambo's heads (96 KB, the
+  function static of update_sambos, now `sambo_heads`) are pointers filled by game.c `row_table(class, max, size)`:
+  from the arena, one entry a row the scene places (at most the old maximum), NULL where it places none (the count
+  stays 0, nothing reads the table). The rule for the next ones: allocate only from game_init (what it allocates lies
+  under main.c's base_mark: a zone swap keeps it; scene_switch releases the arena to boot_mark and clears .gamebss, so
+  the pointer is NULL again and game_init fills it again); a table whose init waits for the first update needs its
+  allocation called from game_init. memcheck: _end -366208 B against the 11:50 baseline (which main had passed by
+  about 78 KB: 440 KB of tables gone), 251904 B left before the region loses a step, the region one step up
+  (18688 KB). Arena at boot: HoneyBeeKingdomGalaxy/1 (2 Creepers, Plants) 3409 KB, EggStarGalaxy/3 (bridge,
+  CocoSambo) 3602 KB of 5376 KB. The sambos and the bridge were not driven in PCSX2 (their zones not reached at
+  boot); route EggStarGalaxy/1 as before.
+- Enemies on AreaMove / RailMove floors (feat/611-area-move-walkers, #611, 2026-11-18):
+  MR::calcVelocityAreaOrRailMoveOnGround as game.c area_rail_vel (an AreaMove floor, code 28: MR::calcAreaMoveVelocity,
+  the AreaMoveSphere holding the place: its up less the part towards its centre x arg0 (10); a RailMove floor, 27: the
+  ground's rail direction nearest it x 10). The walkers keep their ground's codes and instance from w_bind (gattr /
+  ginst). Kuribo::control adds 0.05 of it; Karon::control addVelocityLimit (not Broken / StepBroken, which are
+  carried with hNoMoveNoTurnParam instead of standing on their ground's normal); BombBird's SwoonStart / Swoon /
+  SwoonEnd take it as their velocity (hShiftingSandVel 1); BombBirdBomb's Wait takes it (sGroundFric 1) with
+  SE_EM_BOMBBIRDBOMB_LAND_SAND from 5.5, no rebound; CocoNut's _14C / _150 (calcVelocityAreaMoveOnGround x 0.75 while it
+  rolls on such a floor, fading x 0.925 off it, added to its velocity; it does not stop on the floor). Mario's side is
+  #581 (m_power_moves), which also puts AreaMoveSphere into slice.py's LOGIC areas: until those packs exist an AreaMove
+  floor gives zero (no area found), as Petari does outside every sphere. ponytail: the rail's path_arg3 speed (10).
+  Test: built plain (SandClockGalaxy/1), host tests, memcheck; NOT seen in PCSX2 (needs #581's packs: an overlay
+  slice of a galaxy with AreaMoveSphere).
+- TripodBoss's marker stopped at its break (fix/tripod-marker-break, 2026-11-18): #599's tb_marker left the parts'
+  SE_BM_TRIPOD_MARKER playing when the boss broke down with Mario on it (the parts die there in Petari: their sound
+  objects with them). Test: plain -DTB_TEST -DDKJ_TEST -DSE_LOG TriLegLv1Galaxy/1.
 - AnimScaleController on the walkers (feat/521-walker-asc, #521, 2026-11-18): Takobo, Jellyfish, JellyfishElectric,
   Mogu, Petari, KoteBug and Unizo squash and stretch as Petari's mScaleController does (game.c wa_start / wa_update
   over asc_core: startHitReaction, startAnim with startAndAddScaleVelocityY). Test XF="-DASC_KIND=<walker kind>

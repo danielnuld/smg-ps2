@@ -85,6 +85,7 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
     short ml; /* trySetMoveLimitCollision: the MoveLimit part's row + 1 it binds, -1 none, 0 not looked yet */
     V3 mm[8]; /* Meramera (meramera.inc): _144, _174, _180, _198, _18C, mExtinguishMtx (place, up), its binder's fix */
     u8 pushable; /* Karikari mIsPushable */
+    int gattr; short ginst; /* w_bind: its ground face's codes and instance (the binder's ground: isBindedGround*) */
     short host; /* a BossBegoman follower (initWithoutIter: no placement of its own; its row the boss's): the boss's slot + 1;
                  * -1 a Polta's BombTeresa (BombTeresaHolder, polta.inc) */ } Kuribo; /* walking
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
@@ -125,7 +126,7 @@ enum { BI_SHOOT, BI_WAIT, BI_RISE, BI_BOUND };
 static struct { int on, life, nrv, step, gnd, gattr, wall, restart; V3 pos, vel, a4, gn, wn, box, up, target; float rot[16], f0[16], base[16]; const char *clip; } bitm[MAX_BITEMS];
 /* BombBirdBomb (BombBird's mBombs, game.c bbd_*) */
 #define BBD_BOMBS 24 /* mBombs: 3 a bird */
-static struct { int on, nrv, t, owner, bnd; V3 pos, vel, n; float s; } bbd_b[BBD_BOMBS];
+static struct { int on, nrv, t, owner, bnd, gnd, gattr, ginst; V3 pos, vel, n; float s; } bbd_b[BBD_BOMBS]; /* gnd: on the ground, its codes / instance */
 #define MAX_EXTS 4
 static struct { int row, nrv, step, star; V3 last; } exts[MAX_EXTS]; /* star: ExterminationCheckerKuribo (_A0) */
 static int nexts;
@@ -890,6 +891,7 @@ static struct {
     Anim *head;
 } sambos[MAX_SAMBOS];
 static int nsambos;
+static Anim *sambo_heads; /* each head's Anim (game_init: row_table) */
 static int ndrings; /* DashRing (update_drings): -1 found again at the next update */
 static const Model *m_sambohead;
 static int test_cross; /* test builds: X held (Bee Mario) */
@@ -1105,6 +1107,7 @@ static u32 seesaw_se(const char *name);
 static int nseesaws;
 #define MAX_BRIDGES 4
 static int nbridges; /* PhantomShipBridge (update_bridges) */
+static struct { int row, nrv, t; Anim anim; } *bridges; /* (game_init: row_table) */
 static int nfollows;
 #define MAX_FOLLOWS 8
 #define FOLLOW_N 16
@@ -1128,7 +1131,7 @@ static struct {
     VPoint info[VINE_PTS], stalk[VINE_PTS];
     struct { float coord, size, spring, sspeed; V3 pos, side, up, front; float m[16]; } leaf[VINE_LEAVES];
     u32 lv; /* SE_OJ_LV_PLANT_GROW */
-} vines[MAX_VINES];
+} *vines; /* (game_init: row_table) */
 static int nvines, vine_ride = -1, vine_test_sq;
 static int dino_cam; /* its damage camera is on (startDamageCamera .. endDamageCamera) */
 #define FOOT_MAX 32
@@ -1547,6 +1550,7 @@ static int luigi_took(int row);                    /* his star taken out (TakeOu
 static int coach_took(int row);                    /* PenguinCoach: its TakeOutStar over */
 static int race_took(int row);                     /* TeresaRacer / PenguinRacerLeader: its TakeOutStar over (race.inc) */
 static int pg_branch(int k, u32 v), pg_event(int k, u32 v); /* PenguinCoach / PenguinStudent talk */
+static int kino_took(int row), kino_event(int k, u32 v); /* Kinopio's power star mode: its TakeOutStar over, its eventFunc */
 static int luigi_scenario(char *stage, int n);    /* the current stage, its scenario */
 /* Skinned placed models (slice.py SKINNED_OBJ): a pool of poses kept by row across rebinds, the class's "wait" clip
  * (else its first) looping unless its behaviour plays another (obj_play). ponytail: 40 at once (instances and walkers), the rest drawn in
@@ -1850,6 +1854,14 @@ static int count_type(const char *name, int per_row_arg0)
         if (sc->objs[i].type == t)
             n += per_row_arg0 ? (sc->objs[i].arg[0] > 0 ? sc->objs[i].arg[0] : 0) : 1;
     return t < 0 ? 0 : n;
+}
+/* A class's state table from the arena, not the ELF's bss: one entry a row the scene places (at most max), NULL where
+ * it places none (its count stays 0). Only from game_init: what is allocated there lies under main.c's base_mark, so a
+ * zone swap keeps it; a scene change releases the arena and clears the pointer with .gamebss, and game_init runs again */
+static void *row_table(const char *name, int max, u32 size)
+{
+    int n = count_type(name, 0);
+    return n ? mem_alloc(MEM_OBJECTS, (u32)(n < max ? n : max) * size) : NULL;
 }
 
 /* a rail from the PATH chunk: {u16 zone, u16 closed, s32 id, u32 npts, u32 nraw, s32 stop_type, s32 pad, f32
@@ -2747,6 +2759,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     npurple = count_type("PurpleCoin", 0) + count_type("CirclePurpleCoinGroup", 1) + count_type("PurpleRailCoin", 1);
     ngroup_wait = 0; ndone_shown = 0;
     nfats = 0; test_feed = 0; nsambos = 0; ndrings = -1;
+    sambo_heads = row_table("CocoSambo", MAX_SAMBOS, sizeof(Anim));
     for (u32 i = 0; i < s->nobjs; i++) { /* the spin drivers a TicoFat's group brings out */
         const char *tn = s->types + 32 * s->objs[i].type;
         if (strncmp(tn, "SuperSpinDriver", 15) || s->objs[i].group < 0) continue;
@@ -2875,6 +2888,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     norocks = 0;
     nhhps = 0;
     nvines = 0; vine_ride = -1;
+    vines = row_table("Plant", MAX_VINES, sizeof *vines);
     pole_init();
     creeper_init();
     sbp_bva_row = -1;
@@ -2887,6 +2901,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     foot_num = foot_rot = 0;
     nseesaws = 0;
     nbridges = 0;
+    bridges = row_table("PhantomShipBridge", MAX_BRIDGES, sizeof *bridges);
     nfollows = 0;
     nflows = 0;
     kari_cling = 0;
@@ -4895,6 +4910,55 @@ static void coco_hit(Inst *in, V3 dir, float spd, float fall, V3 up)
     row_turn[in->row] = 1; row_step[in->row] = 0;
 }
 
+/* MR::calcVelocityAreaOrRailMoveOnGround (ActorMovementUtil.cpp:1065) for an actor on the ground: attr / inst its
+ * ground face's codes and instance (its binder's). An AreaMove floor (code 28): MR::calcAreaMoveVelocity at its place
+ * (the AreaMoveSphere holding it: its up less the part towards its centre, x arg0 (10); none: zero). A RailMove floor
+ * (27): the direction of its ground's rail nearest it x the rail's path_arg3 (10). what: 1 the area
+ * (calcVelocityAreaMoveOnGround), 3 either. 1 when the floor is one of them.
+ * ponytail: path_arg3 is not in the PATH entries (10) */
+static float rail_nearest(const float *p, int n, V3 q);
+static int area_rail_vel(int attr, int inst, V3 pos, int what, V3 *v)
+{
+    int fc = attr & 0x3F;
+    *v = v3(0, 0, 0);
+    if ((what & 1) && fc == 28) {
+        int a = area_obj("AreaMoveSphere", pos);
+        if (a >= 0) {
+            const Row *r = &sc->objs[a];
+            V3 x, z;
+            row_axes(r, &x, &z);
+            V3 up = vcross(z, x), radial = vsub(row_pos(r), pos);
+            radial = vlen(radial) > 1e-6f ? vnorm(radial) : v3(0, 0, 0);
+            up = vsub(up, vmul(radial, vdot(up, radial)));
+            up = vlen(up) > 1e-6f ? vnorm(up) : v3(0, 0, 0);
+            *v = vmul(up, r->arg[0] == -1 ? 10.0f : (float)r->arg[0]);
+        }
+        return 1;
+    }
+    if ((what & 2) && fc == 27 && inst >= 0 && inst < ninsts && insts[inst].row >= 0) {
+        const Row *r = &sc->objs[insts[inst].row];
+        const unsigned char *e = scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
+        if (e) { /* calcNearestRailDirection */
+            const float *pts = (const float *)(e + 24);
+            u32 np = *(const u32 *)(e + 8);
+            float c = rail_nearest(pts, (int)np, pos);
+            V3 d = vsub(rail_at(pts, np, c + 10.0f), rail_at(pts, np, c));
+            if (vlen(d) < 1e-3f) d = vsub(rail_at(pts, np, c), rail_at(pts, np, c - 10.0f)); /* (the rail's end) */
+            if (vlen(d) > 1e-6f) *v = vmul(vnorm(d), 10.0f);
+        }
+        return 1;
+    }
+    return 0;
+}
+/* CocoNut _14C / _150: the ones that rolled on an AreaMove floor and the move it gives them (x 0.75, fading x 0.925 a
+ * frame off it) */
+static struct { const Inst *in; V3 v; int on; } coco_am[4];
+static int coco_am_of(const Inst *in, int make)
+{
+    for (int i = 0; i < 4; i++) if (coco_am[i].in == in) return i;
+    for (int i = 0; make && i < 4; i++) if (!coco_am[i].in) { coco_am[i].in = in; coco_am[i].v = v3(0, 0, 0); coco_am[i].on = 0; return i; }
+    return -1;
+}
 /* SE_OJ_COCONUT_BOUND with level A (modifySe_Kawamura: volume (A / 100)^2 x 2, at most 1) */
 static void coco_bound(const Inst *in, int lv)
 {
@@ -4905,6 +4969,8 @@ static void coco_bound(const Inst *in, int lv)
 
 static void update_coconuts(void)
 {
+    static const Scene *seen;
+    if (seen != sc) { seen = sc; memset(coco_am, 0, sizeof coco_am); }
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
@@ -4956,10 +5022,16 @@ static void update_coconuts(void)
                 }
             }
         }
+        int am = coco_am_of(in, 0);
+        if (*ph != 1 || *t == 1) { if (am >= 0) coco_am[am].in = NULL; am = -1; } /* exeMove's first step: _14C false, _150 zero */
         if (*ph == 0) { coco_place(in); continue; }
         /* Move: processMove */
         float spd0 = vlen(vadd(vmul(in->cfront, in->cspd), vmul(up, -in->cfall)));
         V3 vel = vadd(vmul(in->cfront, in->cspd), vmul(up, -in->cfall));
+        if (am >= 0) { /* processMove's end: _150 fading unless on the floor (_14C and in the ground's grace), added to its velocity */
+            if (!(coco_am[am].on && in->cair < 10)) coco_am[am].v = vmul(coco_am[am].v, 0.925f);
+            vel = vadd(vel, coco_am[am].v);
+        }
         V3 gn = up, wn;
         int wall = 0;
         V3 center = vadd(in->head, vel);
@@ -4982,6 +5054,12 @@ static void update_coconuts(void)
                 if (in->lv[0]) se_volpitch(in->lv[0], t1 * t1, t1 * 0.5f + 0.5f);
             }
             in->cspd *= 0.925f;
+            { /* _14C = calcVelocityAreaMoveOnGround, _150 its 0.75 */
+                V3 av;
+                int on = area_rail_vel(ground_attr, ground_inst, in->head, 1, &av);
+                if (on && am < 0) am = coco_am_of(in, 1);
+                if (am >= 0) { coco_am[am].on = on; if (on) coco_am[am].v = vmul(av, 0.75f); }
+            }
             in->cstrong = 0;
         } else if (!ground && in->cair < 10) in->cair++; /* isInGroundGracePeriod: _138++ */
         if (wall && vdot(in->cfront, wn) < 0) { /* reflect off the wall */
@@ -5049,7 +5127,10 @@ static void update_coconuts(void)
         for (int k = 0; k < nlogic && !broken; k++)
             if (logic[k].kind == LOGIC_DEATH && row_shown(logic[k].row) && area_inside(&sc->objs[logic[k].row], in->head)) broken = 1;
         if (broken) { fx_at(FX_COCONUT_COCONUTBREAK, in->head, up); *ph = 2; *t = 0; in->m[12] = 1e9f; continue; } /* hidden until it comes back */
-        if (ground && in->cspd < 1.5f) { /* tryMoveEnd: statusToWait (calcMoveSpeed: the rolling speed) */
+        float amv = am >= 0 ? vlen(coco_am[am].v) : 0.0f;
+        if (ground && !(am >= 0 && coco_am[am].on && in->cair < 10) && (in->cspd > amv ? in->cspd : amv) < 1.5f) { /* tryMoveEnd:
+                                                           * statusToWait (calcMoveSpeed: max(_8C, |_150|); not on the floor) */
+            if (am >= 0) coco_am[am].in = NULL;
             *ph = 0; in->cspd = in->cfall = 0;
             printf("coconut %d stops" "\n", row);
         }
@@ -11908,8 +11989,7 @@ static void update_sambos(void)
             row_axes(r, &x, &z);
             sambos[k].row = in->row; sambos[k].pos = row_pos(r); sambos[k].up = vnorm(vcross(z, x)); sambos[k].front = z;
             sambos[k].s = r->scale[0];
-            static Anim heads[MAX_SAMBOS]; /* not mem_alloc: a zone swap releases what comes after game_init */
-            sambos[k].head = &heads[k]; memset(sambos[k].head, 0, sizeof(Anim));
+            sambos[k].head = &sambo_heads[k]; memset(sambos[k].head, 0, sizeof(Anim));
         }
         typeof(&sambos[0]) q = &sambos[k];
         if (q->nrv == CS_DEAD) continue;
@@ -13218,6 +13298,7 @@ static void update_talkers(void)
             if (in->talkcls == 5) t->branch = butler_branch;
             if (in->talkcls == 12) { t->branch = pg_branch; t->event = pg_event; } /* PenguinCoach / PenguinStudent::init: registerBranchFunc / EventFunc */
             if (in->talkcls == 6) { t->event = luigi_event; t->branch = luigi_branch; } /* LuigiNPC::init: registerBranchFunc / EventFunc */
+            if (in->talkcls == 3 && !strcmp(sc->types + 32 * sc->objs[in->row].type, "Kinopio")) t->event = kino_event; /* Kinopio::init: registerEventFunc */
             if (in->talkcls == 3 && sc->objs[in->row].arg[1] == 2 && !strcmp(sc->types + 32 * sc->objs[in->row].type, "KinopioAstro")) {
                 t->event = kast_event; /* KinopioAstro::init: the messenger's eventFunc */
                 kast_peach = gd_any_left_supply() ? 1 + gd_luigi_left_supply() : 0; /* mPeachLetter made (_194), mIsPlayerLuigi */
@@ -13954,6 +14035,20 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
 #endif
     for (int i = 0; i < ninsts && row < 0; i++)
         if ((TALK_CLS == 9 ? insts[i].dnpc == 3 : insts[i].talkcls == TALK_CLS) && (TALK_CLS == 11 || talk_row_label(insts[i].row, lab)) && TALK_PICK(i)) row = i; /* 9: Rosetta, 11: TicoShop (Common_) */
+#if defined(REACT_TEST) && TALK_CLS == 0 /* XF="-DTALK_CLS=0 -DREACT_TEST": an NPC of npc_reaction's classes placed, the first class of this list with one shown (one ELF for every galaxy) */
+    static const char *const react_cls[] = {"PenguinCoach", "Penguin", "Caretaker", "HoneyBee", "Kinopio", "Rabbit"};
+    float react_h = 60.0f;
+    row = -1; /* (not the loop above's: any talker of class 0) */
+    for (int c = 0; c < 6 && row < 0; c++)
+        for (int i = 0; i < ninsts && row < 0; i++) {
+            if (!row_shown(insts[i].row) || strcmp(sc->types + 32 * sc->objs[insts[i].row].type, react_cls[c])) continue;
+            if (c == 4 && sc->objs[insts[i].row].arg[6] != -1) continue; /* a Kinopio with its body sensor */
+            row = i;
+            if (c == 0) react_h = 300.0f; /* his head sensor */
+        }
+#undef REACT_H
+#define REACT_H react_h
+#endif
     pad_force = 0;
     if (row < 0 && TALK_CLS == 3) { /* the Kinopios wait for their appear switch: on */
         int ty = scene_type(sc, "Kinopio");
@@ -14012,6 +14107,7 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
 #define REACT_H 60.0f /* its body above its place */
 #endif
     if (phase == 1) {
+        if (t % 960 == 1) printf("react test f %d: row %d %s\n", frame, in->row, sc->types + 32 * sc->objs[in->row].type);
         V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), body = vadd(p, vmul(up, REACT_H));
         int c = t % 960;
         test_r2 = 0;
@@ -20744,8 +20840,6 @@ static void m_start_step(Player *m, V3 at) /* startStep, MarioStep::start */
  * a wall (front, side or back) the part into it and along gravity is dropped. tryJump takes the two off his velocity
  * and adds them to the jump (half when against it).
  * ponytail: the rail's speed is its path_arg3 (10 when unset), which the PATH entries do not carry */
-static const unsigned char *find_path(const unsigned char *blob, int zone, int id);
-static float rail_nearest(const float *p, int n, V3 q);
 static V3 m_power_wall(Player *m, V3 v) /* (_8 || _19 || _1A) */
 {
     if (mw.w8 || mw.w19 || mw.w1A) {
@@ -20758,37 +20852,14 @@ static void m_power_moves(Player *m)
 {
     m_v190 = m_v19C = v3(0, 0, 0);
     if (!m->grounded || m->jumping) return;
-    if (m->floor == 28) { /* powerAreaMove: MR::calcAreaMoveVelocity */
-        int a = area_obj("AreaMoveSphere", m->pos);
-        if (a >= 0) {
-            const Row *r = &sc->objs[a];
-            V3 x, z;
-            row_axes(r, &x, &z);
-            V3 up = vcross(z, x), radial = vsub(row_pos(r), m->pos);
-            radial = vlen(radial) > 1e-6f ? vnorm(radial) : v3(0, 0, 0);
-            up = vsub(up, vmul(radial, vdot(up, radial)));
-            up = vlen(up) > 1e-6f ? vnorm(up) : v3(0, 0, 0);
-            m_v190 = m_power_wall(m, vmul(up, r->arg[0] == -1 ? 10.0f : (float)r->arg[0]));
-            m->vel = vadd(m->vel, m_v190); /* addVelocity */
-        }
+    V3 v; /* the area's and the rail's lookups are the enemies' (area_rail_vel) */
+    if (m->floor == 28 && area_rail_vel(m->floor, -1, m->pos, 1, &v)) { /* powerAreaMove: MR::calcAreaMoveVelocity */
+        m_v190 = m_power_wall(m, v);
+        m->vel = vadd(m->vel, m_v190); /* addVelocity */
     }
-    if (m->floor == 27 && mario_ground >= 0 && insts[mario_ground].row >= 0) { /* powerRailMove: his ground's host */
-        const Row *r = &sc->objs[insts[mario_ground].row];
-        const unsigned char *e = scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
-        if (e) {
-            const float *pts = (const float *)(e + 24);
-            u32 np = *(const u32 *)(e + 8);
-            float c = rail_nearest(pts, (int)np, m->pos); /* calcNearestRailDirection */
-            V3 d = vsub(rail_at(pts, np, c + 10.0f), rail_at(pts, np, c));
-            if (vlen(d) < 1e-3f) d = vsub(rail_at(pts, np, c), rail_at(pts, np, c - 10.0f)); /* (the rail's end) */
-            d = vlen(d) > 1e-6f ? vnorm(d) : v3(0, 0, 0);
-            if (mw.w8 || mw.w19 || mw.w1A) { /* (the direction, before its speed) */
-                V3 n = m_wall_norm(m);
-                if (vdot(n, d) < 0.0f) { d = vsub(d, vmul(n, vdot(d, n))); d = vtangent(d, m->up); }
-            }
-            m_v19C = vmul(d, 10.0f);
-            m->vel = vadd(m->vel, m_v19C);
-        }
+    if (m->floor == 27 && area_rail_vel(m->floor, mario_ground, m->pos, 2, &v)) { /* powerRailMove: his ground's host */
+        m_v19C = m_power_wall(m, v); /* (the wall takes its part of the direction; x 10 after: the same) */
+        m->vel = vadd(m->vel, m_v19C);
     }
 }
 static void m_check_step(Player *m) /* checkStep */
@@ -24683,6 +24754,7 @@ static void w_bind(Kuribo *k, float r)
     k->on_ground = collide_n(&c, up, r, &gn, &wn, &wall);
     coll_binder = 0;
     kcl_ml = -1;
+    if (k->on_ground) { k->gattr = ground_attr; k->ginst = (short)ground_inst; }
     k->gn = k->on_ground ? gn : up;
     k->on_wall = wall ? 2 : 0; k->wn = wn;
     k->pos = vsub(c, vmul(up, r));
@@ -25630,7 +25702,7 @@ static struct {
     float leaf_m[16];
     CrPoint p[CR_PTS];
     u32 lvu, lvd, upse;
-} creepers[MAX_CREEPERS];
+} *creepers; /* (creeper_init: row_table) */
 static int ncreepers, creeper_ride = -1, creeper_test_sq;
 static Anim *cr_leaf_anim;
 #define CR_G v3(0, -1, 0)
@@ -25675,6 +25747,7 @@ static void cr_bend_point(CrPoint *p, const CrPoint *prev, int bend, V3 dir, flo
 static void creeper_init(void)
 {
     ncreepers = 0; creeper_ride = -1; cr_leaf_anim = NULL;
+    creepers = row_table("Creeper", MAX_CREEPERS, sizeof *creepers);
     int ty = scene_type(sc, "Creeper");
     for (u32 i = 0; ty >= 0 && i < sc->nobjs && ncreepers < MAX_CREEPERS; i++) {
         const Row *r = &sc->objs[i];
@@ -26516,8 +26589,9 @@ static void kuribo_update(Kuribo *k)
     }
     k->step++;
     k->act_t += k->act_rate;
-    /* control(): blendQuatFromGroundAndFront 0.05 / 0.5; tryDead */
+    /* control(): blendQuatFromGroundAndFront 0.05 / 0.5; the AreaMove / RailMove floor's 0.05 (addVelocity); tryDead */
     w_blend_quat(k, w_up_ref(k), k->front, 0.05f, 0.5f);
+    { V3 av; if (k->on_ground && area_rail_vel(k->gattr, k->ginst, k->pos, 3, &av)) k->vel = vadd(k->vel, vmul(av, 0.05f)); }
     float depth;
     if (kn_in(k, KNB(KN_WANDER) | KNB(KN_FINDPLAYER) | KNB(KN_CHASE) | KNB(KN_STAGGER) | KNB(KN_NONACTIVE) | KNB(KN_ATTACKSUCCESS)) &&
         (in_death(k->pos) || in_water(k->pos, vmul(k->grav, -1.0f), &depth))) { k->item = 0; w_kill(k); return; }
@@ -28754,10 +28828,11 @@ static float w_rail_nearest(const float *p, u32 n, V3 q) /* moveCoordToNearestPo
  * swooning, a trample or hip drop: Trample (DownStep, at 36 a coin 100 up: dead); a spin or a kick: Blow
  * (SpinHitController 25 / 20 / 4, 1.5, 30 / 40, three star pieces). A SinkDeath floor: SinkDown (dead at its end).
  * The bomb: Hold (Normal), then Wait 150 (Signal): gravity 1.2, rebounds 0.4 above 5 (SE_EM_BOMBBIRDBOMB_LAND from
- * 5.5); touching Mario it explodes on him; then Explosion (its sensor eased out to 280 in 10, killed after 20; a strong
+ * 5.5; on an AreaMove / RailMove floor it takes the floor's move instead: SE_EM_BOMBBIRDBOMB_LAND_SAND); swooning the
+ * bird is carried by such a floor too (area_rail_vel); touching Mario it explodes on him; then Explosion (its sensor eased out to 280 in 10, killed after 20; a strong
  * rumble / camera shake by distance 800 / 1200 / 2000). ponytail: no star pointer bind (WalkerStateBindStarPointer),
- * no press between roof and ground (isPressedRoofAndGround: the walker binder keeps no roof nor its press sensor), no
- * shifting sand (calcVelocityAreaOrRailMoveOnGround), the ground under it a line probe (bb_ground), the bomb's BRKs
+ * no press between roof and ground (isPressedRoofAndGround: the walker binder keeps no roof nor its press sensor),
+ * the ground under it a line probe (bb_ground), the bomb's BRKs
  * (Normal / Signal: BRKs are baked) and its turning quaternion (_9C stays zero) */
 enum { BD_FLY, BD_SEARCH, BD_ATTACK, BD_BLOW, BD_ESCAPE, BD_DAMAGE, BD_FALL, BD_SWOONSTART, BD_SWOON, BD_SWOONEND, BD_TRAMPLE, BD_SINKDOWN };
 enum { BDB_HOLD, BDB_WAIT, BDB_EXPLOSION };
@@ -28932,6 +29007,10 @@ static void bbd_update(Kuribo *k)
         if (k->nrv == BD_SINKDOWN) { w_se_lv(k, SE_EM_LV_SINK); k->lv2[0] = se_level(SE_EV_LV_BOMBBIRD_SINK, &k->pos.x, k->lv2[0]); }
         if (k->nrv != BD_SINKDOWN && w_on_ground(k)) k->vel = vtangent(k->vel, vnorm(k->grav)); /* vecKillElement(mVelocity, mGravity) */
         bbd_ground_move(k, 0.8f); /* hOnGroundParam */
+        if (k->nrv == BD_SWOONSTART || k->nrv == BD_SWOON || k->nrv == BD_SWOONEND) { /* shifting sand: hShiftingSandVel 1 */
+            V3 av;
+            if (k->on_ground && area_rail_vel(k->gattr, k->ginst, k->pos, 3, &av)) k->vel = av;
+        }
         if (k->nrv == BD_SWOONSTART && w_bck_stopped(k)) w_nrv(k, BD_SWOON);
         else if (k->nrv == BD_SWOON && st > 240) w_nrv(k, BD_SWOONEND); /* hSwoonTime */
         else if (k->nrv == BD_SWOONEND) {
@@ -28992,8 +29071,11 @@ static void update_bbd_bombs(void)
         if (b->nrv == BDB_HOLD) { b->vel = v3(0, 0, 0); continue; } /* exeHold: the bird places it */
         if (b->nrv == BDB_WAIT) {
             float dn = vdot(g, b->vel);
+            V3 av;
+            int sand = b->gnd && area_rail_vel(b->gattr, b->ginst, b->pos, 3, &av); /* calcVelocityAreaOrRailMoveOnGround */
+            if (sand) { b->vel = av; if (dn >= 5.5f) se_start(SE_EM_BOMBBIRDBOMB_LAND_SAND, &b->pos.x); } /* sGroundFric 1 */
             b->vel = vadd(b->vel, vmul(g, 1.2f)); /* addVelocityToGravity(sGravityAccel) */
-            if (b->bnd) { /* reboundVelocityFromCollision(sReboundRate 0.4, sReboundSpeedMin 5, 1) */
+            if (b->bnd && !sand) { /* reboundVelocityFromCollision(sReboundRate 0.4, sReboundSpeedMin 5, 1) */
                 float f = vdot(b->n, b->vel);
                 if (f < -5.0f) { b->vel = vsub(b->vel, vmul(b->n, f * 1.4f)); if (dn >= 5.5f) se_start(SE_EM_BOMBBIRDBOMB_LAND, &b->pos.x); }
                 else if (f < 0.0f) b->vel = vsub(b->vel, vmul(b->n, f));
@@ -29028,6 +29110,7 @@ static void update_bbd_bombs(void)
         int wall = 0;
         int ground = collide_n(&c, vmul(g, -1.0f), 60.0f, &gn, &wn, &wall);
         b->bnd = ground || wall; b->n = ground ? gn : wn;
+        b->gnd = ground; if (ground) { b->gattr = ground_attr; b->ginst = ground_inst; }
         b->pos = c;
         if (b->on && b->nrv != BDB_HOLD) { float m[16]; basis_matrix(m, b->pos, vmul(g, -1.0f), v3(0, 0, 1), 0); fx_named("BombBirdBomb", "LocusSmoke", m, NULL, b); } /* start: emitEffect LocusSmoke (kill: deleteEffect) */
     }
@@ -34570,12 +34653,20 @@ static int w_zone_ground(const Kuribo *k)
  * (AnimScaleController's defaults). A death area, water: kill; a SinkDeath floor: SinkDown (its clip, the sink level
  * SEs, no shadow) then kill. kill: Death, EXPLODE_S, SW_DEAD (walker_inhale).
  * ponytail: no star pointer bind (WalkerStateBindStarPointer: the 2P pointer), no move limit
- * collision, no velocity areas / rail-moving ground, no danger floor codes in the fall check */
+ * collision, no danger floor codes in the fall check. On an AreaMove / RailMove floor it is carried (area_rail_vel) */
 enum { KR_FIXWAIT, KR_WAIT, KR_SPWAIT, KR_WALK, KR_TURN, KR_WALKRAIL, KR_SEARCH, KR_PURSUE, KR_BROKEN, KR_STEPBROKEN,
        KR_RECOVER, KR_HITREACTION, KR_SPHIT, KR_DEATH, KR_SINKDOWN };
 static const float kr_asc[7] = {0.2f, 0.91f, 0.2f, 1.8f, 0.06f, 0.12f, 0.91f}; /* AnimScaleParam's defaults (AnimScaleController(0)) */
 static void walker_inhale(Kuribo *e);
 static int kr_broken(const Kuribo *k) { return k->nrv == KR_BROKEN || k->nrv == KR_STEPBROKEN || k->nrv == KR_RECOVER || k->nrv == KR_DEATH; }
+static void w_add_vel_limit(Kuribo *k, V3 v) /* MR::addVelocityLimit: up to |v| along it */
+{
+    float l = vlen(v);
+    if (l < 1e-6f) return;
+    V3 d = vmul(v, 1.0f / l);
+    float f = vdot(d, k->vel);
+    if (l > f) k->vel = vadd(k->vel, vmul(d, l - f));
+}
 /* moveAndTurnToDirection (ActorMovementUtil.cpp:1203): its front turned deg on gravity's plane and onto the ground,
  * accel along it, x friction, rebound, then gravity (or into the ground) */
 static void kr_move(Kuribo *k, V3 dir, float accel, float grav, float fric, float deg)
@@ -34703,8 +34794,12 @@ static void karon_update(Kuribo *k, V3 to, float d)
         break;
     case KR_BROKEN: case KR_STEPBROKEN:
         if (st == 0) { w_act(k, k->nrv == KR_BROKEN ? "SpinBreak" : "StepBreak"); w_se(k, SE_EM_KARON_BROKEN); w_se(k, SE_EV_KARON_DAMAGE); }
-        if (k->on_ground) k->vel = vmul(k->gn, vdot(k->gn, k->vel)); /* the velocity along its ground's normal only */
-        else k->vel = vadd(vmul(k->grav, vdot(k->grav, k->vel)), vmul(k->grav, 1.0f)); /* forceBindOnGround(1, 0.8) */
+        {
+            V3 av; /* carried by an AreaMove / RailMove floor (addVelocityLimit, hNoMoveNoTurnParam) */
+            if (k->on_ground && area_rail_vel(k->gattr, k->ginst, k->pos, 3, &av)) { w_add_vel_limit(k, av); kr_to_player(k, 0.0f, 1.2f, 0.8f, 0.0f); }
+            else if (k->on_ground) k->vel = vmul(k->gn, vdot(k->gn, k->vel)); /* the velocity along its ground's normal only */
+            else k->vel = vadd(vmul(k->grav, vdot(k->grav, k->vel)), vmul(k->grav, 1.0f)); /* forceBindOnGround(1, 0.8) */
+        }
         if (st > 300) w_nrv(k, KR_RECOVER);
         break;
     case KR_RECOVER:
@@ -34739,6 +34834,10 @@ static void karon_update(Kuribo *k, V3 to, float d)
 #endif
     k->step++;
     k->act_t += k->act_rate;
+    if (k->nrv != KR_STEPBROKEN && k->nrv != KR_BROKEN) { /* control: the AreaMove / RailMove floor's move (addVelocityLimit) */
+        V3 av;
+        if (k->on_ground && area_rail_vel(k->gattr, k->ginst, k->pos, 3, &av)) w_add_vel_limit(k, av);
+    }
     w_bind(k, 70.0f);
     k->qy = vmul(k->grav, -1.0f);
     k->qz = vlen(vtangent(k->front, k->qy)) > 1e-6f ? vnorm(vtangent(k->front, k->qy)) : k->qz; /* LiveActor::calcAndSetBaseMtx */
@@ -37993,7 +38092,6 @@ static Quat q_lerp(Quat a, Quat b, float t) /* JMAQuatLerp (the nearer of b and 
  * collision follows the Move joint (joint 1); the body's stays. Not a NutShipFleetBridge: its FALL_BRIDGE sounds; the
  * riddle SE plays even with Mario dead. Each its own Anim (a LiveActor's model), not the pose pool's: the Move
  * collision needs its pose wherever the camera is */
-static struct { int row, nrv, t; Anim anim; } bridges[MAX_BRIDGES];
 enum { BR_WAIT, BR_MOVEA, BR_MOVEB };
 static void update_bridges(void)
 {
@@ -44496,7 +44594,7 @@ static V3 star_pos(const Inst *in, int *state)
             *state = row_dead[w - 1];
             return vadd(from, v3(0.0f, 100.0f, 0.0f));
         }
-        if ((!row_dead[w - 1] && !st_star_out(w - 1) && !tbox_star_out(w - 1) && !flip_star_out(w - 1) && !coach_took(w - 1) && !race_took(w - 1) && !sy_took(w - 1)) || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
+        if ((!row_dead[w - 1] && !st_star_out(w - 1) && !tbox_star_out(w - 1) && !flip_star_out(w - 1) && !coach_took(w - 1) && !kino_took(w - 1) && !race_took(w - 1) && !sy_took(w - 1)) || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
                                                                                                        * here: no star) */
     } else if (got_coins < 100 && got_purple < 100) { /* ScenePlayingResult: 100 coins, or 100 purple coins */
         *state = 0;
@@ -48074,6 +48172,53 @@ static int coach_takeout(Inst *in) /* 1 while its TakeOutStar runs (exeAnim) */
     if (g->st > 1 && in->anim && in->anim->done) { tos_kill(); g->i = 1; g->n = 0; sw_changed = 1; printf("penguin coach row %d: its star out%c", in->row, 10); }
     return 1;
 }
+/* Kinopio's Escape nerve and its power star mode (Kinopio.cpp). Escape (:204-222, :418-430): a Kinopio that reads an
+ * appear switch, mBehavior (arg2) not 4 and mAppearBehavior (arg4) 0, starts in it when it appears: its Escape action
+ * once, SE_SV_KINOPIO_PUHA and SE_SM_NPC_FLY_OUT, then its nerve below. mIsSpawnPowerStarMode (mBehavior 8): StarWait
+ * (:450-456) is Wait plus MBGM_KINOPIO_TANKEN_B at its first talk (_185); its eventFunc (:660-673, any value) the
+ * TakeOutStar (NPCUtil.cpp:645-698: its TakeOutStar action and the star model's, the star's level SE past
+ * sStarAppearSeStep 103, the star out at the action's end), then startLastStageBGM unless in FishTunnelGalaxy.
+ * GapSt: n 1 Escape, 2 its wait, 3 TakeOutStar; i its star out; f _185.
+ * ponytail: the Appear nerve (mAppearBehavior not 0: its Change action falling to the ground, :392-416) not ported:
+ * the NPCs here have no binder */
+static int kino_star(const Row *r) { return r->arg[2] == 8; }
+static int kino_took(int row) { return !strcmp(sc->types + 32 * sc->objs[row].type, "Kinopio") && kino_star(&sc->objs[row]) && gap_st(row)->i; }
+static int kino_event(int k, u32 v)
+{
+    int row = talkers[k].row;
+    (void)v;
+    if (row < 0 || !kino_star(&sc->objs[row])) return 1;
+    GapSt *g = gap_st(row);
+    if (g->i == 1) { g->i = 2; if (!on_stage("FishTunnelGalaxy")) bgm_return(); } /* takeOut() over */
+    if (g->i) return 1;
+    if (g->n != 3) { g->n = 3; g->st = 0; printf("kinopio row %d: TakeOutStar%c", row, 10); }
+    return 0;
+}
+static int kinopio_nerve(Inst *in, int talking) /* 1 while Escape / TakeOutStar hold it */
+{
+    const Row *r = &sc->objs[in->row];
+    GapSt *g = gap_st(in->row);
+    if (!g->n) g->n = r->sw[SW_APPEAR] >= 0 && r->arg[2] != 4 && r->arg[4] == 0 ? 1 : 2, g->st = 0;
+    if (g->n == 1) { /* exeEscape */
+        if (!g->st++) {
+            obj_play(in, "escape", 0, 0);
+            se_start(SE_SV_KINOPIO_PUHA, &in->m[12]); se_start(SE_SM_NPC_FLY_OUT, &in->m[12]);
+            printf("kinopio row %d: Escape%c", in->row, 10);
+        } else if (!in->anim || in->anim->done) g->n = 2; /* isAnyAnimOneTimeAndStopped: popNerve */
+        return g->n == 1;
+    }
+    if (g->n == 3) { /* TakeOutStar::exeAnim */
+        if (!g->st++) { obj_play(in, "takeoutstar", 0, 0); tos_appear(in->row, "TakeOutStar"); }
+        if (g->st > 104) {
+            V3 c = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(in->nu, 200.0f));
+            in->lv[0] = se_level(in_water(c, in->nu, NULL) ? SE_OJ_LV_POW_STAR_EXIST_W : SE_OJ_LV_POW_STAR_EXIST, &c.x, in->lv[0]);
+        }
+        if (g->st > 1 && in->anim && in->anim->done) { tos_kill(); g->i = 1; g->n = 2; sw_changed = 1; printf("kinopio row %d: its star out%c", in->row, 10); }
+        return g->n == 3;
+    }
+    if (kino_star(r) && talking && g->f == 0.0f) { g->f = 1.0f; bgm_start("MBGM_KINOPIO_TANKEN_B"); } /* exeStarWait */
+    return 0;
+}
 static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction / tryStartTurnAction */
 {
     FOR_KIND(i, npc) {
@@ -48089,6 +48234,7 @@ static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction /
         float d = vlen(to);
         to = d > 1e-6f ? vmul(to, 1.0f / d) : in->nf;
         int talking = td.st >= 0 && talkers[td.st].row == in->row && (td.nrv == TD_TALK || td.nrv == TD_SLCT || td.nrv == TD_NEXT);
+        if (in->talkcls == 3 && !strcmp(sc->types + 32 * sc->objs[in->row].type, "Kinopio") && kinopio_nerve(in, talking)) continue; /* Escape, TakeOutStar */
         NpcTurn mt;
         npc_mode(t, &sc->objs[in->row], &mt);
         t = &mt;
@@ -52486,9 +52632,22 @@ static void ro_update(void)
     case RO_FADE:
         if (st == 90) { gw.halo_on = 0; gw.ro_nrv = RO_DEMO; gw.ro_step = -1; gw_demo(GP_SPIN1); }
         break;
-    case RO_DEMO:
+    case RO_DEMO: {
         if (gw_first(GP_SPIN6)) gw.dome_on = 2; /* deleteEffect Light */
+        /* RosettaDemoHeavensDoor1::exeDemo's sounds (RosettaDemoHeavensDoor.cpp:115-144): her swing in デモ3, the
+         * Luma's wait through 会話1 .. 4 and デモ1 .. 5 (GP_SPIN1 .. GP_SPINT4 in the sheet's order) and デモ6's
+         * first sRosettaHideFrame 10 steps, then her hide */
+        static u32 lw, lh;
+        Inst *in = gw_inst(gw.rosetta);
+        const float *at = in ? &in->m[12] : &sc->objs[gw.rosetta].pos[0];
+        int s3 = gw_step(GP_SPIN3), s6 = gw_step(GP_SPIN6), wait = s6 >= 0 && s6 < 10;
+        if (s3 == 70) se_start(SE_SV_ROSETTA_SWING, at);    /* sRosettaSwingVoiceFrame */
+        if (s3 == 80) se_start(SE_SM_ROSETTA_OP_SWING, at); /* sRosettaSwingFrame */
+        for (int p = GP_SPIN1; p <= GP_SPINT4 && !wait; p++) wait = gw_part_on(p);
+        if (wait) lw = se_level(SE_SM_LV_TICO_OP_WAIT, at, lw);
+        if (s6 >= 10) lh = se_level(SE_SM_LV_ROSETTA_OP_HIDE, at, lh);
         break;
+    }
     }
 }
 
@@ -52658,6 +52817,21 @@ static void gw_update(void)
     ro_update();
     if (gw.baby >= 0 && gw_step(GP_SPIN4) == 10) bgm_sub("BGM_STAR_POW_GET"); /* sFanfareFrame */
     if (gw.baby >= 0 && gw_first(GP_SPIN5)) { printf("gateway: the spin explained (explainEnableToSpin)\n"); io_entry(IO_SPIN); } /* TicoDemoGetPower::exeDemo */
+    if (gw.baby >= 0 && (gw_part_on(GP_SPIN3) || gw_part_on(GP_SPIN4))) { /* TicoDemoGetPower::exeDemo's sounds (TicoDemoGetPower.cpp:48-88) */
+        static u32 lw;
+        Inst *in = gw_inst(gw.baby);
+        const float *at = in ? &in->m[12] : &sc->objs[gw.baby].pos[0];
+        int s3 = gw_step(GP_SPIN3), s4 = gw_step(GP_SPIN4);
+        if (s3 == 110) se_start(SE_SM_TICO_OP_APPEAR, at);     /* sTicoAppearFrame */
+        if (s3 == 140) se_start(SE_SM_TICO_OP_APPEAR_END, at); /* sTicoAppearEndFrame */
+        if (s3 == 180) se_start(SE_SV_TICO_OP_APPEAR, at);     /* sTicoAppearVoiceFrame */
+        if (s4 >= 0 && s4 <= 65) lw = se_level(SE_SM_LV_TICO_WAIT, at, lw); /* sWaitSeStopFrame */
+        if (s4 == 72) se_start(SE_SM_TICO_FLASH_SPIN, at);     /* sFlashSpinSeFrame */
+        if (s4 == 170) se_start(SE_SM_TICO_FLASH_LIGHT, at);   /* sFlashLightSeFrame */
+        if (s4 == 255) se_start(SE_SM_TICO_FUSION, at);        /* sFusionSeFrame */
+        if (s4 == 420) mario_se(SE_PV_POWER_STAR_GET);         /* sMarioJumpFrame */
+        if (s3 == 110 || s4 == 72 || s4 == 255) printf("gateway: baby Luma's demo sound, デモ3 %d デモ4 %d\n", s3, s4);
+    }
 }
 
 /* RosettaDemoHeavensDoor1's parts: the light dome (at her Center joint, -13 down, -30 back) while she is out, the
