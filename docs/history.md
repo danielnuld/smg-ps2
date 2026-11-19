@@ -11,6 +11,17 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Per-class tables out of bss, 2 (perf/tables-arena-2, #657, 2026-11-18; the rule: the note of #630 below):
+  SpiderThread's `sth.pt` / `.mp` / `.part` (117 KB; sth_init, from game_init's spider_thread_scene with a TombSpider
+  placed; the small header and the hang table stay in bss, so `sth.on` reads as before), the ring Syati's `sy_rings`
+  (121 KB; `sy_alloc`: a scene with a Syati, the rings' loops skip a NULL table as five dead rings, a TalkSyati has
+  none), the Flags' `st_flags` / `st_flag_pts` (113 KB; `st_flag_alloc`: a StFlag and 100 points a placed Flag, the old
+  maxima on top) and draw_oceanspheres' `keep` (72 KB; `os_keep`, os_init with a sphere placed). sy_init and
+  st_flag_init wait for the first update (the zones' models), where an allocation would go with the next zone swap:
+  their `*_alloc` are called from game_init. memcheck: 434048 B of bss gone (_end 12065664, 124032 B before the region loses a step, the region 19200 KB); route EggStarGalaxy/1 f 4281. Arena at boot: StarDustGalaxy/3
+  (`SpiderThread: ... 1101 points`) 3526 KB, OceanRingGalaxy/1 (Syati 8 rings, Flags) 3090 KB, KoopaBattleVs3Galaxy/1
+  (OceanSphere, FlagKoopaCastle) 4615 KB of 5376 KB. Not driven in PCSX2: the web's battle, a ring pass, the flags
+  seen (boots and the "mem:" lines only).
 - WaterRoad (feat/567-water-road, #567, 2026-11-18): Map/WaterRoad.cpp in `engine/src/water_road.inc` (wrd_*): the
   tube of water of OceanRingGalaxy (one placement; its demo ウォーターロード出現デモ[ブッシュポンプ], sheet
   WaterRoadAppear, starts on SW 1003, the ValveSwitch of scenarios 3 and 6). A demo cast, dead until the sheet's
