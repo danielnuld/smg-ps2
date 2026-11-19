@@ -11,6 +11,20 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- ViewGroupCtrlCube (feat/718-view-group, #718, 2026-11-19, agent areas2): the last placed manager of
+  AreaObjContainer's table the engine did not read (624 cubes in 97 stage archives; 9365 rows carry a ViewGroupId:
+  coins, star pieces, enemies, NPCs, map parts; no planet does). Pack format: a new chunk **VGRP** in scene.bin
+  (u32 n, n x {u16 row, s16 ViewGroupId; bit 14 a planetobjinfo row}), and the cubes' rows through slice.py LOGIC; a
+  pack without the chunk (every pack before this repack) has no groups and plays as before (vg_init). `vg_update`
+  (ViewGroupCtrl::update, keep_effects): each cube holding Mario turns its group (arg0) on: _0 in view, arg1 1 / 2 /
+  3 the LodCtrl's high / middle / low model forced, arg1 4 not in view and hidden. `vg_of(row)`: obj_clipped and
+  the walkers' ClippingJudge call take far level 0 (no far clipping) for a row whose group is in view
+  (ClippingActorInfo::isJudgedToClip); `vg_hidden`: an instance of a hidden group is not drawn when its class has
+  a LodCtrl (LodCtrl::hideAllModel): the NPCs (clipcls 1), BeeFlowerHover, planets. ponytail: the port has no
+  LodCtrl, so the forced high / middle / low models do nothing and the other LodCtrl holders (UFOBase,
+  LavaStrangeRock, MapObjActor's planet LOD...) are not hidden; far level 0 reaches only what the port clips by
+  ClippingJudge (NPCs, walkers, SuperSpinDrivers: the rest is drawn by the port's own distances). Test: route with
+  `XF="-DVG_TEST -DPACKS_OVERLAY=<overlay>"` ("view groups: n on id:flags" when the count changes).
 - CollisionArea (feat/638-areas-named-nowhere, #656, 2026-11-18, agent areas2): 163 placed in 29 stage archives (20
   galaxies), its rows were not in the packs. `update_collision_areas` (CollisionArea::movement, keep_effects) and
   `col_area_hit` (hitCheck): Mario's centre against the centre origin box by a radius (arg2: 50 in 20 of them, else
