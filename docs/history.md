@@ -11,6 +11,39 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Class audit B, first pass (feat/654-rail-mover, #654 / #664 / #671 / #680, 2026-11-18): `docs/class-audit-b.md` is the
+  table (MapObj N to Z, Map, Ride, Gravity: 174 classes with behaviour, 142 static ones), with what was read line by
+  line and what was only checked by its names. **The rail mover** (game.c update_railers, MapPartsRailMover.cpp): its
+  speed is worked out when Move starts (the start, a point passed, an end left) from its current point, the one it
+  passed last going either way (railer_point: BezierRail::getCurrentCtrlPointIndex), point_arg0 kept where a point
+  sets none (a part came back at the speed of the point ahead); point_arg1 eases to it over that many frames
+  (updateAccel: 54 placements); point_arg7 1 makes point_arg0 the frames to the next point (calcMoveSpeedTime:
+  KoopaVS2's 2D steps); a stop lasts both StopAtPoint nerves (2 x point_arg5 + 2 frames, where it passed the point,
+  not on it); closed rails go round (45 placements rode to the last point and back: QuestionBoxMoveStepB,
+  AsteroidMoveA, KoopaVS2's square steps); restartAtEnd after the end's stop (MoveStopType 2 jumped first, 3 killed
+  first); MoveConditionType 1 waits at each end for Mario to step off and on again (reachedEndPlayerOn);
+  SignMotionType 1: MoveStart's 50 frames of shake; RailInitPosType: the rail's place nearest to the placement
+  (railer_init; the port started every part at its rail's start). Two arena arrays more a scene (row_rstep,
+  row_racc: 6 B a row). slice.py: point_arg7 and path_arg4 folded into the points' arg5 word (rail_arg5),
+  SignMotionType in the map part's packed word (bits 26-28): older packs read as before (no sign, no time, the
+  nearest place). XF=-DRAILER_LOG prints a part's coordinate, speed and nerve bits every 20 frames. Left: the rail
+  rotator (MapPartsRailRotator), the collision shaking with the model in MoveStart, GeneralMapParts' own sign
+  motions. **SpaceMine** turns a degree a frame, rides its rail (22 placements stood still), is blown up by a star
+  piece shot, by invincible Mario and (arg1 set) by the ground, and pushes Mario when he does not take its attack;
+  **NeedlePlant** shaken by a shot, killed by invincible Mario; **PomponPlant** swung by a shot;
+  **QuarterRollGravityRoomArrow** (statics.inc st_qrarrow) was drawn still: its RollGravityA / B (Reverse) clips on
+  SW_A / SW_B (slice.py SKINNED_OBJ); **StarPieceFlow** rides its closed rail's last part (all 28 are closed: the
+  pieces jumped from the last point to the first); **SpiderCoin**'s Touch (it turns), rub and TouchAndApart (the
+  pointer back on it within 30 frames) free the coin, not only A; a hip drop that lands on a **PunchBox** breaks it
+  (_8C is set by Mario's ACTMES_FLOOR_TOUCH: the port said never); **SimpleBreakableObj**: nothing while its SW_A is
+  off (SandUpDownTowerBreakableWallB), IcicleRock and the walls not broken by a hip drop. Run in PCSX2
+  (XF=-DRAILER_LOG): PhantomGalaxy 1 (three AsteroidMoveA apart on their closed rail), IceVolcanoGalaxy 1 (the
+  IceLavaIsland steps: stops of 62 frames, the ends), BattleShipGalaxy 1 (UFOStrongA's ease 0 to 1, a closed rail).
+  Not run in PCSX2: the mines' rails and shots, the arrow, the flows, SpiderCoin, the hip drop on a PunchBox, the
+  packs' new bits (D:/smg-ps2-wt/unverified-2026-11-18.md). Issues written: #665 SandUpDownEffectObj, #666 SnowMan, #667
+  SandCapsulePressGround, #668 Tsukidashikun's clips, #669 effects never spelled, #672 StarPieceGroup's time limit and
+  switches, #677 CoinGroup's time limit, #680 PunchBox's other attacks, #681 WaterLeakPipe's Freeze, #683 the chip
+  treasure boxes, #684 the Ride classes' marks.
 - CollisionArea (feat/638-areas-named-nowhere, #656, 2026-11-18, agent areas2): 163 placed in 29 stage archives (20
   galaxies), its rows were not in the packs. `update_collision_areas` (CollisionArea::movement, keep_effects) and
   `col_area_hit` (hitCheck): Mario's centre against the centre origin box by a radius (arg2: 50 in 20 of them, else
