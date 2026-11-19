@@ -11,6 +11,25 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Trick rabbits (feat/632-trick-rabbits, #632, 2026-11-18): TrickRabbitFreeRun (ReverseKingdomGalaxy 1) and
+  TrickRabbit (CosmosGardenGalaxy 1) had no gameplay (a still model, the star out from the start). engine/src/trick.inc,
+  on the Gateway rabbits' kit (GwRabbit, rr_state = WalkerStateRunaway, RunawayRabbit's WalkerStateBlowDamage):
+  RabbitStateWaitStart (Wait / SmallTurn / HitReaction / Trample / Spin / Pointing / Talk and their sounds) and
+  RabbitStateCaught (the 捕まり demo: Caught, CaughtLand, CaughtEvent; Mario's Catch clips, the PStar model's
+  TrickRabbitLand / Wait) shared; TrickRabbitFreeRun's nerves (WaitStart, the 逃走 demo, RunawayStart with
+  MBGM_GALAXY_02_CHASE, Runaway at 0.7 / 1.5 by Mario's distance, BlowDamage from a star piece, Caught,
+  PowerStarDemo, GiveUp); TrickRabbit's (its rail graph: slice.py rgph_chunk bakes the rail and its Path_ID links
+  as nodes and edges with their point args, chunk RGPH; DemoRunaway / DemoJump along the arg7 -2 edges, Wait,
+  Runaway with selectEdgeRunnaway and the route level, BrakeTurn, JumpStart / Jump on a ParabolicPath, Tumble /
+  FallDown / ComebackRoute, Caught with SE_SY_TOTAL_COMPLETE, WaitPowerStarDemo, GiveUp). Both declare their star
+  (slice.py declare_stars; trk_star_out lets it out 200 over the rabbit) and wait for their zone's collision
+  (w_zone_ground: active from the scene's start they fell through their planet while its zone was loaded low).
+  Left: MultiEventCamera (TrickRabbit's demo camera), SpotMarkLight, foot prints, the ThicketJump effect,
+  isBindedGroundBrake, the blow from other actors; TrickRabbitFreeRunCollect (SnowCapsuleGalaxy: TrickRabbitSnow /
+  TrickRabbitSnowCollect, its clip names are cut at 31 characters by slice.name32) is not ported. Test: plain with
+  XF="-DTRICK_TEST -DPACKS_OVERLAY=<overlay>" on ReverseKingdomGalaxy/1 or CosmosGardenGalaxy/1 (Mario put before
+  the rabbit, A through its talk, a star piece / a drop onto it, then the catch). Seen in PCSX2: TrickRabbitFreeRun end to end (its talk, the demo and the chase BGM, the star piece's BlowDamage, the catch, the power star appear demo with it as declarer, GiveUp). **Release: slice_all.py
+  ReverseKingdomGalaxy, CosmosGardenGalaxy** (the declarers, PStar, RGPH).
 - Mario's miss events (feat/674-miss-events, #674, 2026-11-18): EventAbyss and EventFireDown have their own timelines
   now (PlayerEventAbyss.cpp / PlayerEventFireDown.cpp: the MissLayout at init, the HUD out at 25 / 100, the wipe once
   the layout's Appear is over and 15 frames in, a life at 120), EventDown keeps its own. MarioActorNrvGameOverNonStop

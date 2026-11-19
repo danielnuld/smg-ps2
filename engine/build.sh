@@ -61,6 +61,8 @@
 #   XF=-DTALK_CLS=3: the first Kinopio instead, its appear switch on, Mario put before it)
 #   XF="-DTALK_CLS=3 -DREACT_TEST": no talk, NPCActor's reactions on that talker: a trample, a spin, the pointer, a star piece
 # XF=-DGW_SHOT_TEST (gateway, HeavensDoorGalaxy/1): a star piece at each RunawayRabbit 20 frames into its run (BlowDamage)
+# XF=-DTRICK_TEST (plain, ReverseKingdomGalaxy/1 or CosmosGardenGalaxy/1): Mario put before the trick rabbit, A through its
+#   talk; a star piece at / a drop onto it while it runs, then Mario onto it: the catch, its talk, the star (trick.inc)
 # replay: normal play (60 Hz logic with catch-up) driven by host:replay.bin from the frame Mario is first free
 #   (tools/replay.py from a tools/dolphin timeline: the same inputs as the Dolphin movie) (-DREPLAY)
 # XF=-DBRIDGE_TEST (any mode, EggStar 3): Mario held over the first PhantomShipBridge's lowered plank, its SW_A on at frame 900: MoveA
