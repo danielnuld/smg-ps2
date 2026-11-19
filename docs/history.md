@@ -35,7 +35,8 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   Tests (XF=-DSE_LOG, the `se+` / `se?` lines): `strspider` KoopaJrShipLv1Galaxy/1 (SWING1 plays, SWING2 asked: `se?`,
   not in the pack yet), `begoman` with the BEGO_SPRING recipe of #350 (CLOSE_SPRING 180 frames less the clip into each
   Trample), plain with -DKJ_TEST (the hook shoots Koopa Jr. every 200 frames: `koopajr: reaction`), plain with -DTB_TEST
-  (`tripod boss: warning on`). A sound pack holds the SEs the engine names: the new names are `se?` until their packs
+  -DDKJ_TEST (the demo's talk pressed through: `tripod boss: warning on, 14 markers`, `warning off`, the fight to its star;
+  14 sounds start at once: to be heard once TriLegLv1Galaxy's pack has the SE). A sound pack holds the SEs the engine names: the new names are `se?` until their packs
   are cut again. Not run: BossStinkBug's water sounds (no `bsb` run found a water floor under it). Left:
   BegomanSpringHide's baby (SE_EM_BEGOMAN_LAUNCH_BABY: slice.py has no BegomanBaby for it), BombHei's
   carrying (next PR), HomingKiller's Torpedo sounds (the map objects' list). Repack: sound.py --pack BattleShipGalaxy,
