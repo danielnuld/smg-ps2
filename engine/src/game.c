@@ -1199,8 +1199,8 @@ static struct { V3 pos; float coord; short row, alive, t; } notes[MAX_NOTES]; /*
 static int nnotes;
 static int note_force_row = -1; /* test builds: the fairy taken as switched on */
 #define MAX_WPLANTS 1024 /* WaterPlant (place_waterplants, draw_waterplants) */
-static struct { V3 pos, up, dir; float h; short row, type; } wplants[MAX_WPLANTS];
-static int nwplants;
+static struct { V3 pos, up, dir; float h; short row, type; } *wplants; /* [wplants_cap] (game_init) */
+static int nwplants, wplants_cap;
 typedef struct { int row; V3 pos, front, up, fpos; int freeze, ftime; float rotz; } Killer; /* HomingKiller: its bullet
                                                      * (update_killers): mUp, mFreezePos, mFreezeTime, mRotation.z */
 typedef struct { int first, n; const float *pts; u32 np; float len, step, speed; } Flow; /* StarPieceFlow (update_flows) */
@@ -2014,7 +2014,7 @@ typedef struct { V3 n; float dist; int inst, attr, sub; V3 pos; int prism, flag;
  * Pos); inst -1 an IceStep's (sub its index), prism 0 none (mIdx -1) */
 typedef struct { int inst, sub, prism; const unsigned char *kcl; } Tri;
 static int nlfs, ground_sub, mario_ground_sub; static int lf_mats(const Inst *in, const float (**mats)[16], const int **coll);
-static void update_leaves(void), leaf_joints(Inst *in);
+static void update_leaves(void), leaf_joints(Inst *in), lf_alloc(void);
 static int npls; static void update_palms(void), pl_place(Inst *in);
 static int nlls; static void update_lotus(void), ll_place(Inst *in);
 #define TRAIN_CARS 8
@@ -2029,7 +2029,7 @@ static int insts_cap; static const Model *m_trainbody; static void update_trains
 static void update_kfires(void), kfires_reset(void), update_doors(void), door_place(Inst *in); static int door_solid(const Inst *in);
 static int nsss, ss_ride = -1; static const Model *m_sstrap; static void ss_reset(void); static void update_storms(void), ss_place(Inst *in), draw_storm_traps(void); static int ss_hold(Player *m);
 static const Model *m_fish[6], *m_gull; static int nggs; static void update_gulls(void), draw_gulls(void);
-static int nfgs; static void update_fishes(void), draw_fishes(void);
+static int nfgs; static void update_fishes(void), draw_fishes(void), fg_alloc(void);
 
 /* Sphere against every placed KCL: the sphere goes to the instance's object space (KCL data is in model space),
  * normals and depths come back to world. ponytail: uniform scale only (scale.x), like every planet seen so far. */
@@ -2830,6 +2830,12 @@ void game_init(const Scene *s, const unsigned char *blob)
     nhhps = 0;
     nvines = 0; vine_ride = -1;
     vines = row_table("Plant", MAX_VINES, sizeof *vines);
+    lf_alloc();
+    fg_alloc();
+    wplants_cap = 0; /* place_waterplants: arg0 (16) plants a row, MAX_WPLANTS in all */
+    for (u32 i = 0, t = (u32)scene_type(s, "WaterPlant"); i < s->nobjs; i++) if (s->objs[i].type == t) wplants_cap += s->objs[i].arg[0] > 0 ? s->objs[i].arg[0] : 16;
+    if (wplants_cap > MAX_WPLANTS) wplants_cap = MAX_WPLANTS;
+    wplants = wplants_cap ? mem_alloc(MEM_OBJECTS, (u32)wplants_cap * sizeof *wplants) : NULL;
     pole_init();
     creeper_init();
     sbp_bva_row = -1;
@@ -8475,7 +8481,7 @@ static void place_waterplants(void)
 {
     int t = scene_type(sc, "WaterPlant");
     if (t < 0 || !row_step) return;
-    for (int budget = 2; budget > 0 && nwplants < MAX_WPLANTS;) {
+    for (int budget = 2; budget > 0 && nwplants < wplants_cap;) {
         if (wpc.row < 0) { /* the next row to plant */
             for (u32 i = 0; i < sc->nobjs && i < sizeof wp_done && wpc.row < 0; i++) {
                 const Row *r = &sc->objs[i];
@@ -35005,6 +35011,7 @@ static struct {
     int line[STH_LINES][STH_LINE_PTS], anchor[STH_LINES], cuts[STH_CUTS], rad[STH_PARTS], circ[STH_PARTS];
     SthPt *pt;     /* [STH_PTS] */
     SthMain *mp;   /* [STH_MAINS] */
+    float (*dpos)[3]; u16 *didx; /* sth_draw's vertices [2048] and indices [3 * 2048] */
     SthPart *part; /* [STH_PARTS]: the three from the arena (sth_init: only a scene with the web pays for them) */
     SthHang hang[STH_HANGS];
 } sth;
@@ -35314,6 +35321,8 @@ static void sth_init(V3 pos) /* MR::initSpiderThread: initThread, initMainThread
     sth.pt = mem_alloc(MEM_OBJECTS, STH_PTS * sizeof *sth.pt); /* (from game_init: under main.c's base_mark) */
     sth.mp = mem_alloc(MEM_OBJECTS, STH_MAINS * sizeof *sth.mp);
     sth.part = mem_alloc(MEM_OBJECTS, STH_PARTS * sizeof *sth.part);
+    sth.dpos = mem_alloc(MEM_OBJECTS, 2048 * sizeof *sth.dpos);
+    sth.didx = mem_alloc(MEM_OBJECTS, 3 * 2048 * sizeof *sth.didx);
     sth.on = 1; sth.shoot = -1; sth.cancel = -1; sth.pos = pos; sth.front = v3(0, 0, 1);
     sth.wtgt = sth.wspd = 0.5f; sth.wdir = sth.wind = v3(0, 0, -1); /* SpiderThreadWindCtrl: sWindAccelBattle */
     int c = sth_main_new(pos);
@@ -35473,8 +35482,8 @@ static void update_spider_thread(void) /* SpiderThread::movement */
 static void sth_draw(void) /* SpiderThread::draw: each part's three strips (sendPointsUpper / RightLower / LeftLower) */
 {
     if (!sth.on || !sth.alive) return;
-    static float pos[2048][3];
-    static u16 idx[3 * 2048];
+    float (*pos)[3] = sth.dpos; /* [2048] */
+    u16 *idx = sth.didx;        /* [3 * 2048] */
     static const float ox[3][2] = {{-18, 18}, {18, -15}, {15, -18}}, oy[3][2] = {{3, 3}, {18, -18}, {-18, 18}};
     static const u8 grey[3] = {0x3E, 0x58, 0x65}; /* (sColorMinusX + PlusX) / 2, (PlusX + MinusY) / 2, (MinusY + MinusX) / 2 at 0x80 = 1 */
     const V3 side = v3(0, 0, -1);
@@ -40313,7 +40322,8 @@ static struct {
     V3 pos[LEAVES], tip[LEAVES], rest[LEAVES], up0[LEAVES], ax[LEAVES], ay[LEAVES], az[LEAVES], vel[LEAVES], wacc[LEAVES];
     int wstep[LEAVES], wstart[LEAVES], coll[LEAVES];
     float mat[LEAVES][16];
-} lfs[MAX_LEAFGROUPS];
+} *lfs; /* (game_init: lf_alloc) */
+static void lf_alloc(void) { lfs = row_table("CoconutTreeLeaf", MAX_LEAFGROUPS, sizeof *lfs); }
 static int lf_of(int row)
 {
     for (int i = 0; i < nlfs; i++) if (lfs[i].row == row) return i;
@@ -40481,7 +40491,13 @@ static struct {
     int row, init, n, type; float coord; V3 up;
     V3 pos[FG_FISH], vel[FG_FISH], front[FG_FISH], off[FG_FISH], esc[FG_FISH];
     float dappr[FG_FISH]; int tsearch[FG_FISH], tmove[FG_FISH], nrv[FG_FISH];
-} fgs[MAX_FGROUPS];
+} *fgs; /* (game_init: fg_alloc) */
+static void fg_alloc(void) /* a group a FishGroupA..F row, at most MAX_FGROUPS */
+{
+    int n = 0;
+    for (int i = 0; i < 6; i++) n += count_type((const char *const[]){"FishGroupA", "FishGroupB", "FishGroupC", "FishGroupD", "FishGroupE", "FishGroupF"}[i], 0);
+    fgs = n ? mem_alloc(MEM_OBJECTS, (u32)(n < MAX_FGROUPS ? n : MAX_FGROUPS) * sizeof *fgs) : NULL;
+}
 static void update_fishes(void)
 {
     static const char *const fg[6] = {"FishGroupA", "FishGroupB", "FishGroupC", "FishGroupD", "FishGroupE", "FishGroupF"};
