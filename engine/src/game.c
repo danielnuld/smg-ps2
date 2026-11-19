@@ -85,6 +85,7 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
     short ml; /* trySetMoveLimitCollision: the MoveLimit part's row + 1 it binds, -1 none, 0 not looked yet */
     V3 mm[8]; /* Meramera (meramera.inc): _144, _174, _180, _198, _18C, mExtinguishMtx (place, up), its binder's fix */
     u8 pushable; /* Karikari mIsPushable */
+    int gattr; short ginst; /* w_bind: its ground face's codes and instance (the binder's ground: isBindedGround*) */
     short host; /* a BossBegoman follower (initWithoutIter: no placement of its own; its row the boss's): the boss's slot + 1;
                  * -1 a Polta's BombTeresa (BombTeresaHolder, polta.inc) */ } Kuribo; /* walking
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
@@ -125,7 +126,7 @@ enum { BI_SHOOT, BI_WAIT, BI_RISE, BI_BOUND };
 static struct { int on, life, nrv, step, gnd, gattr, wall, restart; V3 pos, vel, a4, gn, wn, box, up, target; float rot[16], f0[16], base[16]; const char *clip; } bitm[MAX_BITEMS];
 /* BombBirdBomb (BombBird's mBombs, game.c bbd_*) */
 #define BBD_BOMBS 24 /* mBombs: 3 a bird */
-static struct { int on, nrv, t, owner, bnd; V3 pos, vel, n; float s; } bbd_b[BBD_BOMBS];
+static struct { int on, nrv, t, owner, bnd, gnd, gattr, ginst; V3 pos, vel, n; float s; } bbd_b[BBD_BOMBS]; /* gnd: on the ground, its codes / instance */
 #define MAX_EXTS 4
 static struct { int row, nrv, step, star; V3 last; } exts[MAX_EXTS]; /* star: ExterminationCheckerKuribo (_A0) */
 static int nexts;
@@ -4887,6 +4888,55 @@ static void coco_hit(Inst *in, V3 dir, float spd, float fall, V3 up)
     row_turn[in->row] = 1; row_step[in->row] = 0;
 }
 
+/* MR::calcVelocityAreaOrRailMoveOnGround (ActorMovementUtil.cpp:1065) for an actor on the ground: attr / inst its
+ * ground face's codes and instance (its binder's). An AreaMove floor (code 28): MR::calcAreaMoveVelocity at its place
+ * (the AreaMoveSphere holding it: its up less the part towards its centre, x arg0 (10); none: zero). A RailMove floor
+ * (27): the direction of its ground's rail nearest it x the rail's path_arg3 (10). what: 1 the area
+ * (calcVelocityAreaMoveOnGround), 3 either. 1 when the floor is one of them.
+ * ponytail: path_arg3 is not in the PATH entries (10) */
+static float rail_nearest(const float *p, int n, V3 q);
+static int area_rail_vel(int attr, int inst, V3 pos, int what, V3 *v)
+{
+    int fc = attr & 0x3F;
+    *v = v3(0, 0, 0);
+    if ((what & 1) && fc == 28) {
+        int a = area_obj("AreaMoveSphere", pos);
+        if (a >= 0) {
+            const Row *r = &sc->objs[a];
+            V3 x, z;
+            row_axes(r, &x, &z);
+            V3 up = vcross(z, x), radial = vsub(row_pos(r), pos);
+            radial = vlen(radial) > 1e-6f ? vnorm(radial) : v3(0, 0, 0);
+            up = vsub(up, vmul(radial, vdot(up, radial)));
+            up = vlen(up) > 1e-6f ? vnorm(up) : v3(0, 0, 0);
+            *v = vmul(up, r->arg[0] == -1 ? 10.0f : (float)r->arg[0]);
+        }
+        return 1;
+    }
+    if ((what & 2) && fc == 27 && inst >= 0 && inst < ninsts && insts[inst].row >= 0) {
+        const Row *r = &sc->objs[insts[inst].row];
+        const unsigned char *e = scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
+        if (e) { /* calcNearestRailDirection */
+            const float *pts = (const float *)(e + 24);
+            u32 np = *(const u32 *)(e + 8);
+            float c = rail_nearest(pts, (int)np, pos);
+            V3 d = vsub(rail_at(pts, np, c + 10.0f), rail_at(pts, np, c));
+            if (vlen(d) < 1e-3f) d = vsub(rail_at(pts, np, c), rail_at(pts, np, c - 10.0f)); /* (the rail's end) */
+            if (vlen(d) > 1e-6f) *v = vmul(vnorm(d), 10.0f);
+        }
+        return 1;
+    }
+    return 0;
+}
+/* CocoNut _14C / _150: the ones that rolled on an AreaMove floor and the move it gives them (x 0.75, fading x 0.925 a
+ * frame off it) */
+static struct { const Inst *in; V3 v; int on; } coco_am[4];
+static int coco_am_of(const Inst *in, int make)
+{
+    for (int i = 0; i < 4; i++) if (coco_am[i].in == in) return i;
+    for (int i = 0; make && i < 4; i++) if (!coco_am[i].in) { coco_am[i].in = in; coco_am[i].v = v3(0, 0, 0); coco_am[i].on = 0; return i; }
+    return -1;
+}
 /* SE_OJ_COCONUT_BOUND with level A (modifySe_Kawamura: volume (A / 100)^2 x 2, at most 1) */
 static void coco_bound(const Inst *in, int lv)
 {
@@ -4897,6 +4947,8 @@ static void coco_bound(const Inst *in, int lv)
 
 static void update_coconuts(void)
 {
+    static const Scene *seen;
+    if (seen != sc) { seen = sc; memset(coco_am, 0, sizeof coco_am); }
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
@@ -4948,10 +5000,16 @@ static void update_coconuts(void)
                 }
             }
         }
+        int am = coco_am_of(in, 0);
+        if (*ph != 1 || *t == 1) { if (am >= 0) coco_am[am].in = NULL; am = -1; } /* exeMove's first step: _14C false, _150 zero */
         if (*ph == 0) { coco_place(in); continue; }
         /* Move: processMove */
         float spd0 = vlen(vadd(vmul(in->cfront, in->cspd), vmul(up, -in->cfall)));
         V3 vel = vadd(vmul(in->cfront, in->cspd), vmul(up, -in->cfall));
+        if (am >= 0) { /* processMove's end: _150 fading unless on the floor (_14C and in the ground's grace), added to its velocity */
+            if (!(coco_am[am].on && in->cair < 10)) coco_am[am].v = vmul(coco_am[am].v, 0.925f);
+            vel = vadd(vel, coco_am[am].v);
+        }
         V3 gn = up, wn;
         int wall = 0;
         V3 center = vadd(in->head, vel);
@@ -4974,6 +5032,12 @@ static void update_coconuts(void)
                 if (in->lv[0]) se_volpitch(in->lv[0], t1 * t1, t1 * 0.5f + 0.5f);
             }
             in->cspd *= 0.925f;
+            { /* _14C = calcVelocityAreaMoveOnGround, _150 its 0.75 */
+                V3 av;
+                int on = area_rail_vel(ground_attr, ground_inst, in->head, 1, &av);
+                if (on && am < 0) am = coco_am_of(in, 1);
+                if (am >= 0) { coco_am[am].on = on; if (on) coco_am[am].v = vmul(av, 0.75f); }
+            }
             in->cstrong = 0;
         } else if (!ground && in->cair < 10) in->cair++; /* isInGroundGracePeriod: _138++ */
         if (wall && vdot(in->cfront, wn) < 0) { /* reflect off the wall */
@@ -5041,7 +5105,10 @@ static void update_coconuts(void)
         for (int k = 0; k < nlogic && !broken; k++)
             if (logic[k].kind == LOGIC_DEATH && row_shown(logic[k].row) && area_inside(&sc->objs[logic[k].row], in->head)) broken = 1;
         if (broken) { fx_at(FX_COCONUT_COCONUTBREAK, in->head, up); *ph = 2; *t = 0; in->m[12] = 1e9f; continue; } /* hidden until it comes back */
-        if (ground && in->cspd < 1.5f) { /* tryMoveEnd: statusToWait (calcMoveSpeed: the rolling speed) */
+        float amv = am >= 0 ? vlen(coco_am[am].v) : 0.0f;
+        if (ground && !(am >= 0 && coco_am[am].on && in->cair < 10) && (in->cspd > amv ? in->cspd : amv) < 1.5f) { /* tryMoveEnd:
+                                                           * statusToWait (calcMoveSpeed: max(_8C, |_150|); not on the floor) */
+            if (am >= 0) coco_am[am].in = NULL;
             *ph = 0; in->cspd = in->cfall = 0;
             printf("coconut %d stops" "\n", row);
         }
@@ -20716,8 +20783,6 @@ static void m_start_step(Player *m, V3 at) /* startStep, MarioStep::start */
  * a wall (front, side or back) the part into it and along gravity is dropped. tryJump takes the two off his velocity
  * and adds them to the jump (half when against it).
  * ponytail: the rail's speed is its path_arg3 (10 when unset), which the PATH entries do not carry */
-static const unsigned char *find_path(const unsigned char *blob, int zone, int id);
-static float rail_nearest(const float *p, int n, V3 q);
 static V3 m_power_wall(Player *m, V3 v) /* (_8 || _19 || _1A) */
 {
     if (mw.w8 || mw.w19 || mw.w1A) {
@@ -20730,37 +20795,14 @@ static void m_power_moves(Player *m)
 {
     m_v190 = m_v19C = v3(0, 0, 0);
     if (!m->grounded || m->jumping) return;
-    if (m->floor == 28) { /* powerAreaMove: MR::calcAreaMoveVelocity */
-        int a = area_obj("AreaMoveSphere", m->pos);
-        if (a >= 0) {
-            const Row *r = &sc->objs[a];
-            V3 x, z;
-            row_axes(r, &x, &z);
-            V3 up = vcross(z, x), radial = vsub(row_pos(r), m->pos);
-            radial = vlen(radial) > 1e-6f ? vnorm(radial) : v3(0, 0, 0);
-            up = vsub(up, vmul(radial, vdot(up, radial)));
-            up = vlen(up) > 1e-6f ? vnorm(up) : v3(0, 0, 0);
-            m_v190 = m_power_wall(m, vmul(up, r->arg[0] == -1 ? 10.0f : (float)r->arg[0]));
-            m->vel = vadd(m->vel, m_v190); /* addVelocity */
-        }
+    V3 v; /* the area's and the rail's lookups are the enemies' (area_rail_vel) */
+    if (m->floor == 28 && area_rail_vel(m->floor, -1, m->pos, 1, &v)) { /* powerAreaMove: MR::calcAreaMoveVelocity */
+        m_v190 = m_power_wall(m, v);
+        m->vel = vadd(m->vel, m_v190); /* addVelocity */
     }
-    if (m->floor == 27 && mario_ground >= 0 && insts[mario_ground].row >= 0) { /* powerRailMove: his ground's host */
-        const Row *r = &sc->objs[insts[mario_ground].row];
-        const unsigned char *e = scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
-        if (e) {
-            const float *pts = (const float *)(e + 24);
-            u32 np = *(const u32 *)(e + 8);
-            float c = rail_nearest(pts, (int)np, m->pos); /* calcNearestRailDirection */
-            V3 d = vsub(rail_at(pts, np, c + 10.0f), rail_at(pts, np, c));
-            if (vlen(d) < 1e-3f) d = vsub(rail_at(pts, np, c), rail_at(pts, np, c - 10.0f)); /* (the rail's end) */
-            d = vlen(d) > 1e-6f ? vnorm(d) : v3(0, 0, 0);
-            if (mw.w8 || mw.w19 || mw.w1A) { /* (the direction, before its speed) */
-                V3 n = m_wall_norm(m);
-                if (vdot(n, d) < 0.0f) { d = vsub(d, vmul(n, vdot(d, n))); d = vtangent(d, m->up); }
-            }
-            m_v19C = vmul(d, 10.0f);
-            m->vel = vadd(m->vel, m_v19C);
-        }
+    if (m->floor == 27 && area_rail_vel(m->floor, mario_ground, m->pos, 2, &v)) { /* powerRailMove: his ground's host */
+        m_v19C = m_power_wall(m, v); /* (the wall takes its part of the direction; x 10 after: the same) */
+        m->vel = vadd(m->vel, m_v19C);
     }
 }
 static void m_check_step(Player *m) /* checkStep */
@@ -24655,6 +24697,7 @@ static void w_bind(Kuribo *k, float r)
     k->on_ground = collide_n(&c, up, r, &gn, &wn, &wall);
     coll_binder = 0;
     kcl_ml = -1;
+    if (k->on_ground) { k->gattr = ground_attr; k->ginst = (short)ground_inst; }
     k->gn = k->on_ground ? gn : up;
     k->on_wall = wall ? 2 : 0; k->wn = wn;
     k->pos = vsub(c, vmul(up, r));
@@ -26488,8 +26531,9 @@ static void kuribo_update(Kuribo *k)
     }
     k->step++;
     k->act_t += k->act_rate;
-    /* control(): blendQuatFromGroundAndFront 0.05 / 0.5; tryDead */
+    /* control(): blendQuatFromGroundAndFront 0.05 / 0.5; the AreaMove / RailMove floor's 0.05 (addVelocity); tryDead */
     w_blend_quat(k, w_up_ref(k), k->front, 0.05f, 0.5f);
+    { V3 av; if (k->on_ground && area_rail_vel(k->gattr, k->ginst, k->pos, 3, &av)) k->vel = vadd(k->vel, vmul(av, 0.05f)); }
     float depth;
     if (kn_in(k, KNB(KN_WANDER) | KNB(KN_FINDPLAYER) | KNB(KN_CHASE) | KNB(KN_STAGGER) | KNB(KN_NONACTIVE) | KNB(KN_ATTACKSUCCESS)) &&
         (in_death(k->pos) || in_water(k->pos, vmul(k->grav, -1.0f), &depth))) { k->item = 0; w_kill(k); return; }
@@ -28726,10 +28770,11 @@ static float w_rail_nearest(const float *p, u32 n, V3 q) /* moveCoordToNearestPo
  * swooning, a trample or hip drop: Trample (DownStep, at 36 a coin 100 up: dead); a spin or a kick: Blow
  * (SpinHitController 25 / 20 / 4, 1.5, 30 / 40, three star pieces). A SinkDeath floor: SinkDown (dead at its end).
  * The bomb: Hold (Normal), then Wait 150 (Signal): gravity 1.2, rebounds 0.4 above 5 (SE_EM_BOMBBIRDBOMB_LAND from
- * 5.5); touching Mario it explodes on him; then Explosion (its sensor eased out to 280 in 10, killed after 20; a strong
+ * 5.5; on an AreaMove / RailMove floor it takes the floor's move instead: SE_EM_BOMBBIRDBOMB_LAND_SAND); swooning the
+ * bird is carried by such a floor too (area_rail_vel); touching Mario it explodes on him; then Explosion (its sensor eased out to 280 in 10, killed after 20; a strong
  * rumble / camera shake by distance 800 / 1200 / 2000). ponytail: no star pointer bind (WalkerStateBindStarPointer),
- * no press between roof and ground (isPressedRoofAndGround: the walker binder keeps no roof nor its press sensor), no
- * shifting sand (calcVelocityAreaOrRailMoveOnGround), the ground under it a line probe (bb_ground), the bomb's BRKs
+ * no press between roof and ground (isPressedRoofAndGround: the walker binder keeps no roof nor its press sensor),
+ * the ground under it a line probe (bb_ground), the bomb's BRKs
  * (Normal / Signal: BRKs are baked) and its turning quaternion (_9C stays zero) */
 enum { BD_FLY, BD_SEARCH, BD_ATTACK, BD_BLOW, BD_ESCAPE, BD_DAMAGE, BD_FALL, BD_SWOONSTART, BD_SWOON, BD_SWOONEND, BD_TRAMPLE, BD_SINKDOWN };
 enum { BDB_HOLD, BDB_WAIT, BDB_EXPLOSION };
@@ -28904,6 +28949,10 @@ static void bbd_update(Kuribo *k)
         if (k->nrv == BD_SINKDOWN) { w_se_lv(k, SE_EM_LV_SINK); k->lv2[0] = se_level(SE_EV_LV_BOMBBIRD_SINK, &k->pos.x, k->lv2[0]); }
         if (k->nrv != BD_SINKDOWN && w_on_ground(k)) k->vel = vtangent(k->vel, vnorm(k->grav)); /* vecKillElement(mVelocity, mGravity) */
         bbd_ground_move(k, 0.8f); /* hOnGroundParam */
+        if (k->nrv == BD_SWOONSTART || k->nrv == BD_SWOON || k->nrv == BD_SWOONEND) { /* shifting sand: hShiftingSandVel 1 */
+            V3 av;
+            if (k->on_ground && area_rail_vel(k->gattr, k->ginst, k->pos, 3, &av)) k->vel = av;
+        }
         if (k->nrv == BD_SWOONSTART && w_bck_stopped(k)) w_nrv(k, BD_SWOON);
         else if (k->nrv == BD_SWOON && st > 240) w_nrv(k, BD_SWOONEND); /* hSwoonTime */
         else if (k->nrv == BD_SWOONEND) {
@@ -28964,8 +29013,11 @@ static void update_bbd_bombs(void)
         if (b->nrv == BDB_HOLD) { b->vel = v3(0, 0, 0); continue; } /* exeHold: the bird places it */
         if (b->nrv == BDB_WAIT) {
             float dn = vdot(g, b->vel);
+            V3 av;
+            int sand = b->gnd && area_rail_vel(b->gattr, b->ginst, b->pos, 3, &av); /* calcVelocityAreaOrRailMoveOnGround */
+            if (sand) { b->vel = av; if (dn >= 5.5f) se_start(SE_EM_BOMBBIRDBOMB_LAND_SAND, &b->pos.x); } /* sGroundFric 1 */
             b->vel = vadd(b->vel, vmul(g, 1.2f)); /* addVelocityToGravity(sGravityAccel) */
-            if (b->bnd) { /* reboundVelocityFromCollision(sReboundRate 0.4, sReboundSpeedMin 5, 1) */
+            if (b->bnd && !sand) { /* reboundVelocityFromCollision(sReboundRate 0.4, sReboundSpeedMin 5, 1) */
                 float f = vdot(b->n, b->vel);
                 if (f < -5.0f) { b->vel = vsub(b->vel, vmul(b->n, f * 1.4f)); if (dn >= 5.5f) se_start(SE_EM_BOMBBIRDBOMB_LAND, &b->pos.x); }
                 else if (f < 0.0f) b->vel = vsub(b->vel, vmul(b->n, f));
@@ -29000,6 +29052,7 @@ static void update_bbd_bombs(void)
         int wall = 0;
         int ground = collide_n(&c, vmul(g, -1.0f), 60.0f, &gn, &wn, &wall);
         b->bnd = ground || wall; b->n = ground ? gn : wn;
+        b->gnd = ground; if (ground) { b->gattr = ground_attr; b->ginst = ground_inst; }
         b->pos = c;
         if (b->on && b->nrv != BDB_HOLD) { float m[16]; basis_matrix(m, b->pos, vmul(g, -1.0f), v3(0, 0, 1), 0); fx_named("BombBirdBomb", "LocusSmoke", m, NULL, b); } /* start: emitEffect LocusSmoke (kill: deleteEffect) */
     }
@@ -34542,12 +34595,20 @@ static int w_zone_ground(const Kuribo *k)
  * (AnimScaleController's defaults). A death area, water: kill; a SinkDeath floor: SinkDown (its clip, the sink level
  * SEs, no shadow) then kill. kill: Death, EXPLODE_S, SW_DEAD (walker_inhale).
  * ponytail: no star pointer bind (WalkerStateBindStarPointer: the 2P pointer), no move limit
- * collision, no velocity areas / rail-moving ground, no danger floor codes in the fall check */
+ * collision, no danger floor codes in the fall check. On an AreaMove / RailMove floor it is carried (area_rail_vel) */
 enum { KR_FIXWAIT, KR_WAIT, KR_SPWAIT, KR_WALK, KR_TURN, KR_WALKRAIL, KR_SEARCH, KR_PURSUE, KR_BROKEN, KR_STEPBROKEN,
        KR_RECOVER, KR_HITREACTION, KR_SPHIT, KR_DEATH, KR_SINKDOWN };
 static const float kr_asc[7] = {0.2f, 0.91f, 0.2f, 1.8f, 0.06f, 0.12f, 0.91f}; /* AnimScaleParam's defaults (AnimScaleController(0)) */
 static void walker_inhale(Kuribo *e);
 static int kr_broken(const Kuribo *k) { return k->nrv == KR_BROKEN || k->nrv == KR_STEPBROKEN || k->nrv == KR_RECOVER || k->nrv == KR_DEATH; }
+static void w_add_vel_limit(Kuribo *k, V3 v) /* MR::addVelocityLimit: up to |v| along it */
+{
+    float l = vlen(v);
+    if (l < 1e-6f) return;
+    V3 d = vmul(v, 1.0f / l);
+    float f = vdot(d, k->vel);
+    if (l > f) k->vel = vadd(k->vel, vmul(d, l - f));
+}
 /* moveAndTurnToDirection (ActorMovementUtil.cpp:1203): its front turned deg on gravity's plane and onto the ground,
  * accel along it, x friction, rebound, then gravity (or into the ground) */
 static void kr_move(Kuribo *k, V3 dir, float accel, float grav, float fric, float deg)
@@ -34675,8 +34736,12 @@ static void karon_update(Kuribo *k, V3 to, float d)
         break;
     case KR_BROKEN: case KR_STEPBROKEN:
         if (st == 0) { w_act(k, k->nrv == KR_BROKEN ? "SpinBreak" : "StepBreak"); w_se(k, SE_EM_KARON_BROKEN); w_se(k, SE_EV_KARON_DAMAGE); }
-        if (k->on_ground) k->vel = vmul(k->gn, vdot(k->gn, k->vel)); /* the velocity along its ground's normal only */
-        else k->vel = vadd(vmul(k->grav, vdot(k->grav, k->vel)), vmul(k->grav, 1.0f)); /* forceBindOnGround(1, 0.8) */
+        {
+            V3 av; /* carried by an AreaMove / RailMove floor (addVelocityLimit, hNoMoveNoTurnParam) */
+            if (k->on_ground && area_rail_vel(k->gattr, k->ginst, k->pos, 3, &av)) { w_add_vel_limit(k, av); kr_to_player(k, 0.0f, 1.2f, 0.8f, 0.0f); }
+            else if (k->on_ground) k->vel = vmul(k->gn, vdot(k->gn, k->vel)); /* the velocity along its ground's normal only */
+            else k->vel = vadd(vmul(k->grav, vdot(k->grav, k->vel)), vmul(k->grav, 1.0f)); /* forceBindOnGround(1, 0.8) */
+        }
         if (st > 300) w_nrv(k, KR_RECOVER);
         break;
     case KR_RECOVER:
@@ -34711,6 +34776,10 @@ static void karon_update(Kuribo *k, V3 to, float d)
 #endif
     k->step++;
     k->act_t += k->act_rate;
+    if (k->nrv != KR_STEPBROKEN && k->nrv != KR_BROKEN) { /* control: the AreaMove / RailMove floor's move (addVelocityLimit) */
+        V3 av;
+        if (k->on_ground && area_rail_vel(k->gattr, k->ginst, k->pos, 3, &av)) w_add_vel_limit(k, av);
+    }
     w_bind(k, 70.0f);
     k->qy = vmul(k->grav, -1.0f);
     k->qz = vlen(vtangent(k->front, k->qy)) > 1e-6f ? vnorm(vtangent(k->front, k->qy)) : k->qz; /* LiveActor::calcAndSetBaseMtx */

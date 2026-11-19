@@ -11,6 +11,19 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Enemies on AreaMove / RailMove floors (feat/611-area-move-walkers, #611, 2026-11-18):
+  MR::calcVelocityAreaOrRailMoveOnGround as game.c area_rail_vel (an AreaMove floor, code 28: MR::calcAreaMoveVelocity,
+  the AreaMoveSphere holding the place: its up less the part towards its centre x arg0 (10); a RailMove floor, 27: the
+  ground's rail direction nearest it x 10). The walkers keep their ground's codes and instance from w_bind (gattr /
+  ginst). Kuribo::control adds 0.05 of it; Karon::control addVelocityLimit (not Broken / StepBroken, which are
+  carried with hNoMoveNoTurnParam instead of standing on their ground's normal); BombBird's SwoonStart / Swoon /
+  SwoonEnd take it as their velocity (hShiftingSandVel 1); BombBirdBomb's Wait takes it (sGroundFric 1) with
+  SE_EM_BOMBBIRDBOMB_LAND_SAND from 5.5, no rebound; CocoNut's _14C / _150 (calcVelocityAreaMoveOnGround x 0.75 while it
+  rolls on such a floor, fading x 0.925 off it, added to its velocity; it does not stop on the floor). Mario's side is
+  #581 (m_power_moves), which also puts AreaMoveSphere into slice.py's LOGIC areas: until those packs exist an AreaMove
+  floor gives zero (no area found), as Petari does outside every sphere. ponytail: the rail's path_arg3 speed (10).
+  Test: built plain (SandClockGalaxy/1), host tests, memcheck; NOT seen in PCSX2 (needs #581's packs: an overlay
+  slice of a galaxy with AreaMoveSphere).
 - TripodBoss's marker stopped at its break (fix/tripod-marker-break, 2026-11-18): #599's tb_marker left the parts'
   SE_BM_TRIPOD_MARKER playing when the boss broke down with Mario on it (the parts die there in Petari: their sound
   objects with them). Test: plain -DTB_TEST -DDKJ_TEST -DSE_LOG TriLegLv1Galaxy/1.
