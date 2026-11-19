@@ -27,6 +27,12 @@ static void ss_init(const Scene *s);
 static void dmu_init(void);
 static void dmu_update(void);
 static void mlay_init(void);
+static void pms_init(void);
+static void oub_init(void);
+static void oub_update(void);
+static void oub_draw(void);
+static void sgt_init(void);
+static void sgt_draw(void);
 static void mono_update(void);
 static void srl_init(void);
 static void srl_update(void);
@@ -43,6 +49,7 @@ int menu_galaxy_map_active(void);
 int menu_file_selecting(void);
 static int fs_title(void);
 static void mlay_update(void);
+static void pms_update(void);
 static void plt_init(void);
 static void hm_init(void);
 static void tl_init(void);
@@ -512,9 +519,17 @@ static void sv_update(void)
  * the galaxy and scenario names, the star count counted up after 85 frames), a new coin record (System_Result006),
  * the galaxy's star pieces counted into the stock (System_Result004); X goes on; a galaxy just openable
  * (System_Result001) or a hungry Luma's galaxy just appeared (System_Result007): DisplayInformationForResult's window,
- * then the map in its discover mode (GalaxyMapController; the informer waits while it shows). ponytail: no galaxy
- * complete / picture book windows, no IconAButton, no effects; the information
- * window (InformationWindow) and the map show only where their packs are loaded (ending.bin / map.bin) */
+ * then the map in its discover mode (GalaxyMapController; the informer waits while it shows); the galaxy complete
+ * window (System_Result009 with BGM_GALAXY_COMPLETE) and the picture book's (System_Result005, the library just
+ * open System_Result008) the same window with no map; mIconAButton at AButtonPosition (openWithoutMessage in the
+ * Display nerves, term on the way out), the information window's at AButtonPosC. ponytail: no effects
+ * (ResultStarCounter, ResultPieceCounter), no CS_CLICK_CLOSE (the Wii remote's speaker); the map shows only where
+ * its pack is loaded (map.bin: the Observatory, not the domes) */
+struct Iab; /* IconAButton (below) */
+static void iab_open(struct Iab *b);
+static void iab_term(struct Iab *b);
+static void iab_update(struct Iab *b);
+static struct Iab *sr_ab(int k); /* 0 the result window's, 1 the information window's */
 enum { SR_OFF, SR_APPEARSTAR, SR_WAITCOUNT, SR_COUNT, SR_DISPLAY, SR_DISAPPEAR, SR_APPEARSCORE, SR_APPEARPIECE, SR_DISPLAYPIECE,
        SR_WAITPIECE, SR_INFO, SR_INFOEND, SR_SHOWMAP };
 static struct { LytInst *l, *info; Nrv n; int kind, pieces, pressed, alive, delay, held, demo, map_mode; const char *info_msg; SeqResult r; u16 text[160]; } sr;
@@ -556,12 +571,20 @@ static void sr_result_text(const u16 *s)
 static int sr_decide(void) { int d = pad_pressed(PAD_CROSS) || sr.pressed; if (d) { sr.pressed = 0; se_start(SE_SY_TALK_OK, NULL); } return d; }
 static void sr_next(void) /* decideNextNerve */
 {
-    if (sr.kind < 1 && sr.r.coins > sr.r.prev_max_coin) { sr.kind = 1; nrv_set(&sr.n, SR_APPEARSCORE); }
-    else if (sr.kind < 2 && sr.r.pieces > 0) { sr.kind = 2; nrv_set(&sr.n, SR_APPEARPIECE); }
-    else if (sr.kind < 3 && gd_just_open_galaxy()) { /* ShowNewGalaxyDiscover, ShowGalaxyMap */
-        sr.kind = 3; sr.info_msg = "System_Result001"; sr.map_mode = GMAP_NEW_GALAXY; nrv_set(&sr.n, sr.info ? SR_INFO : SR_SHOWMAP);
-    } else if (sr.kind < 5 && gd_just_tico_galaxy()) { /* ShowTicoGalaxyAppear, ShowAstroMapForTico */
-        sr.kind = 5; sr.info_msg = "System_Result007"; sr.map_mode = GMAP_NEW_TICO; nrv_set(&sr.n, sr.info ? SR_INFO : SR_SHOWMAP);
+    /* sr.kind: 0 after DisappearGetPowerStar, 1 ShowGalaxyComplete, 2 DisappearUpdateBestScore, 3 DisappearGetStarPiece,
+     * 4 ShowGalaxyMap, 5 ShowGetPictureBook */
+    int book;
+    sr.map_mode = -1;
+    if (sr.kind < 1 && gd_just_complete_galaxy(sr.r.stage)) { /* ShowGalaxyComplete */
+        sr.kind = 1; sr.info_msg = "System_Result009"; nrv_set(&sr.n, sr.info ? SR_INFO : SR_SHOWMAP);
+    } else if (sr.kind < 2 && sr.r.coins > sr.r.prev_max_coin) { sr.kind = 2; nrv_set(&sr.n, SR_APPEARSCORE); } /* _31 */
+    else if (sr.kind < 3 && sr.r.pieces > 0) { sr.kind = 3; nrv_set(&sr.n, SR_APPEARPIECE); }
+    else if (sr.kind < 4 && gd_just_open_galaxy()) { /* ShowNewGalaxyDiscover, ShowGalaxyMap */
+        sr.kind = 4; sr.info_msg = "System_Result001"; sr.map_mode = GMAP_NEW_GALAXY; nrv_set(&sr.n, sr.info ? SR_INFO : SR_SHOWMAP);
+    } else if (sr.kind < 5 && (book = gd_just_book())) { /* ShowGetPictureBook (isJustOpenLibraryRoom: cMessageIdOpenLibraryRoom) */
+        sr.kind = 5; sr.info_msg = book == 2 ? "System_Result008" : "System_Result005"; nrv_set(&sr.n, sr.info ? SR_INFO : SR_SHOWMAP);
+    } else if (sr.kind < 6 && gd_just_tico_galaxy()) { /* ShowTicoGalaxyAppear, ShowAstroMapForTico */
+        sr.kind = 6; sr.info_msg = "System_Result007"; sr.map_mode = GMAP_NEW_TICO; nrv_set(&sr.n, sr.info ? SR_INFO : SR_SHOWMAP);
     } else { sr.alive = 0; nrv_set(&sr.n, SR_OFF); }
 }
 static void sr_update(void)
@@ -582,6 +605,7 @@ static void sr_update(void)
             lyt_set_number_rec(sr.l, "ShaStarNum", sr.r.prev_stars);
             snprintf(label, sizeof label, "%d", sr.r.coins);
             lyt_set_number_rec(sr.l, "ShaCoinNum", sr.r.coins);
+            lyt_show_pane(sr.l, "Coin", sr.r.coins > sr.r.prev_max_coin); /* initBestScoreWindow */
             sr.kind = 0;
             game_bgm_sub("BGM_ASTRO_RETURN");
         }
@@ -596,11 +620,12 @@ static void sr_update(void)
         if (pad_pressed(PAD_CROSS)) sr.pressed = 1;
         if (lyt_stopped(sr.l, 0)) nrv_set(&sr.n, SR_DISPLAY);
         break;
-    case SR_DISPLAY:
+    case SR_DISPLAY: /* DisplayGetPowerStar / DisplayUpdateBestScore */
+        if (FIRST(&sr.n)) iab_open(sr_ab(0)); /* openWithoutMessage */
         if (sr_decide()) nrv_set(&sr.n, SR_DISAPPEAR);
         break;
     case SR_DISAPPEAR:
-        if (FIRST(&sr.n)) lyt_start(sr.l, "End", 0);
+        if (FIRST(&sr.n)) { lyt_start(sr.l, "End", 0); iab_term(sr_ab(0)); }
         if (lyt_stopped(sr.l, 0)) sr_next();
         break;
     case SR_APPEARSCORE: /* AppearUpdateBestScore */
@@ -618,6 +643,7 @@ static void sr_update(void)
         break;
     case SR_DISPLAYPIECE: { /* one a frame into the stock */
         int done = 0;
+        if (FIRST(&sr.n)) iab_open(sr_ab(0));
         if (sr.pieces > 0) {
             sr.pieces--;
             gd_add_stocked_star_pieces(1);
@@ -633,6 +659,7 @@ static void sr_update(void)
     }
     case SR_WAITPIECE:
         if (FIRST(&sr.n)) {
+            iab_term(sr_ab(0));
             gd_add_stocked_star_pieces(sr.pieces); sr.pieces = 0;
             se_start(SE_SY_STAR_PIECE_SUM_UP_END, NULL);
             lyt_set_number_rec(sr.l, "ShaTPieceLNum", 0);
@@ -642,28 +669,31 @@ static void sr_update(void)
         break;
     case SR_INFO: /* DisplayInformationForResult: appearInformationMessageCenter, Display after 15 (decide: Disappear) */
         if (FIRST(&sr.n)) {
-            game_bgm_sub("BGM_NEW_GALAXY"); /* (BGM_GALAXY_COMPLETE with the galaxy complete message: not shown here) */
+            game_bgm_sub(!strcmp(sr.info_msg, "System_Result009") ? "BGM_GALAXY_COMPLETE" : "BGM_NEW_GALAXY");
+            printf("result: information %s\n", sr.info_msg);
             lyt_show_rec(sr.info, "InfoWindowUp", 0); lyt_show_rec(sr.info, "InfoWindowCenter", 1); /* setCenter(true) */
             lyt_set_text_rec(sr.info, "InfoWindowCenter", msg_get(sr.info_msg));
             lyt_start(sr.info, "Appear", 0);
             lyt_start(sr.info, "Line", 1);
             lyt_set_frame(sr.info, 1, lyt_text_height(sr.info, "InfConfirmC")); /* setAnimFrameAndStopAdjustTextHeight */
             lyt_set_rate(sr.info, 1, 0);
+            iab_open(sr_ab(1)); /* appearWithButtonLayout */
         }
         if (sr.n.step >= 15 && pad_pressed(PAD_CROSS)) { se_start(SE_SY_TALK_OK, NULL); nrv_set(&sr.n, SR_INFOEND); } /* sWaitAppearInformationWindow */
         break;
     case SR_INFOEND: /* disappearInformationMessage, isDeadInformationMessage */
-        if (FIRST(&sr.n)) lyt_start(sr.info, "End", 0);
+        if (FIRST(&sr.n)) { lyt_start(sr.info, "End", 0); iab_term(sr_ab(1)); } /* InformationMessage::exeDisappear */
         if (sr.n.step > 0 && lyt_stopped(sr.info, 0)) nrv_set(&sr.n, SR_SHOWMAP);
         break;
     case SR_SHOWMAP: /* startAstroMapLayoutForNewGalaxyDiscover / ForNewTicoGalaxyDiscover, then decideNextNerve */
-        if (FIRST(&sr.n)) menu_galaxy_map(sr.map_mode);
+        if (FIRST(&sr.n)) { if (sr.map_mode >= 0) menu_galaxy_map(sr.map_mode); } /* (none: the complete / picture book windows) */
         else sr_next();
         break;
     }
     nrv_end(&sr.n);
     lyt_update(sr.l);
     if (sr.info && (nrv_is(&sr.n, SR_INFO) || nrv_is(&sr.n, SR_INFOEND))) lyt_update(sr.info);
+    iab_update(sr_ab(0)); iab_update(sr_ab(1));
 }
 int menu_result_showing(void) { return sr.alive || sr.delay || sr.held; }
 void menu_result_start(void) /* StarReturnDemoStarter::tryStartStageResult: the held result window appears */
@@ -719,6 +749,8 @@ static void iab_update(Iab *b) /* movement: the nerve, then control (updateFollo
     lyt_update(b->l);
 }
 static void iab_draw(Iab *b) { if (b->on) lyt_draw(b->l); }
+static Iab sr_abs[2];
+static Iab *sr_ab(int k) { return &sr_abs[k]; }
 
 /* --- Luigi: LuigiLetter, the pause menu's letter button, BrosButton and FileSelectInfo's CharaState after Petari -----
  * LuigiLetter (letter.bin, main.c loads it where the letter can show): its galaxy's picture (LuigiPicture<galaxy>, a
@@ -1071,8 +1103,10 @@ static void pm_update(void)
         if (pm.up.selected) {
             if (btn_selected_se(&pm.up)) se_start(SE_SY_PAUSE_OFF, NULL);
             if (btn_decided_wait(&pm.up)) nrv_set(&pm.n, PM_DISAPPEAR);
-        } else if (pm.down.selected && btn_decided_wait(&pm.down)) nrv_set(&pm.n, pm_invalid_back() ? PM_SAVE : PM_CONFIRM);
-        else if (pml_decided()) nrv_set(&pm.n, PM_LETTER);
+        } else if (pm.down.selected) {
+            if (btn_selected_se(&pm.down)) se_start(SE_SY_PAUSE_OFF, NULL);
+            if (btn_decided_wait(&pm.down)) nrv_set(&pm.n, pm_invalid_back() ? PM_SAVE : PM_CONFIRM);
+        } else if (pml_decided()) nrv_set(&pm.n, PM_LETTER);
         break;
     case PM_LETTER: /* exeLuigiLetter */
         if (!pml_letter()) { btn_force_wait(&pm.up); btn_force_wait(&pm.down); if (pml_shown()) btn_force_wait(&pml.b); nrv_set(&pm.n, PM_SELECTING); }
@@ -1083,7 +1117,10 @@ static void pm_update(void)
         break;
     case PM_SAVE: /* exeGameDataSave: startGameDataSaveSequence(false, true) */
         if (FIRST(&pm.n)) menu_save_start(1, 0, 1);
-        else if (!menu_saving()) nrv_set(&pm.n, PM_CONFIRM);
+        else if (!menu_saving()) {
+            if (menu_save_result() != 3) nrv_set(&pm.n, PM_CONFIRM); /* isSuccessSaveDataHandleSequence */
+            else { btn_force_wait(&pm.up); btn_force_wait(&pm.down); if (pml_shown()) btn_force_wait(&pml.b); nrv_set(&pm.n, PM_SELECTING); }
+        }
         break;
     case PM_CONFIRM:
         if (FIRST(&pm.n)) si_appear(&pm.win, pm_invalid_back() ? "PauseMenu_ConfirmEndGame" : "PauseMenu_ConfirmBackAstroDome", SI_YESNO);
@@ -1506,6 +1543,9 @@ void menu_init(const Scene *s)
     chc_init(s);
     sr.l = lyt_new("ResultWindow");
     sr.info = lyt_new("InformationWindow"); /* MR::appearInformationMessageCenter's (NULL where not loaded) */
+    memset(sr_abs, 0, sizeof sr_abs);
+    if (sr.l) iab_init(sr_ab(0), sr.l, "AButtonPosition"); /* createAndSetupIconAButton */
+    if (sr.info) iab_init(sr_ab(1), sr.info, "AButtonPosC"); /* InformationMessage::mAButtonIcon, setCenter(true) */
     if (sv_prompt && seq_take_result(&sr.r)) { /* a star return demo shows it at its wait's end (menu_result_start) */
         const SeqDemo *d = seq_demo_current();
         int ret = d && d->type == 0 && strstr(d->name, "帰還"); /* 天文ドームスター帰還, パワースター帰還, グランドスター<n>帰還 */
@@ -1513,6 +1553,9 @@ void menu_init(const Scene *s)
     }
     dmu_init();
     mlay_init();
+    pms_init();
+    oub_init();
+    sgt_init();
     memset(&mono, 0, sizeof mono);
     mono.l = lyt_new("PrologueStarSteward"); /* in map.bin: the Observatory only */
     pro_lyt_init();
@@ -2174,6 +2217,8 @@ int menu_update(void)
     wipe_update();
     dmu_update();
     mlay_update();
+    pms_update();
+    oub_update();
     mono_update();
     llt_update();
     pbk_update();
@@ -4621,6 +4666,7 @@ void menu_miss_start(void) /* MissLayout::start: Appear (its TooBad effect not s
     mlay.tb_on = 1;
     lyt_start(mlay.toobad, "Appear", 0);
 }
+int menu_miss_anim_end(void) { return !mlay.toobad || !mlay.tb_on || lyt_stopped(mlay.toobad, 0); } /* isMissAnimEnd: not Active */
 void menu_wipe_koopa(int frames) /* WipeKoopa::wipe: "out" over `frames` (sAnimFrame 90) */
 {
     if (!mlay.koopa) return;
@@ -4774,6 +4820,136 @@ static void mlay_draw(void)
     if (wr.l && wr.nrv != WR_OPEN) lyt_draw(wr.l);
     if (mlay.go_on) lyt_draw(mlay.gameover);
 }
+
+/* --- PlayerMissLeft (Screen/PlayerMissLeft.cpp: the "PlayerLeft" layout's CenterPlayerLeft; GameSequenceProgress's,
+ * appeared by requestGalaxyMove's type 5 unless the scenario is a comet's, the next scene held until it is dead):
+ * AppearWait (hidden a frame), Appear (the lives + 1, CounterLayoutAppearer from (-50, 0), Wait on 1, Luigi's frame
+ * on 2), Wait (step hCountDownTime 15: the lives, CountUpPaneRumbler on CenterPlayerLeft, SE_SY_PLAYER_LEFT_DEC; past
+ * hEndTime 90: End), End (the appearer's disappear, then dead). Drawn over the closed wipe.
+ * ponytail: the scene's load is not concurrent here: it starts when this is dead (game.c miss_event_update) */
+enum { PMS_APPEARWAIT, PMS_APPEAR, PMS_WAIT, PMS_END };
+static struct { LytInst *l; u8 alive, shown; int ap, ap_step, rumble, left; float fol[2], rum[2]; Nrv n; } pms; /* ap: CounterLayoutAppearer's 0 Hide 1 Appear 2 Show 3 Disappear */
+static void pms_init(void)
+{
+    memset(&pms, 0, sizeof pms);
+    if (!(pms.l = lyt_new("PlayerLeft"))) return;
+    lyt_follow(pms.l, "RootPane", pms.fol, 1);         /* CounterLayoutAppearer: setFollowPos(nullptr), setFollowTypeAdd */
+    lyt_follow(pms.l, "CenterPlayerLeft", pms.rum, 1); /* CountUpPaneRumbler::connectPane */
+}
+static void pms_offset(float rate) { pms.fol[0] = -50.0f + rate * 50.0f; pms.fol[1] = 0.0f; } /* updateLayoutOffset: mAppearOffset (-50, 0) */
+void menu_miss_left_start(int left) /* PlayerMissLeft::appear; left: MR::getPlayerLeft() */
+{
+    if (!pms.l) return;
+    pms.alive = 1; pms.shown = 0; pms.left = left; /* hideLayout */
+    lyt_start(pms.l, "Appear", 0); lyt_set_frame(pms.l, 0, 0.0f); lyt_set_rate(pms.l, 0, 0.0f); /* mLayoutAppearer->reset */
+    pms.ap = 0;
+    pms.rumble = 0; pms.rum[0] = pms.rum[1] = 0.0f; /* mPaneRumbler->reset */
+    lyt_show_rec(pms.l, "PlayerLeft", 0);
+    pms.n.next = -1; nrv_set(&pms.n, PMS_APPEARWAIT);
+}
+int menu_miss_left_dead(void) { return !pms.alive; } /* MR::isDead(mPlayerMissLeft) */
+static void pms_update(void)
+{
+    if (!pms.alive) return;
+    switch (nrv_begin(&pms.n)) {
+    case PMS_APPEARWAIT:
+        if (pms.n.step > 0) nrv_set(&pms.n, PMS_APPEAR);
+        break;
+    case PMS_APPEAR:
+        if (FIRST(&pms.n)) {
+            pms.shown = 1; /* showLayout */
+            lyt_set_number_rec(pms.l, "CenterPlayerLeft", pms.left + 1);
+            lyt_start(pms.l, "Appear", 0); pms_offset(0.0f); pms.ap = 1; pms.ap_step = 0; /* mLayoutAppearer->appear((0, 0)) */
+            lyt_start(pms.l, "Wait", 1);
+            lyt_start(pms.l, "Luigi", 2); lyt_set_frame(pms.l, 2, gd_player_luigi() ? 1.0f : 0.0f); lyt_set_rate(pms.l, 2, 0.0f);
+        }
+        if (pms.ap == 2) nrv_set(&pms.n, PMS_WAIT); /* isAppeared */
+        break;
+    case PMS_WAIT:
+        if (pms.n.step == 15) { /* hCountDownTime */
+            lyt_set_number_rec(pms.l, "CenterPlayerLeft", pms.left);
+            pms.rumble = 15; /* mPaneRumbler->start: cRumbleFrame */
+            se_start(SE_SY_PLAYER_LEFT_DEC, NULL);
+            printf("miss left: %d -> %d\n", pms.left + 1, pms.left);
+        }
+        if (pms.n.step > 90) nrv_set(&pms.n, PMS_END); /* hEndTime */
+        break;
+    case PMS_END:
+        if (FIRST(&pms.n)) { pms.ap = 3; pms.ap_step = 0; } /* mLayoutAppearer->disappear */
+        else if (pms.ap == 0) pms.alive = 0; /* isDisappeared: kill */
+        break;
+    }
+    nrv_end(&pms.n);
+    if (!pms.alive) return;
+    switch (pms.ap) { /* control: CounterLayoutAppearer::update (calcNerveEaseOutRate / EaseInRate over the animation's frames) */
+    case 1:
+        pms_offset(sinf(fminf(pms.ap_step / lyt_anim_frames(pms.l, "Appear"), 1.0f) * 1.5707963f));
+        if (lyt_stopped(pms.l, 0)) { pms.ap = 2; pms_offset(1.0f); }
+        break;
+    case 3:
+        if (pms.ap_step == 0) lyt_start(pms.l, "End", 0);
+        pms_offset(1.0f - (1.0f - cosf(fminf(pms.ap_step / lyt_anim_frames(pms.l, "End"), 1.0f) * 1.5707963f)));
+        if (pms.ap_step > 0 && lyt_stopped(pms.l, 0)) pms.ap = 0;
+        break;
+    }
+    pms.ap_step++;
+    pms.rum[1] = 0.0f; /* CountUpPaneRumbler::update: RumbleCalculatorCosMultLinear(cRumbleFreq 2, HALF_PI, cRumbleAmp 8, 15) */
+    if (pms.rumble) {
+        float p = (15 - pms.rumble) / 15.0f;
+        pms.rum[1] = cosf(2.0f * p * 6.2831853f + 1.5707963f) * (1.0f - p) * 8.0f;
+        pms.rumble--;
+    }
+    lyt_update(pms.l);
+}
+/* --- OneUpBoard (Screen/OneUpBoard.cpp: "OneUp"; GameSceneLayoutHolder::requestOneUp): popup(n) puts the number in
+ * its text (Layout_OneUpOneUp's argument 0) and appears: Appear, each frame calcPos (Mario's centre on the screen up
+ * sOffsetY 60, not above sOffsetYMin 160: menu_one_up_pos), dead when Appear stops. ponytail: no OneUpGet effect */
+static struct { LytInst *l; u8 alive, first; float pos[2]; u16 text[24]; } oub;
+static void oub_init(void)
+{
+    memset(&oub, 0, sizeof oub);
+    if ((oub.l = lyt_new("OneUp"))) lyt_follow(oub.l, "RootPane", oub.pos, 0); /* setTrans */
+}
+void menu_one_up(int n) /* OneUpBoard::popup */
+{
+    if (!oub.l) return;
+    char d[8];
+    u16 w[8];
+    const u16 *args[1] = {w};
+    int len = snprintf(d, sizeof d, "%d", n);
+    for (int i = 0; i <= len; i++) w[i] = (u16)d[i];
+    msg_with_args(oub.text, 24, msg_get("Layout_OneUpOneUp"), args, 1); /* setTextBoxArgNumberRecursive("OneUp", n, 0) */
+    lyt_set_text_rec(oub.l, "OneUp", oub.text);
+    oub.alive = oub.first = 1;
+}
+void menu_one_up_pos(float x, float y) /* calcPos: Mario's centre on the screen (640 x 448) */
+{
+    oub.pos[0] = x * (608.0f / 640.0f);
+    oub.pos[1] = fmaxf(y * (456.0f / 448.0f) - 60.0f, 160.0f);
+}
+static void oub_update(void) /* exeAppear */
+{
+    if (!oub.alive) return;
+    if (oub.first) { lyt_start(oub.l, "Appear", 0); oub.first = 0; }
+    else if (lyt_stopped(oub.l, 0)) { oub.alive = 0; return; }
+    lyt_update(oub.l);
+}
+static void oub_draw(void) { if (oub.alive && !oub.first) { render_world_done(); lyt_draw(oub.l); } }
+/* --- MarioLauncherLayout's Sight (MapObj/MarioLauncher.cpp: the SimpleLayout "Sight", appearAt the pointer's place
+ * while the launcher aims; game.c ml_draw_sight asks each frame) */
+static struct { LytInst *l; u8 on; float pos[2]; } sgt;
+static void sgt_init(void)
+{
+    memset(&sgt, 0, sizeof sgt);
+    if ((sgt.l = lyt_new("Sight"))) lyt_follow(sgt.l, "RootPane", sgt.pos, 0); /* setTrans */
+}
+void menu_sight(int on, float x, float y) /* (x, y): the pointer on the screen (640 x 448) */
+{
+    sgt.on = on && sgt.l;
+    sgt.pos[0] = x * (608.0f / 640.0f); sgt.pos[1] = y * (456.0f / 448.0f);
+}
+static void sgt_draw(void) { if (sgt.on) { render_world_done(); lyt_update(sgt.l); lyt_draw(sgt.l); } }
+static void pms_draw(void) { if (pms.alive && pms.shown) { render_world_done(); lyt_draw(pms.l); } } /* GameSequenceProgress::draw */
 
 /* --- RosettaMonologue (RosettaDemoAstroDome.cpp: "PrologueStarSteward", map.bin): the picture book of -----------
  * ロゼッタ状況説明デモ. appear: FadeIn, the balloon's WinFadeIn, RosettaMonologue000; control: A turns the message's
@@ -5452,12 +5628,17 @@ static void wipe_update(void)
 void menu_draw(void)
 {
     if (!pm.alive && !sr.alive) { subm_draw(); hm_draw(); } /* the game's default layout (MarioSubMeter, MarioMeter) */
-    if (sr.alive) { render_world_done(); lyt_draw(sr.l); if (sr.info && (sr.n.cur == SR_INFO || sr.n.cur == SR_INFOEND)) lyt_draw(sr.info); }
+    if (sr.alive) {
+        render_world_done(); lyt_draw(sr.l); iab_draw(sr_ab(0));
+        if (sr.info && (sr.n.cur == SR_INFO || sr.n.cur == SR_INFOEND)) { lyt_draw(sr.info); iab_draw(sr_ab(1)); }
+    }
     if (dmu.on) { render_world_done(); dmu_draw(); }
     mlay_draw();
     if (tl.alive) { render_world_done(); lyt_draw(tl.l); } /* TimeLimitLayout */
     if (rcl.alive) { render_world_done(); lyt_draw(rcl.l); } /* RaceManagerLayout */
     chc_draw(); /* ChipCounter, CollectCounter */
+    oub_draw(); /* OneUpBoard */
+    sgt_draw(); /* MarioLauncherLayout */
     if (spg.l && !nrv_is(&spg.n, SPG_ENDWAIT)) { render_world_done(); lyt_draw(spg.l); } /* StarPointerGuidance */
     if (mono.on) { render_world_done(); lyt_draw(mono.l); iab_draw(mono_ab()); }
     if (ynl.alive) { render_world_done(); lyt_draw(ynl.l); }
@@ -5472,6 +5653,7 @@ void menu_draw(void)
     plt_draw();
     wipe_draw_quad();
     fade_draw();
+    pms_draw(); /* PlayerMissLeft: the sequence's, over the wipes */
     if (sv.win.alive) { render_world_done(); lyt_draw(sv.win.l); } /* the save's window over all of it, a closed wipe too
                                                                     * (GameSystem draws its SysInfoWindow after the scene: #559) */
 }
