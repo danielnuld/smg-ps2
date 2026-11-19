@@ -11,6 +11,18 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- TrickRabbitFreeRunCollect, the pack side (feat/751-trick-rabbit-collect-pack, #751, 2026-11-19, agent npc3):
+  SnowCapsuleGalaxy's collector (Petari TrickRabbitSnowCollect) has no model; its three rabbits are the
+  TrickRabbitFreeRunChild rows of childobjinfo (TrickRabbitSnow: the TrickRabbit archive). slice.py drew a rabbit at the
+  collector (the factory's archive list) and dropped the children (no archive of that name), and name32 cut the
+  collector's clips to `trickrabbitfreeruncollect/caugh` (Caught / CaughtLand / CaughtWait met). Now: MODEL_ARC /
+  WAIT_SKINNED / WAIT_ARC TrickRabbitFreeRunChild -> TrickRabbit, clip_key `trfc/<clip>` for its clips over 31
+  characters (the engine's gw_play does the same), the collector NO_DRAW + LOGIC with EXTRA PStar
+  (createPowerStarDemoModel) and its star declarer (declarePowerStar), TALK_NAME SnowRabbit (children) /
+  SnowRabbitCollect. An old pack loads as before (the engine has no code on these rows yet; the class: the next
+  note). **Repack: slice_all.py SnowCapsuleGalaxy** (no sound pack: sfxcut already keeps the class's sounds from
+  TrickRabbitSnowCollect.cpp / TrickRabbitSnow.cpp). Checked: an overlay slice of SnowCapsuleGalaxy 1 (TYPE has both
+  classes, ANIM the 34 rabbit clips and PStar's TakeOutStarTrickRabbit, TALK 432 -> 1872 bytes).
 - GCaptureTarget's own nerves (feat/647-gcapture-target, #647, 2026-11-19, agent audit-a): game.c update_gcap_targets
   after GCaptureTarget.cpp: Wait (the Wait clip's rate, mStarAnimSpeed, down 0.05 a frame to 0; no effect), Pointable
   with Mario within arg1 / 2500 (the TouchAble burst, TargetLight kept, the rate up to 0.5), HitPointer while GCapture
