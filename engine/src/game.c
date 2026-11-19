@@ -972,7 +972,7 @@ static struct {
     float spv, spvel;                /* SpringValue (_3C at rest, 0.02, 0.95) */
     const float *rail; u32 rail_n; int closed, dir; float coord, len;
     Anim *anim, *wing, *launcher, *demo;
-    struct { V3 pos, vel; int state, t; } bomb[BSB_BOMBS]; /* 0 dead, 1 Wait, 2 Explosion */
+    struct { V3 pos, vel; int state, t, wet; } bomb[BSB_BOMBS]; /* 0 dead, 1 Wait, 2 Explosion; wet: isBindedGroundWater */
     u32 lv[6], blv[BSB_BOMBS];
 } bsb = {.row = -1};
 static const Model *m_bsb, *m_bsbwing, *m_bsblaunch, *m_bsbbomb, *m_bsbdemo;
@@ -1037,6 +1037,7 @@ static int tsp_puppet(void);
 static void tsp_scene(const Scene *s);
 static int tsp_test(int f);
 int bsb_shot(V3 at);
+int kj_jr_shot(V3 at);
 static void spider_thread_scene(const Scene *s);
 #define MAX_OROCKS 4
 enum { OR_WAIT, OR_THROWCOCO, OR_THROWFIRE, OR_DOWN, OR_HIDE, OR_HIDEWAIT, OR_SHOW, OR_DEAD };
@@ -30465,7 +30466,12 @@ static void strspider_update(Kuribo *k)
             k->vel = vadd(k->vel, vmul(root, (len - k->to) * 0.1f));
         }
     }
-    if (k->nrv == SR_SEARCH || k->nrv == SR_HIT || k->nrv == SR_ATTACK) w_se_lv(k, SE_EM_LV_STRSPIDER_SWING1); /* startSwingLevelSound */
+    if (k->nrv == SR_SEARCH || k->nrv == SR_HIT || k->nrv == SR_ATTACK) { /* startSwingLevelSound: levelA 100 x its speed's
+                                                                          * 2..12 / 5..25 as 0..1, the volume (modifySe_Takezawa) */
+        float mag = vlen(k->vel);
+        se_level_vp(&k->lv, SE_EM_LV_STRSPIDER_SWING1, &k->pos.x, (int)(100.0f * liner(mag, 2.0f, 12.0f, 0.0f, 1.0f)) / 100.0f, 1.0f);
+        se_level_vp(&k->lv2[0], SE_EM_LV_STRSPIDER_SWING2, &k->pos.x, (int)(100.0f * liner(mag, 5.0f, 25.0f, 0.0f, 1.0f)) / 100.0f, 1.0f);
+    }
     /* the binder: 80 x scale about its place (TrampleFall: 10) */
     V3 up = vmul(k->grav, -1.0f), c = vadd(k->pos, k->vel), gn = up, wn = up;
     k->pos = c;
@@ -30729,8 +30735,17 @@ static void baby_kill_item(Kuribo *k) /* killWithGenItem: 3 star pieces (a star 
 static int bg_blown(const Kuribo *k) { return k->nrv == BG_BLOW; }
 static int bg_down(const Kuribo *k) { return k->nrv == BG_BLOW || k->nrv == BG_ELECTRICDEATH || k->nrv == BG_BROKENPIECE || k->nrv == BG_INWATER || k->nrv == BG_LAUNCH; }
 /* BegomanSpringHead::getHopEndBckFrameMax. ponytail: the head is drawn still (no HopStart / HopWait / HopEnd / HopJump
- * clips nor its Green / OnAndOff BRKs on it: one pose per walker), the body's HopEnd length stands for the head's */
+ * clips nor its Green / OnAndOff BRKs on it: one pose per walker; its nerves are kept, bg_head_*), the body's HopEnd
+ * length stands for the head's */
 static int bg_hopend(void) { int mode; return anim_clip_info("begomanspring/hopend", &mode); }
+/* BegomanSpringHead's nerve in jc: 0 Wait, 1 HopStart / HopWait / HopJump, 2.. HopEnd (its step + 2: Wait once its
+ * clip stops). tryHopStart / tryHopJump: bg_head_hop; tryHopEnd: bg_head_end (exeHopEnd's first step: CLOSE_SPRING) */
+static void bg_head_hop(Kuribo *k) { if (k->kind == WALK_BEGOSPRING) k->jc = 1; }
+static void bg_head_end(Kuribo *k)
+{
+    if (k->kind != WALK_BEGOSPRING || k->jc != 1) return;
+    k->jc = 2; w_se(k, SE_EM_BEGOMAN_CLOSE_SPRING);
+}
 static void begospike_update(Kuribo *k)
 {
     const Row *r = &sc->objs[k->row];
@@ -30746,6 +30761,7 @@ static void begospike_update(Kuribo *k)
     if (!k->front.x && !k->front.y && !k->front.z) { /* initCore */
         kuribo_init(k);
         k->tcenter = k->pos; k->phase = r->arg[0] != -1; k->to = 0; k->from = 0; k->bvel = k->grav; k->bshow = 0;
+        k->jc = 0; /* its head: Wait (forceWaitImmediately) */
         w_nrv(k, BG_WAIT);
         if (!baby) w_se(k, SE_EM_BEGOMAN_APPEAR);
         if (spring && !strcmp(sc->types + 32 * r->type, "BegomanSpringHide")) { k->item = 1; w_nrv(k, BG_HIDE); } /* mType 1: Hide */
@@ -30823,6 +30839,7 @@ static void begospike_update(Kuribo *k)
     }
     int st = ++k->step;
     V3 tgt = k->ttarget;
+    if (spring && k->jc >= 2 && ++k->jc > 2 + bg_hopend()) k->jc = 0; /* BegomanSpringHead::exeHopEnd: Wait at its clip's end */
     switch (k->nrv) {
     case BG_NOCALCWAIT:
         if (st == 0) k->bind_off = 1;
@@ -30868,6 +30885,7 @@ static void begospike_update(Kuribo *k)
         if (!bg_return(k) && near > 2000.0f && !bg_return(k)) w_nrv(k, BG_WAIT); /* hPursueRange */
         break;
     case BG_TURN: {
+        if (st == 0) bg_head_end(k); /* BegomanSpring::exeTurn */
         bg_rotate(k, 0.4f, 0.5f);
         w_se_lv(k, baby ? SE_EM_LV_BABYBEGO_ROT_MIDDLE : SE_EM_LV_BEGOMAN_ROT_MIDDLE); k->lv2[0] = se_level(baby ? SE_EM_LV_BABYBEGO_TURN : SE_EM_LV_BEGOMAN_TURN, &k->pos.x, k->lv2[0]);
         if (k->on_ground && bg_fall_next(k)) { k->bshow = 0; w_nrv(k, BG_BRAKE); break; }
@@ -30929,7 +30947,7 @@ static void begospike_update(Kuribo *k)
         break;
     case BG_HITREACTION:
         bg_rotate(k, 0.25f, 0.5f);
-        if (st == 0) w_act(k, "HitReaction");
+        if (st == 0) { w_act(k, "HitReaction"); bg_head_end(k); } /* (BegomanSpring::exeHitReaction: tryHopEnd) */
         bg_move(k, tgt, 0.0f, 3.0f, 0.95f, 0.0f); bg_rebound(k, 0); /* hHitReactionParam */
         if (st > 0 && w_bck_stopped(k)) w_nrv(k, BG_PROVOKE);
         break;
@@ -30949,10 +30967,11 @@ static void begospike_update(Kuribo *k)
             if (st > 20) { baby_kill_item(k); return; }
             break;
         }
-        if (st == 0) { w_se(k, SE_EM_BEGOMAN_ROT_STOP); w_act(k, "Damage"); scene_stop = 2; } /* sStopSceneTime */
+        if (st == 0) { w_se(k, SE_EM_BEGOMAN_ROT_STOP); w_act(k, "Damage"); scene_stop = 2; bg_head_hop(k); } /* sStopSceneTime; tryHopStart */
         if (spring) { /* BegomanSpring::exeBlow: on the ground after sBlowFrame 20, Turn's clip and Shake */
             w_se_lv(k, SE_EM_LV_BEGOMAN_SPARK); k->lv2[0] = se_level(SE_EM_LV_BEGOMAN_ROT_MIDDLE, &k->pos.x, k->lv2[0]);
             bg_move(k, tgt, 0.0f, 3.0f, 0.95f, 1.0f); bg_rebound(k, 0);
+            if (st == 20 - bg_hopend()) { w_act(k, "HopEnd"); bg_head_end(k); }
             if (st > 20 && k->on_ground) { w_act(k, "Turn"); w_nrv(k, BG_SHAKE); }
             break;
         }
@@ -30981,24 +31000,24 @@ static void begospike_update(Kuribo *k)
         if (st > 60) { bg_fx(k, "DeathWater", k->pos); w_se(k, SE_EM_BEGOMAN_DEAD_IN_WATER); if (baby) baby_kill_item(k); else bg_kill(k); return; } /* sIsInWaterTime */
         break;
     case BG_SHAKE: /* BegomanSpring::exeShake (sShakeTime 180) */
-        if (st == 0) w_act(k, "Shake");
+        if (st == 0) { w_act(k, "Shake"); if (!k->jc) bg_head_hop(k); } /* !isSpringHop: tryHopStart */
         bg_rotate(k, 0.17f, 0.5f);
         w_se_lv(k, SE_EM_LV_BEGOMAN_SHAKE);
         bg_move(k, tgt, 0.0f, 3.0f, 0.95f, 1.0f); bg_rebound(k, 0); /* hWaitParam */
         k->vel = vmul(k->grav, vdot(k->grav, k->vel));
-        if (st == 180 - bg_hopend()) w_act(k, "HopEnd");
+        if (st == 180 - bg_hopend()) { w_act(k, "HopEnd"); bg_head_end(k); }
         if (st > 180) w_nrv(k, BG_WAIT);
         break;
     case BG_TRAMPLE: /* exeTrample (sTrampleTime 180) */
-        if (st == 0) { w_act(k, "Shake"); w_se(k, SE_EM_BEGOMAN_TRAMPLE); }
+        if (st == 0) { w_act(k, "Shake"); bg_head_hop(k); w_se(k, SE_EM_BEGOMAN_TRAMPLE); } /* tryHopJump */
         bg_rotate(k, 0.25f, 0.5f);
         bg_move(k, tgt, 0.0f, 3.0f, 0.95f, 1.0f); bg_rebound(k, 0); /* hStopParam */
         k->vel = vmul(k->grav, vdot(k->grav, k->vel));
-        if (st == 180 - bg_hopend()) w_act(k, "HopEnd");
+        if (st == 180 - bg_hopend()) { w_act(k, "HopEnd"); bg_head_end(k); }
         if (st > 180) w_nrv(k, BG_SIGNATTACK);
         break;
     case BG_HIDE: /* exeHide: no binding, until Mario is within 1000 */
-        if (st == 0) { w_act(k, "Hide"); k->bind_off = 1; }
+        if (st == 0) { w_act(k, "Hide"); k->bind_off = 1; bg_head_end(k); }
         bg_rotate(k, 0.0f, 1.0f);
         k->vel = v3(0, 0, 0);
         if (vlen(vsub(mc, k->pos)) < 1000.0f) { k->bind_off = 0; w_nrv(k, BG_HOP); }
@@ -32308,6 +32327,7 @@ static void bomb_update(Kuribo *k)
     int st = ++k->step;
     if (in_death(k->pos) && k->nrv != BH_EXPLODE) w_nrv(k, BH_EXPLODE), st = ++k->step; /* control: isInDeath */
     if (k->timer > 0 && k->nrv != BH_EXPLODE) { /* control: the fuse */
+        k->lv2[0] = se_level(SE_EM_LV_BOMB_FUSE, &k->pos.x, k->lv2[0]);
         w_se_lv(k, k->timer <= 120 ? SE_EM_LV_BOMB_ALARM_FAST : k->timer <= 300 ? SE_EM_LV_BOMB_ALARM_MIDDLE : SE_EM_LV_BOMB_ALARM_SLOW);
         if (--k->timer == 0) { w_nrv(k, BH_EXPLODE); st = ++k->step; }
     }
@@ -44370,6 +44390,7 @@ static void update_shots(void)
         if (!hit && hana_shot(s->pos)) hit = 1;
         if (!hit && dd_shot(s->pos)) hit = 1;          /* Dodoryu, its hill */
         if (!hit && bsb_shot(s->pos)) hit = 1; /* BossStinkBugBomb */
+        if (!hit && kj_jr_shot(s->pos)) hit = 2; /* KoopaJr (NPCActor): isMsgStarPieceReflect */
         if (!hit && km_shot(s->pos)) hit = 1; /* KameckFireBall */
         if (!hit) hit = pol_shot(s->pos); /* PoltaRock: isMsgStarPieceAttack; Polta: isMsgStarPieceReflect */
         if (!hit && bgb_shot(s->pos)) hit = 2; /* BigBubble: isMsgStarPieceReflect */
@@ -51811,14 +51832,22 @@ static void update_bsb_bombs(void)
             V3 np = vadd(o->pos, o->vel);
             Hit h[8];
             int n = kcl_query(np, 60.0f, h, 8), bound = 0;
+            o->wet = 0;
             for (int k = 0; k < n; k++) {
                 if (bsb_mine(h[k].inst)) continue;
                 np = vadd(np, vmul(h[k].n, h[k].dist));
                 float vn = vdot(o->vel, h[k].n);
                 if (vn < 0) o->vel = vsub(o->vel, vmul(h[k].n, 1.8f * vn)); /* reboundVelocityFromCollision 0.8 */
                 bound = 1;
+                int fc = h[k].attr & 0x3F; /* isBindedGroundWater: WaterBottomH / M / L, Wet */
+                if (vdot(h[k].n, g) < 0 && fc >= 20 && fc <= 23) o->wet = 1;
             }
-            if (bound && dn >= 9.5f) se_start(SE_BM_BOSS_BUG_BOMB_GROUND, at); /* (its volume by the impact: none) */
+            if (bound && dn >= 9.5f) { /* levelA 100 x the impact's 10.5..30 as 0.3..1: the volume (modifySe_Gohara; the water's none under 50) */
+                float lv = (float)(int)(100.0f * liner(dn, 10.5f, 30.0f, 0.3f, 1.0f));
+                u32 hd = se_start(SE_BM_BOSS_BUG_BOMB_GROUND, at);
+                if (hd) se_volpitch(hd, lv / 100.0f, 1.0f);
+                if (o->wet && lv >= 50.0f && (hd = se_start(SE_BM_BOSS_BUG_BOMB_GROUND_WATER, at))) se_volpitch(hd, lv / 100.0f, 1.0f);
+            }
             o->pos = np;
             o->vel = vmul(o->vel, bound ? 0.9f : 0.98f); /* attenuateVelocity */
             bsb.blv[i] = se_level(o->t < 112 ? SE_BM_BOSS_BUG_BOMB_COUNT1 : SE_BM_BOSS_BUG_BOMB_COUNT2, at, bsb.blv[i]);
@@ -51829,6 +51858,7 @@ static void update_bsb_bombs(void)
         } else { /* exeExplosion */
             if (o->t == 0) {
                 se_start(SE_BM_BOSS_BUG_BOMB_BANG, at); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, o->pos, vmul(g, -1.0f));
+                if (o->wet) se_start(SE_BM_BOSS_BUG_BOMB_BANG_WATER, at); /* isBindedGroundWater */
                 float dm = vlen(vsub(mario->pos, o->pos));
                 if (dm < 800.0f) { pad_rumble(RUMBLE_STRONG); camera_shake(SHAKE_STRONG); } /* tryRumblePadAndCameraDistanceStrong */
                 else if (dm < 1200.0f) { pad_rumble(RUMBLE_MIDDLE); camera_shake(SHAKE_NORMAL); }
@@ -51888,6 +51918,31 @@ static float bsb_spring(void) /* SpringValue::update (0.02, 0.95) */
     bsb.spv += bsb.spvel;
     return bsb.spv;
 }
+/* BossStinkBug::isLegInWater: one of its six leg ground checkers (GroundChecker 30 at RightFootA3 .. LeftFootC3, bound
+ * to the ground while onBindLeg) stands on a water floor (isBindedGroundWater). ponytail: no checkers (they come with
+ * the leg IK): the floor within 30 of each foot joint of the clip, looked for down to 90 under it */
+static int bsb_leg_in_water(void)
+{
+    static const u8 foot[6] = {36, 24, 40, 28, 44, 32}; /* BossStinkBug.bdl JNT1: sLegJointNameList */
+    float b[16], jm[16];
+    V3 g = bsb_g();
+    bsb_base(b);
+    for (int i = 0; i < 6; i++) {
+        bsb_joint(bsb.anim, b, foot[i], jm);
+        for (int d = 0; d <= 90; d += 30) {
+            Hit h[4];
+            int n = kcl_query(vadd(v3(jm[12], jm[13], jm[14]), vmul(g, (float)d)), 30.0f, h, 4), any = 0;
+            for (int k = 0; k < n; k++) {
+                if (bsb_mine(h[k].inst) || vdot(h[k].n, g) >= 0) continue;
+                int fc = h[k].attr & 0x3F;
+                if (fc >= 20 && fc <= 23) return 1; /* WaterBottomH / M / L, Wet */
+                any = 1;
+            }
+            if (any) break;
+        }
+    }
+    return 0;
+}
 /* ActionBase::update*: 1 when done */
 static int bsb_upd(int which)
 {
@@ -51911,6 +51966,7 @@ static int bsb_upd(int which)
     case BA_SHAKEOFFRUN: case BA_RUN: case BA_GROUNDRUN: { /* updateGroundRun(sRunSpeed 20; FlyHigh 25) */
         float sp = which == BA_GROUNDRUN ? 25.0f : 20.0f;
         if (first) bsb_bck("groundrun", 1); /* validateAttack (attack_left / right: their attackSensor does nothing) */
+        if (bsb_leg_in_water()) bsb_lv(5, SE_BM_LV_BOSS_BUG_RUN_ADD_WATER);
         bsb.a48 = sp * bsb_rate(60); bsb_move_rail(bsb.a48, 0, 0);
         return st > 180;
     }
@@ -51922,6 +51978,7 @@ static int bsb_upd(int which)
     case BA_COOLDOWN:
         if (first) bsb_bck("cooldown", 1);
         bsb_lv(4, SE_BM_LV_BOSS_BUG_BRAKE);
+        if (bsb_leg_in_water()) bsb_lv(5, SE_BM_LV_BOSS_BUG_RUN_ADD_WATER);
         bsb.a48 *= 0.95f; bsb_move_rail(bsb.a48, 0, 0);
         return bsb_bck_stopped();
     case BA_TURN:
