@@ -2974,6 +2974,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         int tr = scene_type(s, "TeresaRacer"), raster = 0;
         for (u32 i = 0; tr >= 0 && i < s->nobjs; i++) raster |= (int)s->objs[i].type == tr && s->objs[i].arg[0] != -1;
         raster |= scene_type(s, "RasterScrollCube") >= 0; /* (MarioCollision's setRasterScroll in it) */
+        raster |= scene_type(s, "HazeCube") >= 0; /* (haze_draw) */
         render_target_reserve(st_mapboard || scene_type(s, "MirrorAreaCube") >= 0 || raster);
     }
     gw_init();
@@ -48918,6 +48919,23 @@ static void wall_shade_draw(void)
     }
     render_mesh_vc(pos, uv, col, 17, idx, 16, NO_TEX, 1);
 }
+/* HeatHazeDirector::movement / HeatHazeEffect (Screen/HeatHazeEffect.cpp, AreaObj/HazeCube.cpp): with Mario in a
+ * HazeCube the effect appears (its ShimmerBoard's BTK from 0), out of it it is killed.
+ * ponytail: the ShimmerBoard (1600 x 900 at 1000 before the camera: the whole view) bends the frame behind it by an
+ * indirect texture, which the GS has not: render_raster_scroll's row shifts of the whole frame instead, amplitude
+ * 1.625 (the map's swing, 84..136, times the indirect matrix's 0.5 x 2^-3 texels), period 120 (its BTK: the map
+ * scrolled once down), wavelength 216 rows (the map's tile, 400 wide at 1000, at fovy 45). The cube's distance arg0
+ * (500 / 1000: what stands nearer than the board is not bent) is unused */
+static struct { int on, t; } haze;
+static void haze_update(void)
+{
+    if (area_obj("HazeCube", mario->pos) < 0) { haze.on = 0; return; }
+    if (!haze.on) { haze.on = 1; haze.t = 0; } else haze.t++;
+#ifdef PUT_TEST
+    if (haze.t % 120 == 0) printf("haze: on, frame %d" "\n", haze.t);
+#endif
+}
+static void haze_draw(void) { if (haze.on) render_raster_scroll(1.625f, 120, 216.0f, haze.t); }
 /* GlaringLightArea::movement (the areas with a SW_A): SE_OJ_RAY_START at its place when the switch comes on after
  * having been off (mIsValid starts true: none for a light on from the start) */
 static void update_glaring_lights(void)
@@ -49025,6 +49043,7 @@ static void keep_effects(void)
     update_sound_emitters();
     update_glaring_lights();
     wall_shade_calc();
+    haze_update();
     update_quake();
     float m[16];
     for (int i = 0; i < npieces; i++)
@@ -58512,6 +58531,7 @@ void game_draw(void)
     PROF(6);
     render_world_done(); /* the blended instances (an Air's sky) under the HUD and talks */
     mario_draw_raster(); /* MarioActor::drawRasterScroll (its draw: the 3D done) */
+    haze_draw(); /* HeatHazeEffect (DrawBufferType_IndirectMapObj) */
     if (ac_capture == 1) { render_screen_capture(); ac_capture = 2; } /* SystemWipeHolder::startGameScreenCapture */
     else if (ac_capture == 2) render_screen_captured(); /* the captured screen under the wipe ring */
     talk_draw();
