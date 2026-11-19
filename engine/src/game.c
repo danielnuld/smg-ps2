@@ -15860,7 +15860,6 @@ static void update_candles(void)
  * no fire throw / spin animations, no BGM_FIRE */
 static void kr_star(Kuribo *k, int fire);
 static int rb_shot(V3 p, float rad, int shell);
-=======
 static int cage_jet_hit(V3 p, float rad);
 static int kr_jet(Kuribo *k), kr_pursuing(const Kuribo *k);
 static void kr_pieces(Kuribo *k);
@@ -16314,7 +16313,6 @@ static void update_jets(void)
             if (!gone && kiraira_shot(p, 60.0f, 1)) gone = 1; /* Kiraira: isMsgJetTurtleAttack (force-detonated) */
             if (!gone && rb_shot(p, 60.0f, 1)) gone = 1; /* RingBeamer: isMsgJetTurtleAttack taken (nothing happens to it) */
             if (!gone && orock_hit(p, 60.0f, 1)) gone = 1; /* OtaRock: isMsgJetTurtleAttack: Down */
-=======
             if (!gone && cage_jet_hit(p, 60.0f)) gone = 1; /* BreakableCage (its five kinds): isMsgJetTurtleAttack: tryBreak */
             hhp_blow(p, 60.0f); /* HammerHeadPackun: isMsgJetTurtleAttack */
             tbox_hit(p, 60.0f); /* TreasureBoxCracked: isMsgJetTurtleAttack */

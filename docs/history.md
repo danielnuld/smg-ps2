@@ -20,7 +20,6 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   galaxy). Test: `pullback` with `XF=-DPWR_TEST` (HeavensDoorGalaxy/1: he is put 1500 up and 1000 ahead and
   doRecovery called; "pwr test" lines, "point warp recovery: done"). Left out: 引き戻し浮遊's volume by the flight's
   middle (full volume), MarioActor::_A6E and the binder off (_F44), _934 / _EA4.
-=======
 - Enemy audit, fifth batch (feat/enemy-audit-5, #773, 2026-11-19, agent moves, finished by the lead; **not run in
   PCSX2** beyond what its PR says): the placed FireBubble after FireBubble.cpp (`update_fbubs`: Appear / Wait / Chase /
   Down / WaitToAppear, burns Mario, a star piece gives a coin; only OtaKing's six existed; drawn as the still model,
@@ -32,7 +31,6 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   (`sbp_shot`: SpinReaction) and Pukupuku; Petari's StartSmoke / WalkSmoke / RunSmoke / LeaveAppearanceSmoke; the
   Begomans killed by a fire floor (Fall) and their AttackBlur in Pursue; Pukupuku's Land / WaterColumn / SpinDamage
   effects; EyeBeamer's BeamSurface only with arg1 over 0. No pack change.
-=======
 - MeteorStrike's effects, part of #653 (fix/653-meteor, 2026-11-19): update_meteor emitted nothing. Now, on the
   model's group for the three classes (initEffectKeeper(0, nullptr): MeteorStrike), `MeteorStrike` kept from
   showModel to the break, `MeteorStrikeBreak` at exeBreak, emitEffectColumn's LavaColumn at the ground
@@ -40,7 +38,6 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   MeteorStrikeEnvironment out of the screen is killed (exeMove). ElectricRail's demo Disappear plays
   SE_OJ_ELEC_RAIL_VANISH (still gone at once: no 20-frame shrink). Test: `meteor`. Left of #653: the broken model
   (MeteorStrikeBreak's Break clip), the shadow's growth, ArrowSwitch's lock and push.
-=======
 - UnizoLauncher after Petari (feat/768-unizo-launcher, #768, 2026-11-19): the class had no code and its row was not
   packed (1 placed: VolcanoPlanetZone, IceVolcanoGalaxy / SkullSharkGalaxy). `update_unizo_launchers`: Wait until its
   step passes 300, then the first dead one of its four UnizoLand (hosted WALK_UNIZO walkers, `host` -3, dead at
@@ -48,7 +45,6 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   row alive. tools/slice.py: LOGIC UnizoLauncher, EXTRA UnizoLand / UnizoLandBreak (**repack** IceVolcanoGalaxy,
   SkullSharkGalaxy). Test: `walker` with `XF=-DUZL_TEST` ("unizo launcher row", "uzl test" lines). Left out: its
   Body sensor (100, it attacks nothing).
-=======
 - CrystalCageMoving after Petari (feat/728-crystal-cage-moving, #728, 2026-11-19): the class had no code (1 placed:
   MarioLancherLecture3Zone, BattleShipGalaxy; a mappartsinfo row, so it rode its rail and, wrongly, turned with the
   generic rotator). statics.inc `st_ccm` (ST_CCM): WaitBig / BreakBig / WaitSmall / BreakSmall / BreakAll and the
@@ -59,7 +55,6 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   CrystalCageMoving (Wait / CoreWait, the BreakOutside / BreakInside effects), EXTRA Tico (**repack**
   BattleShipGalaxy). Test: plain with `XF=-DST_CCM_TEST` ("crystal cage moving", "ccm test" lines). Left out: the
   Tico's ColorChange frame and draw order, the star pointer.
-=======
 - What the cages hold, part of #648 (feat/648-cage-items, 2026-11-19): DummyDisplayModel was not ported, so a
   CrystalCageS / M or a BreakableCage looked empty (the disc places coins, star pieces, Kinopios, Ticos, 1-ups,
   chips, SuperSpinDrivers... in them: Good Egg's DinoPackunBattleZone among them). tools/slice.py: `ddm_arcs` (in
@@ -75,7 +70,6 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   any enemy attack but fire (`explosion_breaks`) breaks them; their star piece (arg7 4) is StarPieceDummy at its
   Rotation pose (DdmStarPieceR, the clip not played). Left of the BreakableCage list: SW_DEAD's timing, the break
   camera demo.
-=======
 - The placed BenefitItemObjs after Petari, #652 (feat/652-benefit-item, 2026-11-19): `benefit_update` gains what
   the audit listed: appear() by arg1 & 15 (0 with arg2: PreEscape; 2 / 3: appearThrowUp, the new Shoot nerve, row_turn
   5; SE_SY_ITEM_APPEAR; arg1 & 0x80 AppearPicture), SE_OJ_KINOKO_1UP_GROW, Escape's RUN_START / the RUN level sound /
