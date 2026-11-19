@@ -9,7 +9,7 @@ Verdicts: **ok** the class was read against the port in this audit and matches (
 port on the PS2; **ported, not re-read** the port has it (its own header comment cites Petari) but this audit has not
 gone through it yet: the next pass starts there.
 
-Started 2026-11-18. Rows are in the order seen most.
+Started 2026-11-18. Rows are in the order seen most. The fixes under #640, #641, #658 and #659 are PR #685.
 
 ## The HUD
 

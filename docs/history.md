@@ -31,6 +31,11 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   log `result: information System_Result009`). **Repack: lyt.py** (menus.bin; the engine runs on the old one, the
   new layouts then stay off). Not ported, issues: CometRetryButton #660, GalaxyCometScreenFilter #661,
   BombTimerLayout / NoteCounter / SuddenDeathMeter #662, the map in the domes #663, SysInfoWindow's A button #679.
+  Seen in PCSX2 (menus.bin from an overlay): `miss` (the wipe, Mario's icon x 3 on the black screen, `miss left:
+  4 -> 3`, the stage again, then the game over to the title), `result` with RESULT_COMPLETE (BGM_ASTRO_RETURN,
+  BGM_GALAXY_COMPLETE + System_Result009, BGM_HIGH_SCORE, the star pieces, System_Result001 with its A button in
+  the dome, System_Result007, the save), `route` EggStar 1 (its star). Not run: the 1UP board and the star
+  pieces' 1-up, the Tico's voice (the opening), the Sight (`launcher`), the pause menu's changes.
   ponytail: the load after PlayerMissLeft and before the Tico's voice is not concurrent; no layout effects.
 - Per-class tables out of bss, 2 (perf/tables-arena-2, #657, 2026-11-18; the rule: the note of #630 below):
   SpiderThread's `sth.pt` / `.mp` / `.part` (117 KB; sth_init, from game_init's spider_thread_scene with a TombSpider
