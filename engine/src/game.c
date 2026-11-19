@@ -4494,7 +4494,10 @@ static void update_pickup_groups(void)
                 if (row_turn[i] == 1) { pgroup_kill_pieces((int)i); row_turn[i] = 3; } /* makeActorDead */
                 continue;
             }
-            if (r->sw[SW_APPEAR] < 0 && !row_turn[i]) row_turn[i] = 1;
+            if (!row_turn[i]) { /* out: at init without an appear switch; else appear() (the switches' pass does the same when it sees the change) */
+                row_turn[i] = 1;
+                if (r->sw[SW_APPEAR] >= 0) { V3 gp = row_pos(r); se_start(SE_OJ_STAR_PIECE_BURST, &gp.x); }
+            }
             if (kind == 1 && r->arg[5] != -1 && row_turn[i] == 1) { /* control: _A4 */
                 if (!(row_hold[i] & 0x8000)) row_hold[i] = (unsigned short)(0x8000 | (r->arg[5] > 0 ? (r->arg[5] > 0x7FFF ? 0x7FFF : r->arg[5]) : 0));
                 int left = (row_hold[i] & 0x7FFF) - 1;
