@@ -47306,7 +47306,7 @@ static void benefit_update(Inst *in)
     float br = inv ? 60.0f : 50.0f; /* initBinder */
     V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), g = vmul(up, -1.0f);
     if (*ph == 4) { in->invisible = 1; return; }
-    if (in->item != ITEM_ONEUP && !strcmp(cur_comet(), "Dark")) { *ph = 4; in->invisible = 1; row_dead[in->row] = 1; return; } /* _D8: makeActorDead */
+    if (*t == 0 && in->item != ITEM_ONEUP && !strcmp(cur_comet(), "Dark")) { *ph = 4; in->invisible = 1; row_dead[in->row] = 1; return; } /* _D8: makeActorDead */
     if (*ph == 0 && *t == 0 && r->sw[SW_APPEAR] >= 0) { /* appear() */
         int d9 = r->arg[1] == -1 ? 0 : r->arg[1] & 0xF;
         if (d9 == 1) { se_start(SE_SY_ITEM_APPEAR, NULL); *ph = 1; } /* appearGround */
@@ -47328,7 +47328,7 @@ static void benefit_update(Inst *in)
         int wall = 0, ground = collide_n(&center, up, br, &gn, &wn, &wall);
         if ((ground && (ground_attr & 0x3F) == 10) || (*ph != 1 && in_death(pos))) {
             bi_fx(in, "Vanish", NULL);
-            *ph = 4; in->invisible = 1; row_kill(in->row); /* kill */
+            *ph = 4; in->invisible = 1; row_dead[in->row] = 1; /* kill (LiveActor::kill: makeActorDead, no dead switch) */
             printf("benefit item %d: vanished (%s)%c", in->row, ground && (ground_attr & 0x3F) == 10 ? "a fire floor" : "a death area", 10);
             return;
         }
