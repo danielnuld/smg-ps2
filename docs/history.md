@@ -87,6 +87,23 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   once before the scene's own start of the stage BGM (the starter's), which then restarts it: left as it is.
   ponytail: setNextIdStageBgm as bgm_next (started once the stream stopped). Repack: every galaxy with a ChangeBgmCube
   (slice.py LOGIC; they were dropped from the packs): 110 cubes in 14 galaxies and 6 zones.
+- NPC reactions (feat/npc-reactions, #586, 2026-11-18; docs/sound-gaps.md's NPC classes): npc_react returned its spin
+  and pointing starts in bit 0, the trample's (a spin by a Kinopio / PenguinMaster / TicoFat played the trampled
+  voices): each start has its bit now, plus 16 for NPCActor's _DB (a star piece reflected on the body: update_shots'
+  npc_shot on the sensors npc_react lists each frame; _E5 between the trample and the spin as updateReaction), and
+  near 0 (_12C) takes the spin as his spin attack on the body. The star piece voices of Kinopio, PenguinMaster,
+  TicoComet / TicoShop, TicoFat, PenguinSkater / PenguinRacer (their Reaction clip). npc_reaction (game.c): the
+  Reaction nerve of the NPCs that had none, from update_npc_turn (Tico / TicoAstro / TicoStarRing: a star piece is an
+  attack and starts Delight, its Spin clip and Common_Tico000 forced; Penguin; PenguinCoach; Caretaker, and its
+  SE_SM_LV_CARETAKER_WAIT; Rabbit), update_bees (HoneyBee::control), update_talkers (Butler / ButlerMap::control),
+  LuigiNPC's Wait (and the star piece on the tree: SE_SM_STAR_PIECE_HIT, OnTreeFall) and Rosetta's talk in the
+  Observatory. Their sensors, _12C, clips and sounds: the comment over npc_reaction. Not ported: SE_BM_BUTLER_ABSORB
+  (Tico.cpp:297: no such name in the sound table), the POINTED_2P names are played from the port's pointer (R2),
+  Rabbit's Behavior_Wait nerves (HOP / CHANGE_*: no placement has arg1 0), PenguinStudent (no Reaction nerve in
+  Petari). Test: `talk` with XF="-DTALK_CLS=n -DREACT_TEST" (a drop onto the talker, a spin, the pointer, a star
+  piece). Seen in PCSX2: Tico (EggStarGalaxy/1: trampled, spun, pointed, Delight), Rosetta (AstroGalaxy/1); the other
+  classes share the code and were not run. EggStarGalaxy 1's sound pack answers `se?` (not in the pack) for
+  SE_SV_TICO_TRAMPLED / SE_SV_TICO_POINT although docs/sfx-cut.csv keeps them: the sound packs need cutting again.
 - #9 (issue #3) EE performance: Good Egg bench, EE time a frame (render_begin's flip / VIF / clear wait now printed
   apart: ~3.4 ms of the old "draw" was that wait): start view 19.9 -> 12.5 ms (logic 6.7 -> 5.1, draw 12.7 -> 7.0),
   path 16.4 -> 11.5, worst 38-42 -> 26. Clip cache sized per clip (inflates 8300-15000 -> 7-22 a bench), skinned
