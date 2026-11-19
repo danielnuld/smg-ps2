@@ -11,6 +11,14 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- MapPartsRotator's RotateAccelType 1 (feat/735-rotator-accel, #735, 2026-11-19): DarkHopperRotateStepA / PlanetA
+  (DarkRoomGalaxy), TeresaMansionLightA / B (PhantomGalaxy), SandRiverLightA (TransformationExGalaxy) turned at
+  constant speed. rotor_step now eases them as updateVelocity: the speed grows by _18 x _18 / RotateAngle a frame up
+  to the half way and falls back after it, StopAtEnd when it is back to 0 (RotateStopTime frames), then restartAtEnd
+  (RotateType 1: the other way; 0: stopped). mIsOnReverse (the speed's sign changing, as Petari compares it: at the
+  first and last step of a swing the negative way) plays the StageEffect start SE from MapObjActor::control, on a
+  name with the TYPE flag of #734 (none in an older pack). State: RotAcc, a table of the scene's rows from the
+  arena. Test: `XF=-DROTACC_TEST` (their switches on at frame 600, angle and speed logged).
 - RainCloud (feat/692-raincloud, #692, 2026-11-18): 69 placed (OceanRingZone layers C / D, ReverseForestHomeZone),
   generic rail parts before. update_rainclouds after RainCloud.cpp: Wait / Appear / Disappear / End / SoftTouch /
   HardTouch (Mario falls through a cloud for 60 frames unless he is a bee; OnBee under a bee; Disappear at its rail's
