@@ -18,6 +18,15 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   checkPlayerOnTop: Mario rising in a jump after one frame on a panel flips it (update_flips). The rest of #653 stays
   open (MeteorStrike's cadence and effects, ElectricRail's demo vanish, ArrowSwitch's lock and push, the placed
   KeySwitch's appear, LavaBreakColumn's SE, MapObjConnector, the chips' cannot-get time).
+- Mario's ponytail marks, batch 3 (feat/750-mario-marks-3, #750, 2026-11-19): doLanding (MarioJump.cpp:2485 / 2605 /
+  2626): no quick landing out of 水上ダメージ中, 中ダメージ着地 for it in the default case, ショート着地 on ground over 8
+  degrees (isBlendWaitGround); checkRetain's !isAnimationRun(nullptr) in a jump (MarioMove.cpp:942); isEnableStickWall
+  carrying something (MarioActor _468, MarioWall.cpp:366): no wall slide, A at the wall is the triangle jump at once;
+  Mario::isCurrentShadowFloorDangerAction (MarioCollision.cpp:1239) with Mario::update's pull (Mario.cpp:1758): the
+  face under his shadow of another code than his ground's that acts on him (the damages, the jump floors, the sinks,
+  Needle, RailMove, AreaMove), 5 or more under his ground's place and ahead: 5 a frame towards it. The stale claims
+  of the movement's header (no squat uppercut, 2D, sand, slider, side step) removed. The marks left, by the engine
+  piece each needs, are in the PR. Not run in PCSX2 but for the route (star at f 4281) and the fire floor's dance (XF=-DSINK_TEST=10 HellProminenceGalaxy 1: as before).
 - TrickRabbitFreeRunCollect, the pack side (feat/751-trick-rabbit-collect-pack, #751, 2026-11-19, agent npc3):
   SnowCapsuleGalaxy's collector (Petari TrickRabbitSnowCollect) has no model; its three rabbits are the
   TrickRabbitFreeRunChild rows of childobjinfo (TrickRabbitSnow: the TrickRabbit archive). slice.py drew a rabbit at the
