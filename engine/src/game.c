@@ -9517,6 +9517,15 @@ int game_test_capture(int small, float d)
  * fallbacks; ME_MAGIC / ME_MAGIC_L (me.c) when the BGM has a chord, else SE_SY_S_SPIN_DRV_ME_ALT */
 static u32 launch_fly_snd;
 static void launch_sound(const Launch *L, u32 id) { float at[3] = {L->pos.x, L->pos.y, L->pos.z}; se_start(id, at); }
+/* SpinDriver::exeShootStart / SuperSpinDriver's: emitEffect SpinDriverStart / SuperSpinDriverStart (after its Light's
+ * deleteEffect: the light is kept only while lit) */
+static void launch_start_fx(const Launch *L)
+{
+    float m[16];
+    int small = L->start < 45;
+    basis_matrix(m, L->pos, up_at(L->pos, mario->up), v3(0, 0, 1), 0);
+    fx_named(small ? "SpinDriver" : "SuperSpinDriver", small ? "SpinDriverStart" : "SuperSpinDriverStart", m, NULL, NULL);
+}
 static void mario_se(u32 id) { float at[3] = {mario->pos.x, mario->pos.y, mario->pos.z}; se_start(id, at); }
 
 static int update_launch(Player *m)
@@ -9560,6 +9569,7 @@ static int update_launch(Player *m)
                 if (in_water(L->pos, L->up, NULL)) launch_sound(L, SE_PM_SPIN_DRV_IN_WATER_1);
             }
             if (mario_anim) mario_play(small ? "spin" : "superspindriverstart", 1.0f, 0);
+            launch_start_fx(L);
         }
         return 1;
     }
@@ -24224,6 +24234,7 @@ static void update_mario_(void)
                     if (in_water(launches[i].pos, launches[i].up, NULL)) launch_sound(&launches[i], SE_PM_SPIN_DRV_IN_WATER_1);
                 }
                 if (mario_anim) mario_play(launches[i].start < 45 ? "spin" : "superspindriverstart", 1.0f, 0);
+                launch_start_fx(&launches[i]);
 #ifdef BENCH
                 printf("launch %d\n", i);
 #endif
