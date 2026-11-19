@@ -11,6 +11,72 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- CollisionArea (feat/638-areas-named-nowhere, #656, 2026-11-18, agent areas2): 163 placed in 29 stage archives (20
+  galaxies), its rows were not in the packs. `update_collision_areas` (CollisionArea::movement, keep_effects) and
+  `col_area_hit` (hitCheck): Mario's centre against the centre origin box by a radius (arg2: 50 in 20 of them, else
+  his hit radius 60, 100 as Teresa); hit, MR::pushPlayerFromArea (Mario::push, `s350`): from inside along the nearest
+  face by the radius and his depth (_40), from outside to the radius off the face's or edge's point when that goes
+  along the normal. A vanished Teresa Mario passes (arg1 -1: _58, 5 more of radius until he is out). The corner
+  region measures from the corner without the box's centre, as Petari does (it hits only by the world's origin).
+  col_areas: the rows in MEM_SCENE (2 bytes an area). ponytail: AreaPolygon (arg3 not 0, 118 of them: the nearest
+  face's two triangles, 10 out, as a DynamicCollisionObj: a wall for his binder, the camera and the other actors) is
+  not ported, the push alone holds him; addVelocityFromArea's _EA4 and rush hosts but a launch star and the Tamakoro
+  not checked. None follows an object (Obj_ID -1 in all). The put test takes its class from host:put.txt
+  (-DPUT_FILE: one ELF, a class a run; Mario put PUT_UP along the row's own up).
+  Tests of the four notes (#638, #639, #655, #656; one PR), plain with `XF="-DPACKS_OVERLAY=<overlay> -DPUT_TEST=HazeCube
+  -DPUT_FILE -DPUT_UP=100 -DPUT_NOCAM -DPUT_HOLD"` and the class in out/put.txt: KoopaBattleVs2Galaxy/1
+  DarkMatterCylinder "dark matter 1" (he lives: only the cube kills him) and PlaneCollisionCube "plane col 1";
+  HoneyBeeKingdomGalaxy/1 BeeWallShortDistAreaCube "bee short 1", and there "wall shade: row 114 cyl 1 ... dist 201"
+  (the ExtraWallCheckCylinder's face found, _208 eased to it); PhantomGalaxy/1 GlaringLightAreaCylinder "glaring 1";
+  HellProminenceGalaxy/1 HazeCube "haze: on" at 60 fps, CollisionArea "collision area: row 56 count 0 push 227 349
+  242" then count 1 at its face; EggStarGalaxy/2 CollisionArea (a plate of MysteryGravityRoomZone, 0.01 x 0.5 x 0.5:
+  the rails of its corner bridges) "count 0 push 50 0 0". With the overlay's CollisionArea rows: the route test
+  (EggStarGalaxy/1) still gets its star at f 4281, and XF=-DGROOM_TEST=1 (EggStarGalaxy/2, #557) still walks the
+  corner bridge onto the wall (`groom ... ok`, no push on the way). Not seen: SandClockGalaxy/1's ExtraWallCheckArea
+  (the area found, "no face within 1000" from the place Mario was put: the cubes there are 6000 wide), the shade's
+  fan in a picture (a quarter dark at its centre: not told apart in the still), the haze's wobble (a still), the
+  items got through plane_get, Teresa Mario turned back, SE_OJ_RAY_START, Karon / Metbo in the cylinder (no pad, no
+  such enemy there in the test). Memory: _end +7936 B (memcheck against the same tree without them). Repack:
+  slice_all.py (slice.py LOGIC) for AstroDome, BattleShipGalaxy, CannonFleetGalaxy, EggStarGalaxy, FactoryGalaxy,
+  FloaterOtakingGalaxy, HeavenlyBeachGalaxy, HeavensDoorGalaxy, HellProminenceGalaxy, HoneyBeeExGalaxy,
+  HoneyBeeKingdomGalaxy, IceVolcanoGalaxy, KoopaBattleVs1Galaxy, KoopaBattleVs2Galaxy, KoopaBattleVs3Galaxy,
+  KoopaJrShipLV1Galaxy, OceanFloaterLandGalaxy, OceanPhantomCaveGalaxy, OceanRingGalaxy, PhantomGalaxy,
+  ReverseKingdomGalaxy, SandClockGalaxy, TeresaMario2DGalaxy, TransformationExGalaxy; sound.py --pack for
+  OceanPhantomCaveGalaxy and PhantomGalaxy (SE_OJ_RAY_START once GlaringLightAreaCylinder is in their TYPE).
+- HazeCube's heat haze (feat/638-areas-named-nowhere, #655, 2026-11-18, agent areas2): `haze_update` (HeatHazeDirector::movement,
+  Screen/HeatHazeEffect.cpp): with Mario in a HazeCube (9 placed: HellProminenceGalaxy and its zones,
+  FloaterOtakingGalaxy, IceVolcanoGalaxy's IceRingB / VolcanoPlanet, KoopaBattleVs3D) the effect appears, its
+  ShimmerBoard's BTK from 0; out of it it is killed. ponytail (`haze_draw`): the ShimmerBoard (1600 x 900 at 1000
+  before the camera: the whole view) bends the frame behind it by an indirect texture, which the GS has not;
+  render_raster_scroll (#492) shifts the frame's rows instead, with the board's numbers: amplitude 1.625 (the map's
+  swing 84..136 times the indirect matrix's 0.5 x 2^-3 texels), period 120 (the BTK scrolls the map once down),
+  wavelength 216 rows (the map's tile, 400 at 1000, at fovy 45). The cube's distance arg0 (what stands nearer than
+  the board is not bent) unused. Such a scene reserves the target blocks (render_target_reserve: less texture
+  cache).
+- Mario's wall shade (feat/638-areas-named-nowhere, #639, 2026-11-18, agent areas2): ExtraWallCheckArea (8: SandTowerZone,
+  WallClimbEX A / B / C) and ExtraWallCheckCylinder (1: HoneyQueenZone), all arg0 1000. `wall_shade_calc`
+  (MarioActor::calcViewWallShadowModel, each frame in keep_effects): from his centre along the cube's Z, or towards
+  the cylinder's axis (calcCylinderToCenter), arg0 far, the first face of the map (map_line); _208 follows its
+  distance (0.9 / 0.1), out of the area it grows 10 a frame to 1000 along the last area's line;
+  updateRandomTexture(_208): the two 8 x 8 masks in turn, a texel up 4 with the chance 1 - _208 / 1000, else down 1.
+  `wall_shade_draw` (drawWallShade, after his shadow): a fan of radius 100 on that face, black, alpha 128 at the
+  centre to 1 at the rim, times the mask. Not on a bee's wall. ponytail: the mask as its mean (no grain), drawn 3
+  before the face with the usual depth test (GX: 5 behind it, GX_GREATER); the silhouette of his simple model
+  flattened on the wall (viewCalcRef(3)) not drawn; _A08 & 2 (the glass floors' reflection) not in the port.
+- Four areas named nowhere (feat/638-areas-named-nowhere, #638, 2026-11-18, agent areas2): PlaneCollisionCube (14 placed;
+  Mario::updateCubeCode's _10._6 `m_plane_col`: MarioActor::attackOrPushSensor's else branch, `plane_get` in
+  `collect`: a coin / purple coin / star piece out of his reach is got when, flattened along the camera's Z, it is
+  within 250 of his depth and on his cylinder), BeeWallShortDistAreaCube (4; updateBeeStickMode's cancel radius
+  mBeeWallWalkCancelRadiusShort 300 inside: the comment said it was placed nowhere), GlaringLightAreaCylinder (24;
+  `in_glaring_light`: valid by its SW_A, as teresa.inc's ascension asked already of rows that were not in the packs;
+  Teresa Mario turned back inside, MarioCollision.cpp:2269; `update_glaring_lights`: SE_OJ_RAY_START when the SW_A
+  comes on), DarkMatterCylinder (2, KoopaBattleVs2Galaxy; MR::isInDarkMatter `in_dark_matter`, the cube or the
+  cylinder, kills Karon and Metbo: Mario asks only for the cube). area_obj_x(cls, p, sw_a); area_obj's class cache
+  40 -> 48. Placed in no stage (every info file of every archive read), nothing ported: ShadeCube, RaceJudgeCube,
+  CameraRepulsiveSphere / Cylinder, SunLightArea, PipeModeCube, NinForceWindCube, NinAbyssCube, BigBubbleGoalArea,
+  WarpCube, BindEndCube, OnimasuCube. Still unnamed of AreaObjContainer's table: ViewGroupCtrlCube (624 placed:
+  ViewGroupCtrl's far clip level 0 and forced LOD for the actors of its ViewGroupId, which the packs' rows do not
+  carry) and the guidance cubes (Wii controls).
 - LavaJamboSunPlanet (feat/704-lava-jambo-sun, #704, 2026-11-18): MapObj/LavaJamboSunPlanet.cpp in
   `engine/src/lava_jambo_sun.inc` (ljs_*): HellShellZone's sun on its rail (HellProminenceGalaxy). Wait (SW_A on:
   Move), Pause (SW_B on: Move), Move (the current rail point's arg0 x 0.1 a frame, SE_AT_LV_JUMBO_SUN_MOVE; the
