@@ -517,7 +517,7 @@ NAMED_ONLY = {"TeresaMansionCandlestand": ("Extinguish02",), "CandlestandIceVolc
                         # Mario::doSpinWallEffect 壁スパーク, MarioRecovery 引き戻し泡 / 引き戻し泡破裂 (MarioEffect.cpp setEffectName)
                         "WallSpark", "BringBubble", "BringBubbleBreak"),
               "Bush": ("HintShakeLeaf",),  # PlantGroup::emitHintEffect (initEffectKeeper "Bush")
-              "StarPiece": ("StarPieceFlyingBlur",)}  # SlingShooter::tryRelease  # 無敵中 アイス中 変身 変身解除 アイテム再ゲット  # of a big group only the rows the engine plays
+              "StarPiece": ("StarPieceFlyingBlur", "StarPieceGetBlur")}  # SlingShooter::tryRelease  # 無敵中 アイス中 変身 変身解除 アイテム再ゲット  # of a big group only the rows the engine plays
 # MarioActor::initEffect's registerEffect groups: a particle by its own name (not an AutoEffectList row) on a host
 # matrix, as fx_named rows (group, particle, joint: its getRealMtx host, "" the actor)
 REGISTERED = {"Mario": (("雪煙レベル", "CrestGetFlyC", "FootR"),),

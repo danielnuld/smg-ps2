@@ -51,7 +51,7 @@ typedef struct { V3 pos; short alive, row; V3 up, at; } Pickup;  /* Coin, Purple
                                                                   * came from, -1 a drop; up: the gravity's at `at` */
 static V3 pick_up(const Pickup *cp);
 static V3 walker_up(void *k, V3 prev);
-enum { PICK_GONE, PICK_ON, PICK_POP_NEW, PICK_POP_BLINK }; /* alive: popping coins cannot be taken while new and
+enum { PICK_GONE, PICK_ON, PICK_POP_NEW, PICK_POP_BLINK, PICK_FLY /* a star piece on its way to Mario (update_piece_flights): shown, not taken by touch */ }; /* alive: popping coins cannot be taken while new and
                                                              * are not drawn on their blink frames */
 /* The HitSensor list (SensorHitChecker's groups): every host adds its valid sensors (their place, radius and kind)
  * each frame with hs_add; hs_flip at the frame's start keeps the last frame's whole list (hs_last / hs_nlast) for the
@@ -1414,6 +1414,7 @@ static int t_replica = -1;
 static int pickup_on(const Pickup *p, int take)
 {
     if (p->alive == PICK_GONE || p->alive == (take ? PICK_POP_NEW : PICK_POP_BLINK)) return 0;
+    if (p->alive == PICK_FLY) return !take;
     if (p->row >= 0 && take && sc->objs[p->row].type == t_replica && !sw_on(&sc->objs[p->row], SW_A)) /* appearNonActive; only SW_A
                                                                           * activates it (none: never) */
         return 0;
@@ -1424,6 +1425,12 @@ static int box_pieces;          /* star pieces WoodBoxes hold (arg2) */
 static int pieces_cap, pieces_base; /* star piece slots: the placed ones, then launched ones (reused once gone) */
 static V3 *piece_vel;           /* a launched star piece's velocity (StarPiece::exeFall) */
 static short *piece_t;          /* its frames since launch, 0 a placed one */
+/* StarPiece's ToTarget / ToPlayerEnd nerves (update_piece_flights): the pieces flying to Mario, 32 at once, a table
+ * from the arena (game_init). idx its piece (-1 free), nrv 1 ToTarget / 2 ToPlayerEnd, dir _8C, a98 / a9c _98 / _9C,
+ * off _B4 */
+typedef struct { short idx, step; signed char nrv; V3 dir, off; float a98, a9c; } PieceFly;
+#define MAX_PIECE_FLY 32
+static PieceFly *piece_fly;
 /* StarPiece.cpp initColors: a piece's colour k, drawn with the "StarPiece@k" model (slice.py MAT_COLOR, material colour 0
  * of StarPiece1_v). Placed: arg3 if 0..5, else random; StarPieceDirector::getDeadStarPiece's pieces take mColorIndex,
  * 0..5 in turn (piece_next) */
@@ -2927,6 +2934,8 @@ void game_init(const Scene *s, const unsigned char *blob)
     pieces = mem_alloc(MEM_OBJECTS, pieces_cap * sizeof(Pickup));
     piece_vel = mem_alloc(MEM_OBJECTS, pieces_cap * sizeof(V3));
     piece_t = mem_alloc(MEM_OBJECTS, pieces_cap * sizeof(short));
+    piece_fly = pieces_cap ? mem_alloc(MEM_OBJECTS, MAX_PIECE_FLY * sizeof *piece_fly) : NULL;
+    for (int i = 0; piece_fly && i < MAX_PIECE_FLY; i++) piece_fly[i].idx = -1;
     memset(piece_t, 0, pieces_cap * sizeof(short));
     piece_col = mem_alloc(MEM_OBJECTS, pieces_cap);
     piece_next = 0;
@@ -35818,7 +35827,7 @@ static void piece_break(V3 p) /* StarPiece::kill */
 static void update_launched_pieces(void)
 {
     for (int i = pieces_base; pieces_base && i < npieces; i++) {
-        if (!piece_t[i] || pieces[i].alive == PICK_GONE) { piece_t[i] = 0; continue; }
+        if (!piece_t[i] || pieces[i].alive == PICK_GONE || pieces[i].alive == PICK_FLY) { piece_t[i] = 0; continue; } /* (ToTarget: offBind, its velocity zeroed) */
         V3 up = up_at(pieces[i].pos, mario->up), g = vmul(up, -1.0f);
         piece_vel[i] = vadd(vmul(piece_vel[i], 0.97f), g);
         V3 c = vadd(pieces[i].pos, piece_vel[i]), gn = up, wn = up;
@@ -46659,6 +46668,97 @@ static int cursor_sees(V3 p, float px) /* p shows within px pixels of the cursor
 
 static void shoot_piece(void);
 static void update_shots(void);
+/* StarPiece.cpp: a piece the pointer is on, within 15000 of Mario (tryGotJudge), goes to him (goToPlayer): ToTarget.
+ * First step: SE_OJ_STAR_PIECE_FLY (_W in water), its fall stopped, StarPieceGetBlur. Each frame _98 (0.02) + 0.01 and
+ * _9C (0) + 0.03, both up to 1; its direction _8C (0, 0, 1 at first; along gravity: its y and z swapped) turned towards
+ * Mario's centre by the fraction _98 of the angle; its velocity _8C x (_9C x 85 + 1), plus Mario's own x _9C x the part
+ * of it along _8C when that is positive. Within 160 of his centre: touchPlayer (the piece counted, StarPieceGet, a
+ * middle rumble) and ToPlayerEnd: it follows his centre at its offset shrinking to nothing over 10 frames.
+ * ponytail: no StarPieceTouchLight / GetAble effects, the model does not spin (rotation.y + 15) or shrink (it is taken
+ * away at ToPlayerEnd's step 10, where its scale reaches 0; Petari's actor dies at 30); isResetChasingStarPiece's kill
+ * is not made; SpinDrained (Mario's tryTornadoPull: ACTMES_ITEM_PULL) is not ported */
+static int piece_go_to_player(int i)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS));
+    if (!piece_fly || vdot(vsub(c, pieces[i].pos), vsub(c, pieces[i].pos)) > 225000000.0f) return 0;
+    for (int k = 0; k < MAX_PIECE_FLY; k++)
+        if (piece_fly[k].idx < 0) {
+            PieceFly *f = &piece_fly[k];
+            V3 g = vmul(up_at(pieces[i].pos, mario->up), -1.0f);
+            f->idx = (short)i; f->step = 0; f->nrv = 1;
+            f->dir = fabsf(vdot(g, v3(0, 0, 1))) > 0.999f ? v3(g.x, g.z, g.y) : v3(0, 0, 1); /* _8C (trySetGravityAndFront) */
+            pieces[i].alive = PICK_FLY;
+            return 1;
+        }
+    return 0;
+}
+static void update_piece_flights(void)
+{
+#ifdef PIECEFLY_TEST /* XF=-DPIECEFLY_TEST: every 240 frames from 600 the nearest star piece to Mario goes to him */
+    if (game_frame >= 600 && game_frame % 240 == 0) {
+        int best = -1;
+        float bd = 1e18f;
+        for (int i = 0; i < npieces; i++) {
+            float d = vlen(vsub(pieces[i].pos, mario->pos));
+            if (pickup_on(&pieces[i], 1) && d < bd) { bd = d; best = i; }
+        }
+        printf("piecefly test f %d: piece %d at %d: %d%c", game_frame, best, (int)bd, best >= 0 ? piece_go_to_player(best) : -1, 10);
+    }
+#endif
+    for (int k = 0; piece_fly && k < MAX_PIECE_FLY; k++) {
+        PieceFly *f = &piece_fly[k];
+        if (f->idx < 0) continue;
+        Pickup *pc = &pieces[f->idx];
+        if (pc->alive != PICK_FLY) { f->idx = -1; continue; }
+        V3 c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS)); /* getPlayerCenterPos */
+        int st = f->step++;
+        if (f->nrv == 2) { /* exeToPlayerEnd */
+            if (st == 0) f->off = vsub(pc->pos, c);
+            float sc_ = 1.0f - (st < 10 ? st / 10.0f : 1.0f);
+            pc->pos = vadd(c, vmul(f->off, sc_));
+            if (st >= 10) { pc->alive = PICK_GONE; f->idx = -1; }
+            continue;
+        }
+        float m[16], d;
+        if (st == 0) { /* exeToTarget's first step */
+            se_start(in_water(pc->pos, up_at(pc->pos, mario->up), &d) ? SE_OJ_STAR_PIECE_FLY_W : SE_OJ_STAR_PIECE_FLY, &pc->pos.x);
+            f->a98 = 0.02f; f->a9c = 0.0f;
+#ifdef PIECEFLY_TEST
+            printf("piece %d: ToTarget, %d from Mario%c", f->idx, (int)vlen(vsub(c, pc->pos)), 10);
+#endif
+        }
+        mat_identity(m);
+        m[12] = pc->pos.x; m[13] = pc->pos.y; m[14] = pc->pos.z;
+        fx_named("StarPiece", "StarPieceGetBlur", m, NULL, f);
+        V3 to = vsub(c, pc->pos);
+        if (vlen(to) < 160.0f) { /* isTouchToTarget: touchPlayer */
+            got_pieces++;
+            if (vlen(vsub(pc->pos, cam_pos)) > 200.0f) fx_at(FX_STARPIECE_STARPIECEGET, pc->pos, up_at(pc->pos, mario->up));
+            se_start(SE_SY_STAR_PIECE_GET, NULL);
+            pad_rumble(RUMBLE_MIDDLE);
+            f->nrv = 2; f->step = 0;
+#ifdef PIECEFLY_TEST
+            printf("piece %d: touchPlayer at step %d, %d pieces%c", f->idx, st, got_pieces, 10);
+#endif
+            continue;
+        }
+        f->a98 = f->a98 + 0.01f >= 1.0f ? 1.0f : f->a98 + 0.01f;
+        f->a9c = f->a9c + 0.03f >= 1.0f ? 1.0f : f->a9c + 0.03f;
+        V3 tn = vnorm(to), ax = vcross(f->dir, tn);
+        float sn = vlen(ax), cs = vdot(f->dir, tn);
+        if (sn > 1e-6f) { /* rotateQuat.setRotate(_8C, to, _98): the fraction _98 of the turn */
+            float a = atan2f(sn, cs) * f->a98;
+            ax = vmul(ax, 1.0f / sn);
+            f->dir = vnorm(vadd(vmul(f->dir, cosf(a)), vmul(vcross(ax, f->dir), sinf(a))));
+        }
+        V3 vel = vmul(f->dir, f->a9c * 85.0f + 1.0f), pv = mario->vel;
+        if (vlen(pv) > 0.001f) {
+            float along = vdot(f->dir, vnorm(pv));
+            if (along > 0.0f) vel = vadd(vel, vmul(pv, f->a9c * along));
+        }
+        pc->pos = vadd(pc->pos, vel);
+    }
+}
 static void update_cursor(void)
 {
     float x = pad_rx(), y = pad_ry(), k = 6.0f + 10.0f * sqrtf(x * x + y * y), px = cur_x, py = cur_y;
@@ -46677,6 +46777,7 @@ static void update_cursor(void)
     cur_vx = cur_x - px; cur_vy = cur_y - py;
     for (int i = 0; i < npieces && cur_idle < 300; i++)
         if (pickup_on(&pieces[i], 1) && cursor_sees(pieces[i].pos, 24.0f)) {
+            if (piece_go_to_player(i)) continue; /* tryGotJudge: goToPlayer */
             pieces[i].alive = PICK_GONE;
             got_pieces++;
             fx_at(FX_STARPIECE_STARPIECEGET, pieces[i].pos, up_at(pieces[i].pos, mario->up));
@@ -58448,6 +58549,7 @@ void game_update(void)
     }
     if (hip_hit) mario_material_fx(MAT_HIPDROP, mario->grounded ? mario->ground_n : mario->up, mario->pos); /* procHipDrop: 属性尻ドロップ */
     LQ(9, update_launched_pieces());
+    update_piece_flights();
     LQ(10, update_invincible());
     LQ(11, update_follow_groups());
     LQ(12, update_wrecks());
