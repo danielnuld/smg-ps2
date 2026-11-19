@@ -21,7 +21,7 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   offset; no coin (shown or popped) under the Dark comet; the coin pops from where it showed; the S / M stump goes
   to _F8 (the map within 300 x scale, wreck `lo`); SW_DEAD waits 10 steps with a SuperSpinDriver inside
   (`cage_dead_row`); CrystalCageS's body follows Mario's foot on its Y from -40 to 140. Left of #648's CrystalCage
-  list: arg2's binder and fall; the BreakableCage list but for its item.
+  list: arg2's binder and fall. BreakableCage / Rotate / L are no longer broken by a spin or a hip drop (`breakable` 5, as BreakableTrash / BreakableFixation): a thrown shell (`cage_jet_hit`, isMsgJetTurtleAttack) or any enemy attack but fire (`explosion_breaks`) breaks them; their star piece (arg7 4) is StarPieceDummy at its Rotation pose (DdmStarPieceR, the clip not played). Left of the BreakableCage list: SW_DEAD's timing, the break camera demo.
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /

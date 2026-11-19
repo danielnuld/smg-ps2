@@ -279,7 +279,7 @@ SKINNED_OBJ += ("SnowMan",)  # SnowMan.cpp: MeltHead / MeltBody / DownHead / Dow
 DDM = {2: "DdmSpinDriver", 3: "DdmSuperSpinDriver", 4: "DdmStarPiece", 5: "DdmTico", 8: "DdmKinokoOneUp", 9: "DdmKuribo",
        10: "DdmBlueChip", 11: "DdmYellowChip", 12: "DdmStrayTico", 14: "DdmKinokoLifeUp"}
 MODEL_ARC.update({"DdmSpinDriver": "SpinDriver", "DdmSuperSpinDriver": "SuperSpinDriver#=freeze",
-                  "DdmStarPiece": "StarPieceDummy#=freeze", "DdmTico": "Tico", "DdmKinokoOneUp": "KinokoOneUp",
+                  "DdmStarPiece": "StarPieceDummy#=freeze", "DdmStarPieceR": "StarPieceDummy#=rotation", "DdmTico": "Tico", "DdmKinokoOneUp": "KinokoOneUp",
                   "DdmKuribo": "Kuribo", "DdmBlueChip": "BlueChip", "DdmYellowChip": "YellowChip", "DdmStrayTico": "StrayTico",
                   "DdmKinokoLifeUp": "KinokoLifeUp",
                   **{f"DdmKinopio~{k}": f"Kinopio~colorchange:{k}#=freeze" for k in range(5)}})
@@ -292,6 +292,8 @@ def ddm_arcs(o):
     k = s32(o["args"][7])
     if k == 1:
         return (f"DdmKinopio~{min(max(s32(o['args'][6]), 0), 4)}",)
+    if k == 4 and o["name"][0] == "B":  # BreakableCage::initModel: startBck(mItemModel, Rotation)
+        return ("DdmStarPieceR",)
     return (DDM[k],) if k in DDM else ()
 
 
@@ -925,8 +927,8 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
             if not skinned and b"JNT1" in bl:
                 # "<archive>#=<BCK>": the whole model at that BCK's last frame (a DummyDisplayModel's mAnim: DDM)
                 frozen = pose[1:].lower() if pose and pose[0] == "=" else None
-                pose = None if frozen else pose
-                hide = hidden_joints(b, bl, {k.lower(): v for k, v in files.items()}, frozen or pose)
+                pose = frozen or pose  # (its BVA of that name too: StarPieceDummy's Freeze)
+                hide = hidden_joints(b, bl, {k.lower(): v for k, v in files.items()}, pose)
                 gtab_all, drw = skin.group_tables(b, bl), skin.draw_entries(b, bl)
                 js = skin.joints(b, bl)
                 wj = skin.world(js)  # bind pose
