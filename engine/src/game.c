@@ -16484,9 +16484,10 @@ static V3 rot_toward(V3 from, V3 to, V3 axis, float ang) /* MR::vecRotAxis */
 static float clamp01(float f) { return f < 0 ? 0 : f > 1 ? 1 : f; }
 
 /* Mario::playSoundJ (MarioSound.cpp): the key's entry in soundlist (mario_snd.h) by its kind (0 on Mario, 1 a level
- * sound on Mario, 2 system, 3 system level), its companion under water, then "声" + key (his voice) on him.
- * ponytail: under water never (the companion entries wait for the swim states) */
+ * sound on Mario, 2 system, 3 system level), its companion (kind & 0xC) while he wades (mDrawStates.mIsUnderwater
+ * or _13), then "声" + key (his voice) on him */
 static u32 mario_lv[256];
+static int m_wading(void);
 static void mario_sound(const char *key)
 {
     float at[3] = {mario->pos.x, mario->pos.y, mario->pos.z};
@@ -16500,6 +16501,8 @@ static void mario_sound(const char *key)
             case 2: se_start(mario_snd[i].id, NULL); break;
             case 3: mario_lv[i] = se_level(mario_snd[i].id, NULL, mario_lv[i]); break;
             }
+            if (((mario_snd[i].kind & ~3) == 4 || (mario_snd[i].kind & ~3) == 8) && mario_snd[i].water && m_wading())
+                mario_sound(mario_snd[i].water);
         }
         if (!strcmp(mario_snd[i].key, voice)) se_start(mario_snd[i].id, at);
     }
@@ -16792,6 +16795,7 @@ static void m_stop_wait(void) /* stopWaitAnimation */
  * 23), _1D (over: water under his shadow), _738 (ripple_h: the ripple's height over the ground), _73C (n: its up);
  * cleared with mDrawStates each frame (swim_update: updateAndClearStrideParameter) */
 static struct { int under, deep, over; float ripple_h; V3 n; } m_wade;
+static int m_wading(void) { return m_wade.under || m_wade.deep; }
 static float frand(float a, float b);
 static void mario_named_fx(const char *name, void *key);
 static float m_prev_frame; /* mPrevAnimFrame */
@@ -16804,7 +16808,8 @@ static void m_ripple(V3 at) /* playEffectSRT("水波紋", 0.2, _73C, at) */
     fx_named("Mario", "WaterRipple", mm, NULL, NULL);
 }
 /* decide(Squat)WalkAnimation's tail: wading, each step (the walk's frame wrapping, then passing 30) splashes and rings
- * (水はね / 水波紋 at 0.2), standing a ring every 64 frames. ponytail: mGroundPos / mShadowPos are his position */
+ * (水はね / 水波紋 at 0.2) at mGroundPos, standing a ring every 64 frames at mShadowPos (MarioWalk.cpp:182-192) */
+static V3 m_ground_pos(void), m_shadow_pos(void);
 static void m_wade_steps(Player *m, int squat)
 {
     float frame = mario_anim ? mario_anim->frame : 0.0f;
@@ -16820,14 +16825,14 @@ static void m_wade_steps(Player *m, int squat)
                     mario_sound(s ? "水跳ね右足" : "水跳ね左足");
                     mario_named_fx(s ? "WaterSplashRight" : "WaterSplashLeft", NULL); /* 水はね右 / 左 */
                 }
-                m_ripple(vadd(vadd(m->pos, vmul(side, s ? 20.0f : -20.0f)), vmul(m->ground_n, m_wade.ripple_h)));
+                m_ripple(vadd(vadd(m_ground_pos(), vmul(side, s ? 20.0f : -20.0f)), vmul(m->ground_n, m_wade.ripple_h)));
 #ifdef WADE_TEST
                 printf("wade test: step %d tsi %d frame %.1f fx %u\n", s, m->tsi, frame, fx_count());
 #endif
             }
         }
     } else if (m_wade.under && game_frame % 64 == 0)
-        m_ripple(vadd(vadd(m->pos, vmul(side, (frand(0.0f, 1.0f) - 0.5f) * 20.0f)), vmul(m->ground_n, m_wade.ripple_h)));
+        m_ripple(vadd(vadd(m_shadow_pos(), vmul(side, (frand(0.0f, 1.0f) - 0.5f) * 20.0f)), vmul(m->ground_n, m_wade.ripple_h)));
     m_prev_frame = frame;
 }
 
@@ -19782,10 +19787,12 @@ static int press_at(int inst) { return inst >= 0 && insts[inst].press; }
 /* Mario::calcDistToCeil(false): the first face up from 30 under him within 230; one under his feet that is no press
  * (sensor, Press floor code 29, nor his ground's) is looked for again from 10 over him; none: 200 */
 static int m_730 = -1; /* _730: the ceiling's part of the last calcDistToCeil */
+static int m_ceil_attr = -1; /* its face's codes (-1: none met): _4C8 as calcDistToCeil leaves it */
+static V3 m_ceil_n;         /* _3B0: its normal */
 static float m_dist_to_ceil(Player *m)
 {
     float off = 30.0f;
-    m_730 = -1;
+    m_730 = -1; m_ceil_attr = -1;
     for (;;) {
         V3 hp, n;
         int ci;
@@ -19795,7 +19802,7 @@ static float m_dist_to_ceil(Player *m)
             off = -10.0f;
             continue;
         }
-        m_730 = ci;
+        m_730 = ci; m_ceil_attr = map_line_attr; m_ceil_n = n;
         return vlen(vsub(hp, m->pos));
     }
 }
@@ -21684,7 +21691,9 @@ static int m_side_press(Player *m)
 }
 /* Mario::checkPressDamage: a vertical press (setPress 0), two walls closing in (checkSidePressPre, setPress 1), faces
  * moving into him (checkSidePress), or a wall with the Press floor code while on other ground (setPress 4, 120). The
- * vertical one only near a press object (the checks need one). ponytail: the push off walls closer than 200 (_72C) */
+ * vertical one only near a press object (the checks need one). With the ceiling under 200 (_72C) a faced front wall
+ * pushes him off it by its distance _4E4 x (200 / _72C - 1), a side wall by 60 x that (_72C 100 at least); not in a
+ * jump off a wall leaning over 0.707 on the gravity */
 static int m_check_press(Player *m)
 {
     if (m->launch >= 0) return 0;
@@ -21699,8 +21708,22 @@ static int m_check_press(Player *m)
     if (m_side_press_pre(m)) { m_set_press(m, 1); return 1; }
     if (m_side_press(m)) return 1;
     if (m_wall_floor_code(29) && m->grounded && m->floor != 29) { m_set_press(m, 4); return 1; } /* checkWallFloorCode(0x1D) */
+    float c72 = m_dist_to_ceil(m); /* _72C (Mario::update: calcDistToCeil(true)) */
+    if (c72 < 200.0f) {
+        V3 g = vmul(m->up, -1.0f);
+        if (mw.w8 && (!m->jumping || !(vdot(m_front_wall_norm(), g) > 0.707f))) {
+            if (c72 < 100.0f) c72 = 100.0f;
+            m->s350 = vadd(m->s350, vmul(m_front_wall_norm(), mw.f4E4 * (200.0f / c72) - mw.f4E4)); /* addVelocity */
+        }
+        if (mw.w1A && (!m->jumping || !(vdot(m_side_wall_norm(), g) > 0.707f))) {
+            if (c72 < 100.0f) c72 = 100.0f;
+            m->s350 = vadd(m->s350, vmul(m_side_wall_norm(), 60.0f * (200.0f / c72) - 60.0f));
+        }
+    }
     return 0;
 }
+static V3 m_ground_pos(void) { return mw.ground_pos; }
+static V3 m_shadow_pos(void) { return mw.shadow_pos; }
 
 static void hurt_mario(V3 from, float push);
 static int m_floor_severe(const Player *m, int code);
@@ -21716,6 +21739,22 @@ static int m_damage_floor(Player *m) /* damageFloorCheck: 1 the update ends ther
     case 4: if (!dm_damaging() && m_damage(m, vmul(m->ground_n, 10.0f))) return 1; break; /* _368 x 10 */
     case 15: if (m_paralyze(m)) return 1; break;
     case 16: if (m_do_recovery(m)) return 1; break;
+    }
+    return 0;
+}
+/* Mario::damagePolygonCheck (MarioDamage.cpp:339) on the ceiling within 160 of him (Mario::update: _1C._F, _4C8): its
+ * floor code as the ground's, without the severe test; DamageNormal is MarioSwim::addDamage off its normal */
+static void sw_add_damage(Player *m, V3 dir);
+static int m_damage_polygon(Player *m, int code, V3 n)
+{
+    switch (code) {
+    case 10: return m_fire_dance_damage(m, 0); /* (0x81 too) */
+    case 1: printf("death ceiling\n"); m_pad_vib(3); life = 0; miss(); return 1; /* forceKill(3) */
+    case 4: sw_add_damage(m, vmul(n, 10.0f)); return 1;
+    case 15: return m_paralyze(m);
+    case 16: return m_do_recovery(m);
+    case 24: m_fire_dance_damage(m, 1); return 1;
+    case 25: return 1; /* SinkDeath */
     }
     return 0;
 }
@@ -24634,6 +24673,7 @@ static void update_mario_(void)
     m_dstate10 = 1;
     m_damage_wall(m);
     m_dstate10 = 0;
+    if (m_dist_to_ceil(m) < 160.0f && m_ceil_attr >= 0) m_damage_polygon(m, m_ceil_attr & 0x3F, m_ceil_n); /* _1C._F && _4C8 */
     if (!pg) m->slip_poly = m->grounded && slip_polygon(m, ground_attr & 0x3F, m->ground_n); /* updateGroundInfo: mDrawStates._C */
     if (m->grounded && !m->jumping) m->land_timer++; /* updateTimers: _3CE */
     mario_ground = m->grounded ? ground_inst : -1; mario_ground_sub = ground_sub; mario_wall_inst = m->wall ? wall_inst : -1;
@@ -24777,14 +24817,20 @@ static void miss_event_update(void)
     int f = mev.f, next = 0;
     if (mev.dark) mev.dark_f++; /* MarioActor::controlMain */
 #ifdef DOWN_TEST
-    if (f % 10 == 0 || mev.wipe_f == 1)
-        printf("down f %d: phase %d wipe %d dark %d layout end %d grounded %d clip %s dmg %d pos %.0f %.0f %.0f\n", f, mev.phase, mev.wipe_f, mev.dark_f,
+    if (f % 10 == 0 || mev.wipe_f == 1) {
+        V3 ce, cw, cu;
+        float cf;
+        camera_pose(&ce, &cw, &cu, &cf);
+        printf("down f %d: phase %d wipe %d dark %d layout end %d grounded %d clip %s dmg %d pos %.0f %.0f %.0f cam %.0f from him, its watch %.0f off him, fovy %.1f\n", f, mev.phase, mev.wipe_f, mev.dark_f,
                menu_miss_anim_end(), mario->grounded, mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-", dmg.st,
-               mario->pos.x, mario->pos.y, mario->pos.z);
+               mario->pos.x, mario->pos.y, mario->pos.z, vlen(vsub(ce, mario->pos)), vlen(vsub(cw, mario->pos)), cf);
+    }
 #endif
-    if (mev.sink) { /* MarioActor::exeGameOverSink: the swamp's (SinkDeathMud 31, SinkPoison 18) or the sand's sounds.
-                     * ponytail: its 砂埋まり体 / 手, 泥埋まり体 / 手 effects not ported */
+    if (mev.sink) { /* MarioActor::exeGameOverSink: the swamp's (SinkDeathMud 31, SinkPoison 18) or the sand's sounds;
+                     * at its first step 砂埋まり体 / 手 (SinkDeath 25, Sink 17) or 泥埋まり体 / 手 (31) */
         int swamp = mario->floor == 31 || mario->floor == 18;
+        if (f == 0 && (mario->floor == 25 || mario->floor == 17)) { mario_named_fx("DieBuryBody", NULL); mario_named_fx("DieBuryHand", NULL); }
+        if (f == 0 && mario->floor == 31) { mario_named_fx("DieDeathMudBody", NULL); mario_named_fx("DieDeathMudHand", NULL); }
         mario_sound(swamp ? "沼死亡" : "砂死亡");
         if (f == 90) mario_sound(swamp ? "声沼沈み死亡" : "声砂沈み死亡");
     }

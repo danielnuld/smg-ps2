@@ -31,6 +31,16 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   run: a lava floor, water, a death area under a coin; the groups' 900 frames to their end. **Release: slice_all.py**
   (jpa.py NAMED Coin: every scene.bin's PTCL) **+ sound.py --pack** (the global sound.bin and the galaxies': the three
   new SE names): covered by the full repack.
+- Mario's ponytail marks, batch 2 (feat/749-mario-marks-2, #749, 2026-11-19): Mario::damagePolygonCheck on the
+  ceiling within 160 of him (Mario.cpp:1728; m_damage_polygon on calcDistToCeil's face: fire, needle, electric,
+  PullBack, Death; DamageNormal is MarioSwim::addDamage); checkPressDamage's push off a faced front wall (its
+  distance _4E4 x (200 / _72C - 1)) and a side wall (60 x that) with the ceiling under 200 (MarioPress.cpp:43); the
+  wade's rings at mGroundPos (the steps) and mShadowPos (standing) and not his place (MarioWalk.cpp:182);
+  Mario::playSoundJ's water companion while he wades (kind & 0xC: 水跳ねジャンプ / 水跳ね着地 with ジャンプ踏切 / 着地 /
+  尻ドロップ着地: the table and the packs had them); exeGameOverSink's 砂埋まり体 / 手 and 泥埋まり体 / 手 (jpa.py NAMED
+  Mario: DieBuryBody / DieBuryHand / DieDeathMudBody / DieDeathMudHand: resident.bin has to be packed again to show
+  them). Not run in PCSX2 but for the route (star at f 4281): no test puts him under a damage ceiling, between a
+  wall and a low ceiling, or wading.
 - CrystalCage / BreakableCage, part of #648 (fix/648-cages, 2026-11-19, agent audit-a; **not run in PCSX2**): CrystalCage:
   arg0 is a bool (mIsBreakObjVisible: only unset leaves the stump; the port tested == 1), an explosion breaks an S / M
   cage in Wait (receiveMsgEnemyAttack; explosion_breaks, its body 130 x scale). BreakableCage.cpp: BreakableCage /
