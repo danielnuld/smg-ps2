@@ -550,6 +550,9 @@ static int area_obj(const char *cls, V3 p);
 static int in_glaring_light(V3 p);
 static int in_dark_matter(V3 p);
 static void col_areas_init(const Scene *s);
+static void vg_init(const Scene *s, const unsigned char *blob);
+static int vg_of(int row);
+enum { VG_IN = 1, VG_HIGH = 2, VG_MIDDLE = 4, VG_LOW = 8, VG_HIDE = 16 }; /* ViewGroupCtrlDataEntry _0 .. _4 */
 static void mario_set_raster(int t, int x, int y); /* MR::setRasterScroll (race.inc) */
 /* clip_area.inc */
 static void snow_init(const Scene *s), snow_update(void), snow_draw(V3 eye); /* snow_floor.inc */
@@ -3032,6 +3035,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     dx_init(blob);
     st_init(s);
     col_areas_init(s);
+    vg_init(s, blob);
     { /* AstroMapBoard's picture, the mirror's, the raster scroll's bands (a TeresaRacer of a racer id): their VRAM out of the cache */
         int tr = scene_type(s, "TeresaRacer"), raster = 0;
         for (u32 i = 0; tr >= 0 && i < s->nobjs; i++) raster |= (int)s->objs[i].type == tr && s->objs[i].arg[0] != -1;
@@ -49838,6 +49842,70 @@ static void haze_update(void)
 #endif
 }
 static void haze_draw(void) { if (haze.on) render_raster_scroll(1.625f, 120, 216.0f, haze.t); }
+/* ViewGroupCtrl (LiveActor/ViewGroupCtrl.cpp) and its ViewGroupCtrlCubes (arg0 a view group, arg1 its order). update:
+ * each cube holding Mario sets its group's entry: _0 (in view: ClippingActorInfo::isJudgedToClip takes far level 0,
+ * no far clipping), arg1 1 / 2 / 3 _1 / _2 / _3 (LodCtrl::update: the high / middle / low model forced), arg1 4 _4
+ * and not _0 (hideAllModel). The rows' ViewGroupId: the VGRP chunk (row, id; bit 14: a planetobjinfo row, whose
+ * PlanetMap makes a LodCtrlPlanet); a pack without it (sliced before 2026-11-19) has no groups, as before.
+ * ponytail: the port has no LodCtrl (its planets' low models are the zones' low packs, streamed): _1 / _2 / _3 do
+ * nothing, and _4 hides the planets, the NPCs and BeeFlowerHover (vg_hidden), not the other map objects with a
+ * LodCtrl (UFOBase, LavaStrangeRock, MapObjActor's planet LOD...); the far level 0 reaches only what the port clips
+ * by ClippingJudge: the NPCs, the walkers and the SuperSpinDrivers (obj_clipped) */
+static short *row_vgroup, *vg_cubes;
+static int nvg_cubes, nvg_on;
+static struct { short id; unsigned char f; } vg_on[16];
+static void vg_init(const Scene *s, const unsigned char *blob)
+{
+    u32 sz;
+    const unsigned char *c = blob_chunk(blob, "VGRP", &sz);
+    int t = scene_type(s, "ViewGroupCtrlCube");
+    row_vgroup = NULL; vg_cubes = NULL; nvg_cubes = nvg_on = 0;
+    if (!c || t < 0) return;
+    row_vgroup = mem_alloc(MEM_SCENE, s->nobjs * sizeof(short));
+    for (u32 i = 0; i < s->nobjs; i++) { row_vgroup[i] = -1; nvg_cubes += (int)s->objs[i].type == t; }
+    for (u32 i = 0; i < *(const u32 *)c; i++) {
+        u16 row = *(const u16 *)(c + 4 + 4 * i);
+        if (row < s->nobjs) row_vgroup[row] = *(const s16 *)(c + 6 + 4 * i);
+    }
+    vg_cubes = mem_alloc(MEM_SCENE, (nvg_cubes + 1) * sizeof(short));
+    nvg_cubes = 0;
+    for (u32 i = 0; i < s->nobjs && i < 0x8000; i++) if ((int)s->objs[i].type == t) vg_cubes[nvg_cubes++] = (short)i;
+}
+static void vg_update(void) /* ViewGroupCtrl::update */
+{
+    int was = nvg_on;
+    nvg_on = 0;
+    for (int i = 0; i < nvg_cubes; i++) {
+        const Row *r = &sc->objs[vg_cubes[i]];
+        if (r->arg[0] < 0 || !row_shown(vg_cubes[i]) || !area_inside(r, mario->pos)) continue;
+        int k = 0;
+        while (k < nvg_on && vg_on[k].id != r->arg[0]) k++;
+        if (k == nvg_on) { if (nvg_on == 16) continue; vg_on[nvg_on].id = (short)r->arg[0]; vg_on[nvg_on++].f = 0; }
+        vg_on[k].f |= VG_IN;
+        if (r->arg[1] == 1) vg_on[k].f |= VG_HIGH;
+        else if (r->arg[1] == 2) vg_on[k].f |= VG_MIDDLE;
+        else if (r->arg[1] == 3) vg_on[k].f |= VG_LOW;
+        else if (r->arg[1] == 4) { vg_on[k].f &= ~VG_IN; vg_on[k].f |= VG_HIDE; }
+    }
+#ifdef VG_TEST /* XF=-DVG_TEST: the groups Mario's cubes turn on, when their count changes */
+    if (was != nvg_on) { printf("view groups: %d on", nvg_on); for (int k = 0; k < nvg_on; k++) printf(" %d:%x", vg_on[k].id, vg_on[k].f); printf("\n"); }
+#else
+    (void)was;
+#endif
+}
+static int vg_of(int row) /* its group's entry (0: no group, or no cube of it holds Mario) */
+{
+    if (!row_vgroup || row < 0 || row_vgroup[row] < 0) return 0;
+    for (int k = 0; k < nvg_on; k++) if (vg_on[k].id == (row_vgroup[row] & 0x3FFF)) return vg_on[k].f;
+    return 0;
+}
+/* LodCtrl::hideAllModel for the instances whose class has a LodCtrl: a planet's (PlanetMap), an NPC's (NPCActor's
+ * caps: clipcls 1), BeeFlowerHover's */
+static int vg_hidden(const Inst *in)
+{
+    if (!row_vgroup || in->row < 0 || row_vgroup[in->row] < 0 || !(vg_of(in->row) & VG_HIDE)) return 0;
+    return row_vgroup[in->row] >= 0x4000 || in->clipcls == 1 || in->beeflower;
+}
 /* CollisionArea.cpp (a centre origin cube; arg0 -1: it pushes, arg1 -1: a vanished Teresa Mario passes, arg2 its
  * radius about his centre or his hit radius 60 / 100 as Teresa, arg3 the faces with a polygon). movement: valid (its
  * SW_APPEAR), a vanished Teresa Mario sets _58 (passing through: 5 more of radius until he is out); else hitCheck of
@@ -50034,6 +50102,7 @@ static void keep_effects(void)
     wall_shade_calc();
     haze_update();
     update_collision_areas();
+    vg_update();
     update_quake();
     float m[16];
     for (int i = 0; i < npieces; i++)
@@ -52592,13 +52661,13 @@ static void launch_clip(Launch *L, const Row *r)
     L->clip_r = margin;
 }
 /* ClippingActorInfo::isJudgedToClip for the classes whose clipping is ported (clipcls), off ClippingJudge's frustum of
- * their far level. ponytail: no ViewGroupId in the pack (the far level as outside every ViewGroupCtrlCube) */
+ * their far level, or of level 0 (no far clipping) while a ViewGroupCtrlCube of their view group holds Mario (vg_of) */
 static int obj_clipped(const Inst *in)
 {
     if (in->clipcls == 1) { /* NPCActor::initialize (NPCActor.cpp:324) sets none: LiveActor's ClippingActorInfo
                              * (ClippingActorInfo.cpp:7-16), a sphere of 300 about mPosition, far level 6 (10000) */
         float p[3] = {in->m[12], in->m[13], in->m[14]};
-        return render_clip_judge(p, 300.0f, 10000.0f);
+        return render_clip_judge(p, 300.0f, vg_of(in->row) & VG_IN ? 1e9f : 10000.0f); /* (its view group's cube: level 0) */
     }
     for (int i = 0; i < nlaunches; i++) { /* SuperSpinDriver */
         Launch *L = &launches[i];
@@ -52606,7 +52675,7 @@ static int obj_clipped(const Inst *in)
         if (mario->launch == i || L->cool) return 0; /* tryBind's invalidateClipping (SuperSpinDriver.cpp:418) until exeWait's
                                                       * validateClipping (:627) after the cool down */
         if (L->clip_r == 0.0f) launch_clip(L, &sc->objs[in->row]);
-        return render_clip_judge(&L->clip_c.x, L->clip_r, 20000.0f); /* setClippingFar200m (:74): level 5 */
+        return render_clip_judge(&L->clip_c.x, L->clip_r, vg_of(in->row) & VG_IN ? 1e9f : 20000.0f); /* setClippingFar200m (:74): level 5 */
     }
     return 0;
 }
@@ -58614,6 +58683,7 @@ void game_draw(void)
         if (in->invisible || in->sky || in->sun) continue;
         if (air_prior && in->halo >= 3) continue; /* drawn before the planets */
         if (in->clipa || in->clipp == 3 || (in->clipp && ca_holder() && ca_clipped(in))) continue; /* ca_draw */
+        if (vg_hidden(in)) continue; /* its ViewGroupCtrlCube of arg1 4: LodCtrl::hideAllModel */
         if (in->plant) {
             if (plant_first[in->row] < 0) continue;
             int n = plant_count(&sc->objs[in->row]);
@@ -58995,7 +59065,7 @@ void game_draw(void)
         const float *wsc = sc->objs[kuribo[i].row].scale;
         float wr = md->radius * fmaxf(fmaxf(wsc[0], wsc[1]), wsc[2]) + 100.0f, wp[3] = {kuribo[i].pos.x, kuribo[i].pos.y, kuribo[i].pos.z};
         int wvis = render_visible(wp, wr);
-        kuribo[i].clipped = (u8)render_clip_judge(wp, 300.0f, 10000.0f); /* ClippingActorInfo's default sphere, 300 about it, off
+        kuribo[i].clipped = (u8)render_clip_judge(wp, 300.0f, vg_of(kuribo[i].row) & VG_IN ? 1e9f : 10000.0f); /* ClippingActorInfo's default sphere, 300 about it, off
                                                                * ClippingJudge's volume (this view) */
         if (wvis && !(kuribo[i].kind == WALK_UNIZO && unizo_breaking(&kuribo[i]))) { u32 c1 = cycles(); walker_shadow(&kuribo[i]); prof_shadow += cycles() - c1; } /* appearBreakModel: invalidateShadowAll */
         basis_matrix(m, kuribo[i].pos, kuribo[i].up, vsub(mario->pos, kuribo[i].pos), 0);
