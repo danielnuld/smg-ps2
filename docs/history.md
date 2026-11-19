@@ -20,6 +20,18 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   galaxy). Test: `pullback` with `XF=-DPWR_TEST` (HeavensDoorGalaxy/1: he is put 1500 up and 1000 ahead and
   doRecovery called; "pwr test" lines, "point warp recovery: done"). Left out: 引き戻し浮遊's volume by the flight's
   middle (full volume), MarioActor::_A6E and the binder off (_F44), _934 / _EA4.
+=======
+- Enemy audit, fifth batch (feat/enemy-audit-5, #773, 2026-11-19, agent moves, finished by the lead; **not run in
+  PCSX2** beyond what its PR says): the placed FireBubble after FireBubble.cpp (`update_fbubs`: Appear / Wait / Chase /
+  Down / WaitToAppear, burns Mario, a star piece gives a coin; only OtaKing's six existed; drawn as the still model,
+  no Reflect nerves); OtaRock's `orock_hit` (a star piece reflected, a thrown shell or any enemy attack: Down) and
+  its push when the strong attack is refused; isMsgPlayerHitAll from thrown shells, fire balls and rainbow Mario for
+  Pukupuku (`pk_blow`, BlownOff), BegomanSpike / Spring / Baby (`bg_hitall`), SamboHead (`sh_blow`), Mogucchi
+  (`mc_hitall`: only down, Scatter) and BombBird (`bbd_hitall`); star pieces reflected by RingBeamer / JumpBeamer /
+  JumpGuarder (`rb_shot`; a shell breaks on a RingBeamer), SearchBeamer (`sbm_shot`: CloseWaitNear), StinkBugParent
+  (`sbp_shot`: SpinReaction) and Pukupuku; Petari's StartSmoke / WalkSmoke / RunSmoke / LeaveAppearanceSmoke; the
+  Begomans killed by a fire floor (Fall) and their AttackBlur in Pursue; Pukupuku's Land / WaterColumn / SpinDamage
+  effects; EyeBeamer's BeamSurface only with arg1 over 0. No pack change.
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /
