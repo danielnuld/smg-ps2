@@ -46839,7 +46839,7 @@ static void benefit_update(Inst *in)
         int wall = 0, ground = collide_n(&center, up, br, &gn, &wn, &wall);
         if ((ground && (ground_attr & 0x3F) == 10) || (*ph != 1 && in_death(pos))) {
             bi_fx(in, "Vanish", NULL);
-            *ph = 4; in->invisible = 1; row_kill(in->row); /* kill */
+            *ph = 4; in->invisible = 1; row_dead[in->row] = 1; /* kill (LiveActor::kill: makeActorDead, no dead switch) */
             printf("benefit item %d: vanished (%s)%c", in->row, ground && (ground_attr & 0x3F) == 10 ? "a fire floor" : "a death area", 10);
             return;
         }
