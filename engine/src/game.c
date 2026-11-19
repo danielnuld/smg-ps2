@@ -1185,6 +1185,7 @@ static int creeper_try(Player *m), creeper_hold(Player *m);
 static int creeper_ride;
 static void pole_init(void);
 static void dossun_place(Inst *in);
+static int nfbubs = -1; /* the placed FireBubbles (update_fbubs) */
 static int nrbms, nsbms; static const Model *m_jghead, *m_jbhead, *m_rbeam, *m_mogustone, *m_moguhole;
 const char *game_stage_name = ""; /* the galaxy being played (main.c: its pack name) */
 int game_scenario_no(void) /* GameSystemSceneController::getCurrentScenarioNo: the number trySetCurrentScenarioNo placed */
@@ -2955,6 +2956,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nchg = 0; /* ChipGroup states (chip_group_of) */
     nfbs = 0; /* FountainBig states */
     nfwind = -1; /* FluffWind rails */
+    nfbubs = -1; /* the placed FireBubbles */
     nrbms = 0;
     nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; swr_reset(); nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0; nggs = 0; nsss = 0; ss_ride = -1; ss_reset(); kfires_reset(); nlls = 0; ndls = 0; nebl = 0; nass = 0;
     dino_cam = 0;
@@ -11775,6 +11777,119 @@ static void update_ota_fire(V3 c)
     }
 }
 
+/* FireBubble.cpp after Petari, the placed ones (mIsValidInfo: 16 on the disc; they were not in the port at all, only
+ * OtaKing's six, ota.bub above). Dead until its appear switch (syncStageSwitchAppear: the row shown), then Appear
+ * (Appear, the Wait effect, SE_EM_FIRE_BUBBLE_LAUNCH, its velocity cAppearVelocity (0, 35, 6) on its base, gravity
+ * 0.75, unbound while it rises) until it lands: Wait (30 frames, then within cChaseStartDistance 2000 Chase; else Down
+ * at 600 + random 120), Chase (its front turned 1 degree a frame to 40 over Mario, 4 along it and cChaseGravity 2, its
+ * JUMP sound each loop of Wait; Down once its chase counter passes 300 + random 120), Down (Down, SE_EM_FIRE_BUBBLE_DIE,
+ * no sensor) to its clip's end, then WaitToAppear (the Down effect, hidden, 120 frames) and Appear again at its place.
+ * Its body (30) burns Mario (EnemyAttackFire) out of Appear / Down / WaitToAppear, and it is gone (WaitToAppear); a
+ * star piece: a coin and the same. binder 40.
+ * ponytail: the 2P pointer's Reflect nerves, its clips (drawn as OtaKing's: the still model; Down lasts 60 frames),
+ * its Body joint (the sensor at its binder's centre) */
+#define MAX_FBUBS 24
+enum { FBP_OFF, FBP_APPEAR, FBP_WAIT, FBP_CHASE, FBP_DOWN, FBP_WAITTOAPPEAR };
+static struct { int row, nrv, t, act, chase, bind, ground; V3 pos, vel, front, home, hfront, gn; } fbubs[MAX_FBUBS];
+static void fbub_fx(int i, const char *name, int keep)
+{
+    float m[16];
+    basis_matrix(m, fbubs[i].pos, up_at(fbubs[i].pos, v3(0, 1, 0)), fbubs[i].front, 0);
+    fx_named("FireBubble", name, m, NULL, keep ? &fbubs[i] : NULL);
+}
+static void fbub_appear(int i) /* appear, exeAppear's first step */
+{
+    typeof(&fbubs[0]) q = &fbubs[i];
+    V3 up = up_at(q->home, v3(0, 1, 0));
+    q->pos = q->home; q->front = q->hfront;
+    q->vel = vadd(vmul(up, 35.0f), vmul(q->front, 6.0f)); /* cAppearVelocity on its base matrix */
+    q->nrv = FBP_APPEAR; q->t = -1; q->chase = 0; q->bind = 0; q->ground = 0;
+    se_start(SE_EM_FIRE_BUBBLE_LAUNCH, &q->pos.x);
+}
+static void fbub_gone(int i) /* killOrWaitToApppear (mIsValidInfo) */
+{
+    fbub_fx(i, "Down", 0);
+    fbubs[i].nrv = FBP_WAITTOAPPEAR; fbubs[i].t = -1;
+}
+static int fbub_shot(V3 p) /* receiveMsgPlayerAttack: isMsgStarPieceAttack: a coin, killOrWaitToApppear */
+{
+    for (int i = 0; i < nfbubs; i++) {
+        typeof(&fbubs[0]) q = &fbubs[i];
+        if (q->nrv != FBP_APPEAR && q->nrv != FBP_WAIT && q->nrv != FBP_CHASE) continue;
+        V3 up = up_at(q->pos, v3(0, 1, 0));
+        if (vlen(vsub(p, vadd(q->pos, vmul(up, 40.0f)))) > 30.0f + 30.0f) continue;
+        pop_coins(q->pos, up, 1);
+        fbub_gone(i);
+        return 1;
+    }
+    return 0;
+}
+static void update_fbubs(void)
+{
+    if (nfbubs < 0) { /* the placed rows, once a scene */
+        int t = scene_type(sc, "FireBubble");
+        nfbubs = 0;
+        for (u32 i = 0; t >= 0 && i < sc->nobjs && nfbubs < MAX_FBUBS; i++) {
+            const Row *r = &sc->objs[i];
+            if ((int)r->type != t) continue;
+            V3 x, z;
+            row_axes(r, &x, &z);
+            memset(&fbubs[nfbubs], 0, sizeof fbubs[0]);
+            fbubs[nfbubs].row = (int)i; fbubs[nfbubs].home = row_pos(r);
+            V3 up = up_at(fbubs[nfbubs].home, v3(0, 1, 0)), f = vtangent(z, up); /* makeMtxUpFront(-gravity, its rotation's Z) */
+            fbubs[nfbubs].hfront = vlen(f) > 1e-4f ? vnorm(f) : vnorm(vtangent(x, up));
+            nfbubs++;
+        }
+    }
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < nfbubs; i++) {
+        typeof(&fbubs[0]) q = &fbubs[i];
+        if ((game_frame + i) % 32 == 0) for (int j = 0; j < ninsts; j++) if (insts[j].row == q->row) insts[j].invisible = 1; /* (its row's still instance: drawn from here) */
+        if (!row_shown(q->row)) continue;
+        if (q->nrv == FBP_OFF) fbub_appear(i); /* syncStageSwitchAppear */
+        int st = ++q->t;
+        V3 up = up_at(q->pos, v3(0, 1, 0)), g = vmul(up, -1.0f);
+        if (q->nrv == FBP_WAITTOAPPEAR) { if (st == 120) fbub_appear(i); continue; } /* cAppearInterval */
+        switch (q->nrv) {
+        case FBP_APPEAR:
+            if (q->bind && q->ground && vdot(q->vel, q->gn) <= 0.0f) { se_start(SE_EM_FIRE_BUBBLE_JUMP, &q->pos.x); q->nrv = FBP_WAIT; q->t = -1; break; }
+            q->vel = vadd(q->vel, vmul(g, 0.75f)); /* cAppearGravity */
+            if (!q->bind && vdot(q->vel, g) >= 0.0f) q->bind = 1; /* isNoBind && !isMovingDown: onBind */
+            break;
+        case FBP_WAIT:
+            if (st == 0) { q->vel = v3(0, 0, 0); q->act = rand() % 120 + 600; } /* cRandomActFrame + cForceKillFrame */
+            if (st > 30 && vlen(vsub(mario->pos, q->pos)) < 2000.0f) { /* cChaseFrame, cChaseStartDistance */
+                se_start(SE_EM_FIRE_BUBBLE_JUMP, &q->pos.x);
+                q->act = rand() % 120 + 300; /* cChaseInvalidFrame */
+                q->nrv = FBP_CHASE; q->t = -1;
+            } else if (st == q->act) { q->nrv = FBP_DOWN; q->t = -1; }
+            break;
+        case FBP_CHASE: case FBP_DOWN: {
+            if (q->nrv == FBP_DOWN && st == 0) { se_start(SE_EM_FIRE_BUBBLE_DIE, &q->pos.x); q->vel = v3(0, 0, 0); }
+            V3 ax = q->ground ? vmul(q->gn, -1.0f) : g; /* updateChaseFrontVec(cChaseRotateSpeed 1) */
+            V3 to = vsub(vadd(mario->pos, vmul(mario->up, 40.0f)), q->pos);
+            if (vlen(to) > 1e-4f && vlen(vtangent(to, ax)) > 1e-4f) turn_on_plane(&q->front, to, ax, cosf(0.0174533f));
+            q->vel = vadd(vmul(q->front, 4.0f), vmul(g, 2.0f)); /* cChaseSpeed, then cChaseGravity */
+            if (q->nrv == FBP_CHASE) {
+                if (st > 0 && st % 39 == 0) se_start(SE_EM_FIRE_BUBBLE_JUMP, &q->pos.x); /* checkPassBckFrame(0) of Wait (39 frames) */
+                if (++q->chase > q->act) { q->nrv = FBP_DOWN; q->t = -1; } /* tryChaseEnd */
+            } else if (st >= 60) { fbub_gone(i); continue; } /* isBckStopped(Down) */
+            break;
+        }
+        }
+        if (q->nrv == FBP_APPEAR || q->nrv == FBP_WAIT || q->nrv == FBP_CHASE) fbub_fx(i, "Wait", 1);
+        if (q->bind) { /* initBinder(40, 40) */
+            V3 cc = vadd(vadd(q->pos, q->vel), vmul(up, 40.0f)), gn = up, wn = up;
+            int wall = 0;
+            q->ground = collide_n(&cc, up, 40.0f, &gn, &wn, &wall);
+            q->gn = q->ground ? gn : up;
+            q->pos = vsub(cc, vmul(up, 40.0f));
+        } else { q->pos = vadd(q->pos, q->vel); q->ground = 0; }
+        if ((q->nrv == FBP_WAIT || q->nrv == FBP_CHASE) && vlen(vsub(mc, vadd(q->pos, vmul(up, 40.0f)))) < 30.0f + HIT_BODY_R &&
+            mario_attack(ATK_FIRERUN, q->pos)) fbub_gone(i); /* attackSensor: sendMsgEnemyAttackFire taken */
+    }
+}
+
 /* OtaRock.cpp: faces Mario; Wait 30-90 frames (120-180 with arg0: no coconuts), then two coconuts (CocoNutBall, 4 of
  * them: Attack, thrown at step 40 from its Mouth at 15, 120 over Mario turned 5-10 degrees either way) and a fire ball
  * (FireBall at 15, 120 over Mario), again; all four coconuts gone and Mario 4000 off (or its SW_A off) it Hides, and in
@@ -15216,6 +15331,7 @@ static void update_candles(void)
  * a Unizo: 6 star pieces), melts SnowMen (update_snowmen). ponytail: Mario keeps his colours (no fire textures),
  * no fire throw / spin animations, no BGM_FIRE */
 static void kr_star(Kuribo *k, int fire);
+static int rb_shot(V3 p, float rad, int shell);
 static int kr_jet(Kuribo *k), kr_pursuing(const Kuribo *k);
 static void kr_pieces(Kuribo *k);
 static int js_blow(Kuribo *k, V3 from);
@@ -15230,6 +15346,7 @@ static int ge_hitall(Kuribo *k, V3 from);
 static int mg_hitall(Kuribo *k);
 static void bh_chain(Kuribo *k);
 static int jf_knock(Kuribo *k, V3 from);
+static int pk_blow(Kuribo *k, V3 from);
 static int kan_fire(Kuribo *k, V3 from);
 static void walker_inhale(Kuribo *e);
 static void fireball_hit_walkers(int b)
@@ -15263,6 +15380,7 @@ static void fireball_hit_walkers(int b)
         if (e->kind == WALK_POIHANA) { if (!poihana_shock(e)) continue; scene_stop = 3; fireballs[b].t = 0; return; } /* a HitAll: tryShock, stopSceneForDefaultHit(3) */
         if (e->kind == WALK_GESSO) { if (!ge_hitall(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* a HitAll: knockOut */
         if (e->kind == WALK_JELLYFISH) { if (!jf_knock(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* a HitAll: knockOut */
+        if (e->kind == WALK_PUKUPUKU) { if (!pk_blow(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* a HitAll: BlownOff */
         if (e->kind == WALK_KANINA) { if (!kan_fire(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* isMsgFireBallAttack: receiveFireBall */
         if (e->kind == WALK_MOGU || e->kind == WALK_TERESAW || e->kind == WALK_METBO || e->kind == WALK_SNAKEHEAD || e->kind == WALK_BOMBHEI || e->kind == WALK_STRSPIDER) continue; /* (Mogu, TeresaWater, Metbo, Snakehead, BombHei, StringSpider: neither isMsgFireBallAttack nor isMsgPlayerHitAll) */
         if (e->kind == WALK_KURIBO || e->kind == WALK_KMINI || e->kind == WALK_TAKOHEI) { /* isMsgFireBallAttack, a HitAll: requestBlowDown (KuriboMini: a coin), TakoHei's requestPunch */
@@ -15584,6 +15702,7 @@ static void update_jets(void)
             if (!gone && pg_jet_hit(p)) gone = 1; /* PenguinRacer in its race: isMsgJetTurtleAttack (race.inc) */
             if (!gone && st_jet_hit(p)) gone = 1; /* WaterfallCaveCover: isMsgJetTurtleAttack (statics.inc) */
             if (!gone && kiraira_shot(p, 60.0f, 1)) gone = 1; /* Kiraira: isMsgJetTurtleAttack (force-detonated) */
+            if (!gone && rb_shot(p, 60.0f, 1)) gone = 1; /* RingBeamer: isMsgJetTurtleAttack taken (nothing happens to it) */
             hhp_blow(p, 60.0f); /* HammerHeadPackun: isMsgJetTurtleAttack */
             tbox_hit(p, 60.0f); /* TreasureBoxCracked: isMsgJetTurtleAttack */
             for (int k = 0; k < nkuribo; k++) { /* ACTMES_JET_TURTLE_ATTACK */
@@ -15609,6 +15728,7 @@ static void update_jets(void)
                 else if (e->kind == WALK_KOTEBUG) took = kb_hitall(e, p); /* a HitAll: Blow overturned, else setOverturnFall */
                 else if (e->kind == WALK_MOGU) took = mg_hitall(e); /* isMsgJetTurtleAttack: tryPunchHitted */
                 else if (e->kind == WALK_JELLYFISH) took = jf_knock(e, p); /* a HitAll: knockOut */
+                else if (e->kind == WALK_PUKUPUKU) took = pk_blow(e, p); /* a HitAll: BlownOff */
                 else if (e->kind == WALK_KANINA) took = kan_fire(e, p); /* isMsgJetTurtleAttack: receiveFireBall */
                 else if (e->kind == WALK_SPIDER) took = js_blow(e, p); /* a HitAll: HitBlow */
                 else if (e->kind == WALK_KURIBO || e->kind == WALK_KMINI || e->kind == WALK_TAKOHEI) { /* isMsgJetTurtleAttack, a HitAll: requestBlowDown (KuriboMini: a coin), TakoHei's requestPunch */
@@ -28949,7 +29069,7 @@ static int walker_blow(Kuribo *e, V3 from)
 {
     if (e->kind == WALK_JELEC || e->kind == WALK_BEGOLAUNCH || e->kind == WALK_MKOOPA || e->kind == WALK_MERAMERA || e->kind == WALK_KARON) return 0; /* (JellyfishElectric / MechanicKoopaMini / Meramera / Karon: only isMsgExplosionAttack, walker_explosion; BegomanLauncher: none) */
     if (e->kind == WALK_TERESA || e->kind == WALK_STINKBUG || e->kind == WALK_MERAKING || e->kind == WALK_MOGU) return 0; /* (no receiveMsgEnemyAttack) */
-    if (e->kind == WALK_GESSO || e->kind == WALK_BOMBHEI || e->kind == WALK_JELLYFISH) return 0; /* (only isMsgExplosionAttack: walker_explosion; BombHei's blows only from a Wanwan) */
+    if (e->kind == WALK_GESSO || e->kind == WALK_BOMBHEI || e->kind == WALK_JELLYFISH || e->kind == WALK_PUKUPUKU) return 0; /* (Pukupuku: only from another Pukupuku) */ /* (only isMsgExplosionAttack: walker_explosion; BombHei's blows only from a Wanwan) */
     if (e->kind == WALK_TERESAW || e->kind == WALK_SNAKEHEAD || e->kind == WALK_MOGUCCHI || e->kind == WALK_KABOKURI || e->kind == WALK_SAMBOHEAD || e->kind == WALK_KANINA) return 0; /* (TeresaWater, Snakehead, Mogucchi, Kabokuri, SamboHead, Kanina: no receiveMsgEnemyAttack) */
     if (e->kind == WALK_BASABASA) return bb_punch(e, from, 0); /* isMsgToEnemyAttackBlow / Trample: startWithoutStopScene, PunchDown */
     if (e->kind == WALK_UNIZO) { if (unizo_breaking(e)) return 0; unizo_break(e); return 1; } /* receiveMsgEnemyAttack, not from a Unizo: doBreak */
@@ -33797,6 +33917,24 @@ static void pk_pose(Kuribo *k, V3 front, V3 up, float rate) /* _A8.slerp(makeQua
     k->qz = vnorm(vadd(vmul(k->qz, 1.0f - rate), vmul(z, rate)));
     k->qy = vnorm(vtangent(vadd(vmul(k->qy, 1.0f - rate), vmul(y, rate)), k->qz));
 }
+static void pk_fx(Kuribo *k, const char *name, V3 at, float scale) /* emitEffectHit(calcGroundHitMtx at a place) / emitEffect */
+{
+    float m[16];
+    basis_matrix(m, at, vmul(k->grav, -1.0f), k->qz, 0);
+    for (int j = 0; j < 12; j++) if (j % 4 != 3) m[j] *= scale;
+    fx_named("Pukupuku", name, m, NULL, NULL);
+}
+/* receiveMsgPlayerAttack's isMsgPlayerHitAll (a spin, a shell, a fire ball, rainbow Mario): setVelocityBlowAttack
+ * 35 / 20 (x 0.6 in water), BlownOff; not while damaged */
+static int pk_blow(Kuribo *k, V3 from)
+{
+    if (k->nrv == PK_TRAMPLED || k->nrv == PK_BLOWN) return 0;
+    float dep, rt = in_water(k->pos, vmul(k->grav, -1.0f), &dep) ? 0.6f : 1.0f;
+    V3 up = vmul(k->grav, -1.0f), h = vtangent(vsub(k->pos, from), up);
+    k->vel = vadd(vmul(vlen(h) > 1e-3f ? vnorm(h) : k->qz, 35.0f * rt), vmul(up, 20.0f * rt));
+    w_nrv(k, PK_BLOWN);
+    return 1;
+}
 static void puku_update(Kuribo *k)
 {
     const Row *r = &sc->objs[k->row];
@@ -33838,9 +33976,15 @@ static void puku_update(Kuribo *k)
         break;
     case PK_LAND: case PK_JUMPWATER: case PK_JUMPLAND:
         if (st == 0) {
-            if (k->nrv == PK_LAND) { w_act(k, "Bound"); w_se(k, SE_EM_PUKUPUKU_LAND); }
+            k->bshow = 0; /* _18: its water column out */
+            if (k->nrv == PK_LAND) { w_act(k, "Bound"); pk_fx(k, "Land", k->pos, 1.0f); w_se(k, SE_EM_PUKUPUKU_LAND); } /* emitGroundHitEffect */
             else if (k->nrv == PK_JUMPWATER) { w_act(k, "FlyStart"); k->qy = vmul(k->qy, -1.0f); w_se(k, SE_EM_PUKUPUKU_WATER_OUT); }
-            else { w_act(k, "FlyEnd"); w_se(k, SE_EM_PUKUPUKU_WING); w_se(k, SE_EM_PUKUPUKU_LAND); }
+            else { w_act(k, "FlyEnd"); w_se(k, SE_EM_PUKUPUKU_WING); pk_fx(k, "Land", k->pos, 1.0f); w_se(k, SE_EM_PUKUPUKU_LAND); }
+        }
+        if (k->nrv != PK_LAND && !k->bshow) { /* emitWaterColumIfNeed: its Center through the surface (out of it from the water, into it from the land) */
+            V3 cj = w_joint(k, walker_new_model(k->row), 1, v3(0, 0, 0));
+            float d2;
+            if ((k->nrv == PK_JUMPWATER) != (in_water(cj, up, &d2) != 0) || (k->nrv == PK_JUMPLAND && k->to + 1.0f / k->len >= 1.0f)) { pk_fx(k, "WaterColumn", cj, 1.5f); k->bshow = 1; }
         }
         k->to += 1.0f / k->len; /* mValueCtrl->update */
         if (k->to > 1.0f) k->to = 1.0f;
@@ -33863,7 +34007,7 @@ static void puku_update(Kuribo *k)
         if (st == 30) { pop_coins(k->pos, up, 1); goto dead; }
         break;
     case PK_BLOWN:
-        if (st == 0) { w_act(k, "Rotate"); w_se(k, SE_PM_SPIN_HIT); } /* startBlowHitSound */
+        if (st == 0) { w_act(k, "Rotate"); pk_fx(k, wet ? "SpinDamageWater" : "SpinDamage", k->pos, 1.0f); w_se(k, SE_PM_SPIN_HIT); } /* startBlowHitSound */
         else k->vel = vadd(k->vel, vmul(k->grav, wet ? 0.6f : 1.0f));
         k->pos = vadd(k->pos, k->vel);
         if (st == 15) { launch_pieces(k->pos, up, 3, 10.0f, 40.0f); w_se(k, wet ? SE_OJ_STAR_PIECE_BURST_W : SE_OJ_STAR_PIECE_BURST); goto dead; }
@@ -33878,10 +34022,7 @@ static void puku_update(Kuribo *k)
         if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) { if (msg == MSG_TRAMPLE) mario_trample(); w_nrv(k, PK_TRAMPLED); return; }
         if (msg == MSG_HITALL) { /* setVelocityBlowAttack 35 / 20 */
             m_punch(k, k->pos, 0);
-            float rt = wet ? 0.6f : 1.0f;
-            V3 h = vtangent(vsub(k->pos, mario->pos), up);
-            k->vel = vadd(vmul(vlen(h) > 1e-3f ? vnorm(h) : k->qz, 35.0f * rt), vmul(up, 20.0f * rt));
-            w_nrv(k, PK_BLOWN); scene_stop = 4;
+            pk_blow(k, mario->pos); scene_stop = 4;
             return;
         }
         if (!mario->hurt_timer && mario_touch(c, 60.0f)) { mario_attack(ATK_STRONG, c); if (k->nrv == PK_WATER) w_act(k, "BodyAttack"); }
@@ -35871,6 +36012,7 @@ static void update_invincible(void)
         if (e->kind == WALK_PACKUN) { if (packun_hit(e, mario->pos, 0)) m_invincible_hit(es); continue; } /* isMsgInvincibleAttack: punchDown */
         if (e->kind == WALK_GESSO) { if (ge_hitall(e, mario->pos)) m_invincible_hit(es); continue; } /* a HitAll: knockOut */
         if (e->kind == WALK_JELLYFISH) { if (jf_knock(e, mario->pos)) m_invincible_hit(es); continue; } /* a HitAll: knockOut */
+        if (e->kind == WALK_PUKUPUKU) { if (pk_blow(e, mario->pos)) m_invincible_hit(es); continue; } /* a HitAll: BlownOff */
         if (e->kind == WALK_MOGU) { if (mg_hitall(e)) m_invincible_hit(es); continue; } /* isMsgInvincibleAttack: tryPunchHitted */
         int took = walker_blow(e, mario->pos);
         if (took > 0 && e->kind == WALK_KMINI) e->item = 1; /* KuriboMini: isMsgInvincibleAttack, setTypeCoin(1) */
@@ -40049,6 +40191,23 @@ static void jg_open(Inst *in, typeof(&rbms[0]) o, int st) /* JumpGuarder::exeOpe
     if (st == 74) o->nact = 0; /* sOpenInt */
     if (st > 0 && (!in->anim || in->anim->done)) { o->nrv = RB_CLOSE; o->step = -1; }
 }
+/* receiveMsgPlayerAttack of RingBeamer / JumpBeamer / JumpGuarder: isMsgStarPieceReflect on the body (RingBeamer's Push
+ * sensor 160 at 80 up; a JumpEmitter's 145, 120 hopping, about 35 up; none while hidden); shell 1: isMsgJetTurtleAttack,
+ * taken by a RingBeamer only (the shell breaks on it) */
+static int rb_shot(V3 p, float rad, int shell)
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->rbeamer || row_dead[in->row] || (shell && in->rbeamer != 1)) continue;
+        int k = rbm_of(in->row);
+        if (k < 0 || (in->rbeamer >= 2 && rbms[k].nrv == RB_HIDE)) continue;
+        V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), o = v3(in->m[12], in->m[13], in->m[14]);
+        float r = in->rbeamer == 1 ? 160.0f : rbms[k].br > 0.0f ? rbms[k].br : 145.0f;
+        if (vlen(vsub(p, vadd(o, vmul(up, in->rbeamer == 1 ? 80.0f : 35.0f)))) > r + rad) continue;
+        return 1;
+    }
+    return 0;
+}
 static void update_rbeamers(void)
 {
     FOR_KIND(i, rbeamer) { /* the beamers in reach (their rows found once) */
@@ -40379,6 +40538,20 @@ static int sbm_territory(int k, const Row *r, float reach) /* isPlayerInTerritor
     V3 to = vtangent(vsub(mario->pos, row_pos(r)), sbms[k].up), f = vtangent(sbms[k].f, sbms[k].up);
     if (vlen(vsub(mario->pos, row_pos(r))) >= reach || vlen(to) < 1e-6f || vlen(f) < 1e-6f) return 0;
     return vdot(vnorm(to), vnorm(f)) >= cosf(45.0f * 0.0174533f); /* isFaceToPlayerHorizontalDegree */
+}
+/* receiveMsgPlayerAttack: isMsgStarPieceReflect on its body (60, 80 under), not stopped: the beam off, CloseWaitNear */
+static int sbm_shot(V3 p)
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->sbeamer || row_dead[in->row]) continue;
+        int k = sbm_of(in->row);
+        if (k < 0 || !sbms[k].init || sbms[k].nrv == SB_NONACTIVE || sbm_stopped(k)) continue; /* (NonActive: invalidateHitSensors) */
+        if (vlen(vsub(p, vsub(row_pos(&sc->objs[in->row]), vmul(sbms[k].up, 80.0f)))) > 60.0f + 30.0f) continue;
+        sbm_set(k, SB_WAITNEAR); /* deleteEffectAll, the beam's sensor and shadow off, initBeamPos, validateClipping */
+        return 1;
+    }
+    return 0;
 }
 static void update_sbeamers(void)
 {
@@ -41755,7 +41928,7 @@ static void update_eyebeamers(void)
         }
         eb_place(in);
         o->lv = se_level(SE_OJ_LV_EYE_BEAMER_MOVE, &in->m[12], o->lv); /* control */
-        if (r->arg[1] >= 0 && o->nrv == EB_PATROL) { /* updateWaterSurfaceMtx, BeamSurface */
+        if (r->arg[1] > 0 && o->nrv == EB_PATROL) { /* updateWaterSurfaceMtx, BeamSurface (emitted when _160 > 0) */
             V3 y;
             q_axes(o->dc, NULL, &y, NULL);
             V3 p = vsub(o->ec, vmul(y, (float)r->arg[1] + vdot(y, vsub(o->ec, o->p104))));
@@ -46729,6 +46902,7 @@ static int cursor_sees(V3 p, float px) /* p shows within px pixels of the cursor
 
 static void shoot_piece(void);
 static void update_shots(void);
+static int sbp_shot(V3 p);
 static void update_cursor(void)
 {
     float x = pad_rx(), y = pad_ry(), k = 6.0f + 10.0f * sqrtf(x * x + y * y), px = cur_x, py = cur_y;
@@ -46838,7 +47012,7 @@ static void update_shots(void)
             else if (e->kind == WALK_GESSO) { if (e->nrv != GE_PUNCHDOWN) w_nrv(e, GE_ROTATE); } /* isMsgStarPieceAttack: Rotate */
             else if (e->kind == WALK_METBO) { w_se(e, SE_EM_METBO_TRAMPLE); if (!mb_swoon(e) && e->nrv != MB_RECOVER && !mb_down(e)) w_nrv(e, MB_GUARD); } /* isMsgStarPieceReflect */
             else if (e->kind == WALK_BOMBHEI) { if (e->nrv == BH_GONE) { hit = 0; continue; } } /* isMsgStarPieceReflect */
-            else if (e->kind == WALK_PUKUPUKU) { } /* isMsgStarPieceReflect: nothing more */
+            else if (e->kind == WALK_PUKUPUKU) hit = 2; /* isMsgStarPieceReflect: nothing more */
             else if (e->kind == WALK_STRSPIDER) { if (ss_down(e)) { hit = 0; continue; } strspider_star(e, s->pos); }
             else if (e->kind == WALK_BEGOSPIKE || e->kind == WALK_BEGOSPRING) { if (bg_down(e) || e->nrv == BG_HIDE) { hit = 0; continue; } bg_blow(e, s->pos, 40.0f, 10.0f); } /* isMsgStarPieceAttack */
             else if (e->kind == WALK_BBEGO) { } /* isMsgStarPieceReflect */
@@ -46901,6 +47075,10 @@ static void update_shots(void)
         if (!hit && bgb_shot(s->pos)) hit = 2; /* BigBubble: isMsgStarPieceReflect */
         if (!hit && st_shot(s->pos)) hit = 2;          /* BallBeamer: isMsgStarPieceReflect (statics.inc) */
         if (!hit && tmk_shot(s->pos)) hit = 2; /* Tamakoro: isMsgStarPieceReflect */
+        if (!hit && fbub_shot(s->pos)) hit = 1; /* FireBubble: isMsgStarPieceAttack */
+        if (!hit && sbm_shot(s->pos)) hit = 2; /* SearchBeamer: isMsgStarPieceReflect */
+        if (!hit && rb_shot(s->pos, 30.0f, 0)) hit = 2; /* RingBeamer / JumpBeamer / JumpGuarder: isMsgStarPieceReflect */
+        if (!hit && sbp_shot(s->pos)) hit = 2; /* StinkBugParent: isMsgStarPieceReflect on its body */
         if (!hit && gap_shot(s->pos)) hit = 1;          /* #143's classes (update_gaps) */          /* Hanachan's parts */         /* Butler: isMsgStarPieceAttack */
         for (int k = 0; k < ninsts && !hit; k++) { /* ItemBubble: isMsgStarPieceAttack bursts it */
             Inst *in = &insts[k];
@@ -54970,6 +55148,14 @@ static void sbp_collision(Inst *in)
     if (sbp.ki >= 0 && sbp.ki < ninsts) insts[sbp.ki].kcl = !sbp.child && sbp.coll_on ? scene_kcl(sc, "StinkBugParent#Switch") : NULL;
 }
 
+/* receiveMsgPlayerAttack: isMsgStarPieceReflect on its body (250 at 150 up): reflected; SpinReaction in Wait / Search /
+ * DashSign / DashSignEnd / Back (isNrvEnableStarPieceAttack) */
+static int sbp_shot(V3 p)
+{
+    if (sbp.row < 0 || sbp.dead || sbp_demo() || !sbp.sensors_on || vlen(vsub(p, vadd(sbp.pos, vmul(sbp.up, 150.0f)))) > 250.0f + 30.0f) return 0;
+    if (sbp.nrv == SBP_WAIT || sbp.nrv == SBP_SEARCH || sbp.nrv == SBP_DASHSIGN || sbp.nrv == SBP_DASHSIGNEND || sbp.nrv == SBP_BACK) sbp_set(SBP_SPINREACTION);
+    return 1;
+}
 static void update_sbp(void)
 {
     if (sbp.row < 0 || sbp.dead) return;
@@ -58549,6 +58735,7 @@ void game_update(void)
     LQ(31, update_jumpstands());
     LQ(32, update_tsuki());
     LQ(33, update_kiraira());
+    update_fbubs();
     LQ(34, update_kgunners());
     LQ(35, update_orocks());
     LQ(36, update_hhps());
@@ -60235,6 +60422,12 @@ mario_model:
         }
     }
     RESTQ(2);
+    for (int i = 0; m_firebubble && i < nfbubs; i++) { /* the placed FireBubbles (hideModel in WaitToAppear) */
+        float fm[16];
+        if (fbubs[i].nrv == FBP_OFF || fbubs[i].nrv == FBP_WAITTOAPPEAR || !row_shown(fbubs[i].row)) continue;
+        basis_matrix(fm, fbubs[i].pos, up_at(fbubs[i].pos, v3(0, 1, 0)), fbubs[i].front, 0);
+        render_model(m_firebubble, fm, 0x80, 0x80, 0x80);
+    }
     for (int i = 0; m_dfire && i < DINO_FIRES; i++) if (dfire[i].alive) { /* DinoPackunFire: rolled by _8C */
         const float *q = dfire[i].q;
         float r[9] = {1 - 2 * (q[1] * q[1] + q[2] * q[2]), 2 * (q[0] * q[1] + q[2] * q[3]), 2 * (q[0] * q[2] - q[1] * q[3]),
