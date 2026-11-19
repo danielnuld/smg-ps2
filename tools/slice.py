@@ -325,7 +325,7 @@ DUMMY_TEX = ("MapDummy",)  # AstroMapBoard: GalaxyMapController::capture's pictu
 LOGIC = ("SoundEmitterCube", "SoundEmitterSphere", "QuakeEffectAreaCube", "PlayerSeCube", "PlayerSeSphere", "PlayerSeCylinder", "MercatorCube", "MirrorAreaCube", "SnowFloor", "SnowplowSwitch", "FallOutFieldDraw", "ClipFieldSwitch", "RaceRail", "NPCSupportRail", "BallRail", "SphereRailDash", "FluffWind", "Fountain", "SpringJetWater", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "TimerSwitch", "SkeletalFishBossRail", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "KoopaSwitchKeeper", "KoopaPowerUpSwitch", "KoopaViewSwitchKeeper", "KoopaRestarterVs3", "BossKameckMoveRail", "TripodBossBaseJointPosition", "TripodBossStepPoint", "TripodBossStepStartArea", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "ForbidTriangleJumpCube", "HeavySteeringCube", "DashChargeCylinder", "ForbidJumpCube",  # Mario::updateCubeCode
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
-         "DeathCylinder", "RestartCube", "StarPieceSpot", "WaterCube", "WaterSphere", "WaterCylinder",
+         "DeathCylinder", "AreaMoveSphere", "RestartCube", "StarPieceSpot", "WaterCube", "WaterSphere", "WaterCylinder",
          "ChangeBgmCube", "BgmProhibitArea", "AudioEffectCube", "AudioEffectSphere", "AudioEffectCylinder", "AstroChangeStageCube", "MovieStarter", "RunawayRabbitCollect", "PhantomTorch", "PhantomBonfire", "Hanachan",
          # Mario's areas (MR::getAreaObj: game.c area_obj / foo_sphere)
          "CelestrialSphere", "TowerModeCylinder", "NonSleepCube", "EffectCylinder", "SmokeEffectColorAreaCube",

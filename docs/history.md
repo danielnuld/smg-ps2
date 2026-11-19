@@ -11,6 +11,17 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Mario carried on AreaMove / RailMove floors (feat/581-power-area-rail-move, #581, 2026-11-18): game.c m_power_moves
+  (MarioEnforce.cpp powerAreaMove / powerRailMove): on a floor of code 28 in an AreaMoveSphere round it (arg0 or 10 a
+  frame), on one of code 27 along his ground's rail at the point nearest him (10 a frame; the rail's own speed,
+  path_arg3, is not in the PATH entries); against a wall the part into it dropped; tryJump takes the two off his
+  velocity and into the jump. PCSX2: XF=-DSINK_TEST=27 SandClockGalaxy/1, set on a sand stream with the stick let go
+  he sinks to 64 (updateOnSand's rail floor) and is taken off its end in about 60 frames. AreaMove waits for the
+  repack (slice.py LOGIC AreaMoveSphere: the galaxies placing it). His position was not logged: no speed measured.
+- MarioStep (#571, 2026-11-18): m_check_step / m_start_step / step_update (MarioStep.cpp): the stick against a front
+  wall with a floor on it under mWalkStepHeight sets him on it, his drawn matrix eased; m_check_all_wall keeps the
+  floor and slope ahead (_4D8 / _50C, _4DC / _518). _4DC never holds as decompiled: MarioBump can not start. PCSX2:
+  EggStar 1's route unchanged (star at f 4281) with no "step:" line (XF=-DSTEP_TEST): no step taken was seen yet.
 - RasterScrollCube, AstroChangeStageCube's capture wipe (feat/492-raster-astro-wipe, 2026-11-07): MarioCollision.cpp:2296
   (Mario in a RasterScrollCube: setRasterScroll(arg0, arg1, arg2); slice.py LOGIC RasterScrollCube, HeavenlyBeach's
   only; its scene reserves the target blocks). AstroChangeStageCube after its 5 frames: closeSystemWipeCircleWithCapture
