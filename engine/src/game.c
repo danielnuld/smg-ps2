@@ -15230,6 +15230,7 @@ static int ge_hitall(Kuribo *k, V3 from);
 static int mg_hitall(Kuribo *k);
 static void bh_chain(Kuribo *k);
 static int jf_knock(Kuribo *k, V3 from);
+static int kan_fire(Kuribo *k, V3 from);
 static void walker_inhale(Kuribo *e);
 static void fireball_hit_walkers(int b)
 {
@@ -15262,6 +15263,7 @@ static void fireball_hit_walkers(int b)
         if (e->kind == WALK_POIHANA) { if (!poihana_shock(e)) continue; scene_stop = 3; fireballs[b].t = 0; return; } /* a HitAll: tryShock, stopSceneForDefaultHit(3) */
         if (e->kind == WALK_GESSO) { if (!ge_hitall(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* a HitAll: knockOut */
         if (e->kind == WALK_JELLYFISH) { if (!jf_knock(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* a HitAll: knockOut */
+        if (e->kind == WALK_KANINA) { if (!kan_fire(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* isMsgFireBallAttack: receiveFireBall */
         if (e->kind == WALK_MOGU || e->kind == WALK_TERESAW || e->kind == WALK_METBO || e->kind == WALK_SNAKEHEAD || e->kind == WALK_BOMBHEI || e->kind == WALK_STRSPIDER) continue; /* (Mogu, TeresaWater, Metbo, Snakehead, BombHei, StringSpider: neither isMsgFireBallAttack nor isMsgPlayerHitAll) */
         if (e->kind == WALK_KURIBO || e->kind == WALK_KMINI || e->kind == WALK_TAKOHEI) { /* isMsgFireBallAttack, a HitAll: requestBlowDown (KuriboMini: a coin), TakoHei's requestPunch */
             if (walker_blow(e, fireballs[b].pos) <= 0) continue;
@@ -15607,6 +15609,7 @@ static void update_jets(void)
                 else if (e->kind == WALK_KOTEBUG) took = kb_hitall(e, p); /* a HitAll: Blow overturned, else setOverturnFall */
                 else if (e->kind == WALK_MOGU) took = mg_hitall(e); /* isMsgJetTurtleAttack: tryPunchHitted */
                 else if (e->kind == WALK_JELLYFISH) took = jf_knock(e, p); /* a HitAll: knockOut */
+                else if (e->kind == WALK_KANINA) took = kan_fire(e, p); /* isMsgJetTurtleAttack: receiveFireBall */
                 else if (e->kind == WALK_SPIDER) took = js_blow(e, p); /* a HitAll: HitBlow */
                 else if (e->kind == WALK_KURIBO || e->kind == WALK_KMINI || e->kind == WALK_TAKOHEI) { /* isMsgJetTurtleAttack, a HitAll: requestBlowDown (KuriboMini: a coin), TakoHei's requestPunch */
                     took = walker_blow(e, p) > 0;
@@ -30078,6 +30081,12 @@ static void ka_blow(Kuribo *k, V3 from) /* doDamageFireBall: setVelocityBlowAtta
     k->front = vmul(h, -1.0f);
     w_nrv(k, KA_DAMAGEFB);
 }
+static int kan_fire(Kuribo *k, V3 from) /* receiveFireBall (a fire ball, a shell on its body): doDamageFireBall */
+{
+    if (k->nrv == KA_UNDER || k->nrv == KA_DIG || k->nrv == KA_DAMAGEHIP || k->nrv == KA_DAMAGEFB || k->nrv == KA_APPEAR) return 0; /* (its sensors off) */
+    ka_blow(k, from);
+    return 1;
+}
 static int ka_find(Kuribo *k) { if (ka_fan(k, k->qz, 1000.0f, 180.0f, 30.0f)) { w_nrv(k, KA_FIND); return 1; } return 0; }
 static int ka_hit_wall(Kuribo *k) /* tryHitWall: reboundVelocityFromCollision(1, 0, 1) */
 {
@@ -35307,7 +35316,7 @@ static void update_kuribo(void)
 #endif
         Kuribo *k = &kuribo[i];
         if (k->state == KURIBO_DEAD || !row_shown(k->row)) continue;
-        if (k->clipped && k->kind != WALK_KARIKARI && !test_noclip && !(k->kind == WALK_BOMBTERESA && !k->lvt[1]) && !(k->kind == WALK_MERAKING && mk_noclip(k)) && !(k->kind == WALK_MERAMERA && k->lvt[2]) && !(k->kind == WALK_TERESA && k->lvt[1]) && !(k->kind == WALK_MKOOPA && k->lvt[2]) && !(k->kind == WALK_BOMBBIRD && bbd_noclip(k)) && !(k->kind == WALK_POIHANA && k->dir) && !(k->kind == WALK_KARON && kr_pursuing(k)) && !(k->kind == WALK_BASABASA && k->nrv != BB_WAIT && k->nrv != BB_AIRWAIT)) { if (k->kind == WALK_MERAMERA) k->sstep = -1; continue; } /* (Karon's Pursue, BasaBasa out of Wait / AirWait: invalidateClipping) */ /* startClipped: no movement (Karikari may ride on Mario; a BombTeresa's invalidateClipping: lvt[1] 0) */
+        if (k->clipped && k->kind != WALK_KARIKARI && !test_noclip && !(k->kind == WALK_BOMBTERESA && !k->lvt[1]) && !(k->kind == WALK_MERAKING && mk_noclip(k)) && !(k->kind == WALK_MERAMERA && k->lvt[2]) && !(k->kind == WALK_TERESA && k->lvt[1]) && !(k->kind == WALK_MKOOPA && k->lvt[2]) && !(k->kind == WALK_BOMBBIRD && bbd_noclip(k)) && !(k->kind == WALK_POIHANA && k->dir) && !(k->kind == WALK_GESSO && k->nrv == GE_WAIT && k->step >= 2) && !(k->kind == WALK_KARON && kr_pursuing(k)) && !(k->kind == WALK_BASABASA && k->nrv != BB_WAIT && k->nrv != BB_AIRWAIT)) { if (k->kind == WALK_MERAMERA) k->sstep = -1; continue; } /* (Karon's Pursue, BasaBasa out of Wait / AirWait: invalidateClipping) */ /* startClipped: no movement (Karikari may ride on Mario; a BombTeresa's invalidateClipping: lvt[1] 0) */
         u32 c0 = cycles();
         update_kuribo_one(k);
         kprof[k->kind] += cycles() - c0; kprof_n[k->kind]++;
