@@ -47,16 +47,17 @@ Started 2026-11-18. Rows are in the order seen most.
 |---|---|---|
 | PauseMenu | menu.c pm_* | fixed #659: SE_SY_PAUSE_OFF at the lower button's decide; exeGameDataSave back to Selecting when the save failed. Left out: CS_CLICK_CLOSE (the Wii remote's speaker), Minus as a second close button |
 | GamePauseSequence | menu.c menu_update | ported, not re-read |
-| ButtonPaneController | menu.c btn_* | ported, not re-read |
+| ButtonPaneController | menu.c btn_* | ok (its nine nerves, calcPointingAnimStartFrame, cDecidedToDisappearAnimRate 1.5; the decide trigger is the pad's X) |
 | YesNoController | menu.c yn_* | ok. Left out: the LeftText / RightText effects, CS_CLICK_CLOSE; setSE replaces the three sounds together |
 | YesNoLayout | menu.c ynl_* | ported, not re-read |
 | SysInfoWindow | menu.c si_* | ok but its key windows' IconAButton: issue #679. WindowType_Mini not used |
 | IconAButton | menu.c iab_* | ok (Open / Wait / Term, openWithoutMessage, the follow pane) |
 | BackButton | menu.c (ss.back, fsl.back, gm.back, pb.back) | ok (SE_SY_BUTTON_CURSOR_ON on the pointer, SE_SY_GALAXY_DECIDE_CANCEL once) |
 | GalaxySelectBackButton | menu.c dmu_back_* | ported, not re-read |
-| ScenarioSelectLayout (+ ScenarioSelectStar) | menu.c ss_* | ported, not re-read |
+| ScenarioSelectLayout | menu.c ss_* | ok on its eleven nerves, their constants (cDecideFrame 40, the End at 60, the white fade at 180 / 30, 210, the comet warning 15 / 180, the cancel's 90) and sounds (SE_SY_DECIDE_1, SE_DM_LV_SENARIO_SEL_FLY, SE_SY_COMET_WARNING_DISP / WARNING at step % 80 == 25, BGM_SENARIO_SEL_2). Not re-read: ScenarioSelectStar (sst_*), the pane placement, the selected star's effects |
 | GalaxySelectInfo, GalaxyConfirmLayout, GalaxyNamePlate, GalaxyInfoLayoutSetter | menu.c dmu_* | ported, not re-read |
-| GalaxyMapController, GalaxyMap, its icons, GalaxyMapTitle, GalaxyMapSelectButton | menu.c gm_* | ported, not re-read. The domes have no map (map.bin is the Observatory's): issue #663 |
+| GalaxyMapController | menu.c gm_update | ok on its nerves' constants (sDisplayKeepFrame 30, sMapFadeinoutFrame 12, the Tico comet's 60 / 60 white fade) and sounds (SE_SY_GALAMAP_PAGE_CHANGE with CH_PITCH_UP / DOWN, the three SE_SY_LV_GALAMAP_BLINK_*, SE_DM_TICOCOMET_MORPH_WIPE_OUT). The domes have no map (map.bin is the Observatory's): issue #663 |
+| GalaxyMap, its icons, GalaxyMapTitle, GalaxyMapSelectButton | menu.c gm_* | ported, not re-read |
 | PowerStarList | menu.c gm_list_* | ported, not re-read. Its Capture button: Wii-only (the picture goes to the Wii Message Board) |
 | LuigiLetter, PeachLetter, BrosButton | menu.c llt_* / plt_* / bros | ported, not re-read |
 | PictureBookLayout, PictureBookCloseButton | menu.c pb_* | ported, not re-read |
@@ -92,5 +93,9 @@ CopyFilterNegater: the image effects, out of this audit's scope (render.c; sever
 
 ## Next pass
 
+docs/sound-gaps.md lists no SE of a Screen/ class as missing but the Wii-only ones (the pointer's B, the guidance
+layouts, the battery, Manual2P, MiiSelect's scroll, PowerStarList's capture) once this pass is in: what is left to
+check in the rows below is animation names and frames, not nerves gone.
+
 The rows marked "ported, not re-read", in this order: MarioMeter,
-ScenarioSelectLayout, GalaxyMapController, the file select, the save window, the staff roll.
+ScenarioSelectStar, GalaxyMap and its icons, the file select, the save window, the staff roll.
