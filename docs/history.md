@@ -29,6 +29,59 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   this rule into an overlay (XF="-DKP_TEST -DSE_LOG -DPACKS_OVERLAY=wt-seboss"): no `se?` line left in the fight up
   to Lv3 (31 ids before), `se+ 00040174` / `se+ 000501fe` for the stairs' meteors. Its price: 639 SEs for 493 in the
   same SPU budget, caps x 0.40 (4379 Hz) for x 0.49. **Release: sound.py --pack** every galaxy (the full repack).
+- TrampleStar (feat/702-trample-star, #702, 2026-11-18): MapObj/TrampleStar.cpp in `engine/src/trample_star.inc`
+  (trs_*): the rubber ball of PhantomNestZone (PhantomGalaxy 3; PoyoPoyoPlanetZone's two are in no galaxy). The
+  shared mesh as Petari makes it (the cube divided three times: 486 vertices, 768 faces, the LOD's 192, the
+  overlaps), the bind on its body sensor (the rate his speed in 30 .. 50, the nearest vertex, not while he moves out
+  of it), BindingCapture (10 / 15 frames: the rate on the vertices within 400, x 0.85), BindingShoot (the springs 0.1
+  / 0.2, the jump at the capture vertex's zero crossing, x 1.5 with A, its sounds, Jump2; step 120), his matrix at
+  the capture vertex, the LOD past 5000. Everything in MEM_OBJECTS (about 24 KB of the scene's arena). Its texture:
+  `tools/slice.py` TEX_ONLY TrampleStar. Test: plain `XF=-DTRAMPLE_TEST`, PhantomGalaxy/3: in PCSX2 (overlay pack) the bind, the capture, the shot (he leaves at 26 up), again on each landing, the ball drawn with its texture; its three sounds answer `se?` until the sound pack is cut again. ponytail: drawn unlit
+  (texture x its material colour; no actor light, no Mario shadow stage); the divide's edge lookup is a list, not
+  Petari's check flag table. Cost: about 6.0 KB of the ELF (nm trs_*); its mesh and state, about 24 KB, in MEM_OBJECTS only where one is placed; memcheck on a plain build of main with the six classes of this batch: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB. **Release: slice_all.py PhantomGalaxy + sound.py --pack PhantomGalaxy**
+  (SE_OJ_TRAMPOLINE_LAND_L / BOUND_S / BOUND_L answer `se?`).
+- GravityLightRoad (feat/651-gravity-light-road, #651, 2026-11-18): MapObj/GravityLightRoad.cpp in
+  `engine/src/gravity_light_road.inc` (glr_*): KoopaBattleVs3Galaxy's five beams. Its body sensor (250 at the foot of
+  Mario's centre on the beam's line, 2500 x scale y long) binds him inside its cylinder (390 round the axis): Fall,
+  Draw (SE_PM_GRAV_LIGHT_DRAWN_ST, + 2 a frame along its up to 20, 2 a frame towards the axis, his up turned to -up by
+  0.2), until its SW_A (the SwitchCube at its top) or 1800 frames: endBindAndPlayerForceJump(up x 2), Disappear, kill
+  after 59. State in MEM_OBJECTS. Test: plain `XF=-DGLR_TEST`, KoopaBattleVs3Galaxy/1: bound at once, drawn 20 a
+  frame onto the axis, its switch at the top, Disappear, dead (seen in PCSX2; no log line seen for its SE). ponytail:
+  the pack carries no joint box (the BDL's read offline) and one BRK track a model: Wait.brk / Disappear.brk are not
+  played; the matrix blend is of his up vector. Cost: about 2.8 KB of the ELF (nm glr_*), its state in MEM_OBJECTS; memcheck on a plain build of main with this and the five classes after it: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB. No repack.
+- HipDropMoveObj / HipDropDemoMoveObj (feat/621-hipdrop-move, #621, 2026-11-18): LavaObstacleRockShell,
+  LavaObstacleRockHomeA and ForestObstacleWoodA (one placed each; still models before) as gap classes (GAP_HIPMOVE /
+  GAP_HIPDEMO, update_hipmove): Wait (no clip: Move's first frame held) until Mario's hip drop lands on its collision
+  within 225 of its Switch joint (each model's last joint), Move (the Move clip, StageEffectDataTable's start SE, the
+  moving shake, its registered demo started, the moving SE up to the stop steps, the stop SE and the riddle chime
+  there), Done at the clip's end with its SW_A on. HipDropDemoMoveObj holds Mario (Wait clip) on the Move joint
+  while the demo runs. slice.py: the three models skinned (SKINNED_OBJ: the Move clip, the collision on the Move
+  joint). GapSt has a third vector (u). Test: `XF=-DHIPMOVE_TEST=k` on a plain build (Mario held over the k-th row,
+  a hip drop at frame 900, then the next row). In the test LavaObstacleRockShell's Move was cut short: the drop
+  lands Mario in a SwitchCylinder that starts the zone's own demo, and the rock is not its cast. ponytail: no Move
+  BRK (the Shell's cracks); a rock whose zone streams out in Move does not finish it. **Release: slice_all.py**
+  HellProminenceGalaxy, HoneyBeeKingdomGalaxy **+ sound.py --pack** for them (SE_OJ_LAVA_OB_ROCK_A / S _ON, _MV,
+  _STOP and SE_OJ_FOREST_OBS_WOOD_* answer `se?` until then).
+- Enemy audit, second batch, and Kiraira (feat/689-enemy-audit-2, #689 / #690, PR #693, 2026-11-18): the table is
+  `docs/class-audit-enemy.md`. PackunPetit: a fire ball / the rainbow attack punchDown (packun_hit), a shell with the
+  scene stop, the stop only for the spin / kick / shell, a failed attack pushes. Unizo: enemy attacks not from a Unizo
+  doBreak (walker_blow), no rainbow kill, doAttack only when taken, UnizoLand's SearchSmoke. KoteBug / Poihana / Gesso /
+  Mogu: their own answers to fire balls, shells, the rainbow attack and explosions (kb_hitall, ge_hitall, mg_hitall).
+  BombHei (#600's leftovers): held at Mario's HandR (MarioActor::updateTakingPosition: _49C, the FixedPosition (1.8,
+  52.51, 39.58) at HandR, + his velocity) with カブ抜き then カブウエイト over his body and 両手投げ at the throw; Thrown
+  rebounds off the enemies it touches (calcReflectionVector 0.8, in walker_push_pass); taken, it has no body sensor.
+  BegomanSpringHide: its BegomanBaby (one hosted walker a Hide row) out in Shake's first step when dead (50 up, 10
+  aside, SE_EM_BEGOMAN_LAUNCH_BABY), only when the pack has the BegomanBaby model (slice.py EXTRA).
+  Kiraira (it was an early stand-in: touch, 480 frames down): update_kiraira after Kiraira.cpp, its nerve in
+  row_turn's low bits with mEyesOpen / mIsForceDetonated above, mFront its matrix's Z: Wait, FaceToMario (2.8 degrees a
+  frame), FaceToMarioAndStare (SE_OJ_KIRAIRA_STARE at step 5), Explode from Mario's touch or spin (an explosion attack
+  he takes), a star piece, a thrown shell (force-detonated: the explosion to Mario within its eye's 600, the walkers,
+  the other Kirairas: BeExploded, 10 frames), the strong rumble / shake within 3000, Dead 300 with the group's alarm
+  (they turn 20 degrees a frame and stare), RecoverSign 120, Recover (60 frames: no clips); down, its body pushes.
+  Its Explosion effect once jpa.py names Kiraira (SpaceMine's until then). Left (#691): the model with its clips.
+  Test: built plain (EggStarGalaxy/1), host tests, the route test, memcheck; NOT run in PCSX2
+  (D:/smg-ps2-wt/unverified-2026-11-18.md). **Release: slice_all.py** the galaxies with a BegomanSpringHide
+  (CannonFleetGalaxy: BegomanBaby) and with a Kiraira / KirairaRail (jpa.py NAMED Kiraira: its effects).
 - Enemy audit against Petari, first batch (feat/676-enemy-audit-1, #676 / PR #688, 2026-11-18): the enemies read class by class
   against vendor/Petari/src/Game/Enemy (the table: `docs/class-audit-enemy.md`, one row a class with what was fixed and
   what is left). The cause shared by most: `fireball_hit_walkers`, the thrown shell's loop and `walker_blow`'s callers
