@@ -22395,7 +22395,7 @@ static void update_mario(void)
  * mBlackHoleScaleLimit); step 60 the miss (マリオ奈落 / ゲームオーバー: miss() with the abyss's voice), step
  * mBlackHoleHideTime he is hidden (_482) with ブラックホール消滅 (MarioDieBlackHoleVanish).
  * ponytail: no BlackHoleCamera (startBlackHoleCamera) for a hole without its own camera, no star pointer death mode,
- * no BlackHole Disappear demo action; a build without the miss events (MISS_EVENTS) ends it at the miss */
+ * a build without the miss events (MISS_EVENTS) ends it at the miss */
 static void bh_start(Player *m, const Inst *in)
 {
     memset(&bh, 0, sizeof bh);
@@ -41882,8 +41882,10 @@ int game_test_bigbubble(int f)
  * it shakes (Shake); an enemy attack (a coconut, a rock, an explosion) breaks it (Break: a coin, arg0 0 three star
  * pieces: needle_attacked). BlackHole / BlackHoleCube (BlackHole.cpp): inside the sphere of radius 500 * scale, or the cube's box
  * of +-500 * scale, Mario is inhaled: a miss; walkers in it die (nothing dropped); SW_A kills it. ponytail: no star-piece
- * shots or invincibility kills, the mine does not spin; Mario's inhale is bh_start / bh_update (no BlackHole
- * Disappear demo action) */
+ * shots or invincibility kills, the mine does not spin; Mario's inhale is bh_start / bh_update. BlackHole's Disappear
+ * (its demo's action nerve, dx_cast_hook; row_turn 1, row_step its step): SE_OJ_BLACK_HOLE_DISAPPEAR, the core's scale
+ * eased in from _9C to 0 over steps 30 .. 90 (calcNerveEaseInValue), killed at 90; nothing inhaled meanwhile
+ * (attackSensor: Wait only) and no hum. ponytail: the BlackHoleRange model (not drawn) shrinks over 0 .. 90 */
 /* ACTMES_INHALE_BLACK_HOLE: only the classes with an isMsgInhaleBlackHole handler die (their kill, no item): Kuribo,
  * KuriboMini, KuriboChief (setTypeNone), Karon, KoteBug, MechanicKoopaMini, Metbo, Karikari; the rest stay */
 static void walker_inhale(Kuribo *e)
@@ -41935,6 +41937,20 @@ static void update_hazards(void)
         if (in->hazard >= 3) { /* black hole: sphere 500 * scale, or Mario's sensor inside the cube's box */
             const Row *rw = &sc->objs[in->row];
             if (!row_shown(in->row)) continue;
+#ifdef BH_DIS_TEST /* hazard build XF=-DBH_DIS_TEST: the first black hole's Disappear at frame 300 */
+            { static int once; if (game_frame >= 300 && !once) { once = 1; row_turn[in->row] = 1; row_step[in->row] = 0; } }
+#endif
+            if (row_turn[in->row]) { /* exeDisappear */
+                int st = row_step[in->row]++;
+                if (st == 0) { se_start(SE_OJ_BLACK_HOLE_DISAPPEAR, &in->m[12]); printf("black hole %d: disappear\n", in->row); }
+                float a = rw->arg[0] > 0 ? rw->arg[0] / 1000.0f : in->hazard == 3 ? rw->scale[0] : 1.0f; /* _9C */
+                float k = 0.5f * a * cosf(1.5707963f * (st < 30 ? 0.0f : st >= 90 ? 1.0f : (st - 30) / 60.0f)); /* getEaseInValue(rate, _9C, 0) */
+                float sk[3] = {k, k, k};
+                mat_translate_rot_scale(in->m, rw->pos, rw->rot, sk);
+                in->s = k;
+                if (st >= 90) { row_kill(in->row); game_rebind(); return; }
+                continue;
+            }
             in->lv[0] = se_level(SE_OJ_LV_BLACK_HOLE, &in->m[12], in->lv[0]); /* BlackHole::exeWait */
             if (rw->sw[SW_A] >= 0 && sw_on(rw, SW_A)) { row_kill(in->row); continue; } /* exeWait: SW_A kills it */
             V3 x, z;
@@ -45348,6 +45364,10 @@ static void dx_cast_hook(int row, int type, int part)
     if (type == 0 && !strcmp(cls, "GrandStarReturnDemoStarter")) { gsr_appear(row); return; }
     if (type == 2 && !strcmp(cls, "HoneyQueen")) { hq_functor(row, part); return; }
     if (type == 2 && !strcmp(cls, "AstroCore")) { acore_start(); return; }
+    if (type == 3 && !strncmp(cls, "BlackHole", 9)) { /* registerDemoActionNerve: Disappear (update_hazards) */
+        if (!row_turn[row]) { row_turn[row] = 1; row_step[row] = 0; }
+        return;
+    }
     if (type == 3 && !strcmp(cls, "StinkBugParent")) { sbp_damage_action(); return; } /* registerDemoActionNerve: ダメージ中 */
     if (type == 3 && !strcmp(cls, "IceMerameraKing")) { mk_begin_demo(row); return; } /* registerDemoActionNerve: BeginDemo */
     if (type == 3 && !strcmp(cls, "BossBegoman")) { bb_first_contact(row); return; } /* registerDemoActionNerve: FirstContactDemo */                   /* AstroCore::startDemo: Grow */

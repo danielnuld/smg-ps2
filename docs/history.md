@@ -11,6 +11,12 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- BlackHole's Disappear (feat/596-blackhole-disappear, #596, 2026-11-18): its demo action nerve (dx_cast_hook type 3
+  on a BlackHole / BlackHoleCube cast -> row_turn 1): SE_OJ_BLACK_HOLE_DISAPPEAR, the core's scale eased in from _9C
+  to 0 over steps 30 .. 90, killed at 90; no hum and nothing inhaled meanwhile (attackSensor: Wait only). Test:
+  `build.sh hazard` with `XF=-DBH_DIS_TEST` (the first black hole disappears at frame 300). ponytail: the
+  BlackHoleRange model is not drawn (its 0 .. 90 shrink). **Release: sound.py --pack** for the galaxies with a
+  BlackHole demo cast (simplest with the full repack).
 - Sounds of five ported map objects (feat/595-mapobj-se, #595, 2026-11-18): Torpedo (HomingKiller Type_Torpedo:
   SE_EM_LV_TORPEDO_MOVE for the fly sound, while chasing SE_EM_LV_TORPEDO_ALARM with modifySe_Takezawa's pitch 1.27
   .. 1.2 over 300 .. 2000 from Mario and port 11 (its beep's wait) 4 .. 24 over 200 .. 3000, SE_EM_TORPEDO_EXPLOSION);
