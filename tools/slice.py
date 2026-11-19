@@ -425,11 +425,11 @@ def rows(b):
     return out
 
 
-# FloaterFloatingForce hosts (LavaFloater, OceanWaveFloater, PhantomShipBoxFloater: statics.inc st_float): their
+# FloaterFloatingForce / MapPartsFloatingForce hosts (LavaFloater, OceanWaveFloater, PhantomShipBoxFloater, SimpleFloaterObj: statics.inc st_float): their
 # MoveConditionType whole in arg 3 (map_parts), which those classes do not read
 FLOATERS = {"LavaHomeFloaterB", "LavaFloatingStepA", "LavaFloatingStepB", "LavaFloatingStepC", "LavaFloatingStepD",
             "FloaterOtakingFloaterA", "IceVolcanoFloaterA", "IceVolcanoFloaterB", "OceanPierFloaterA", "OceanHexagonFloater",
-            "PhantomShipBoxFloaterA", "PhantomShipBoxFloaterB", "PhantomShipBoxFloaterC"}
+            "PhantomShipBoxFloaterA", "PhantomShipBoxFloaterB", "PhantomShipBoxFloaterC", "IceMountainFloaterA"}
 
 
 def map_parts(b, rs):
