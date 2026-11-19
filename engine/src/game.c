@@ -24623,10 +24623,14 @@ static void miss_event_update(void)
     int f = mev.f, next = 0;
     if (mev.dark) mev.dark_f++; /* MarioActor::controlMain */
 #ifdef DOWN_TEST
-    if (f % 10 == 0 || mev.wipe_f == 1)
-        printf("down f %d: phase %d wipe %d dark %d layout end %d grounded %d clip %s dmg %d pos %.0f %.0f %.0f\n", f, mev.phase, mev.wipe_f, mev.dark_f,
+    if (f % 10 == 0 || mev.wipe_f == 1) {
+        V3 ce, cw, cu;
+        float cf;
+        camera_pose(&ce, &cw, &cu, &cf);
+        printf("down f %d: phase %d wipe %d dark %d layout end %d grounded %d clip %s dmg %d pos %.0f %.0f %.0f cam %.0f from him, its watch %.0f off him, fovy %.1f\n", f, mev.phase, mev.wipe_f, mev.dark_f,
                menu_miss_anim_end(), mario->grounded, mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-", dmg.st,
-               mario->pos.x, mario->pos.y, mario->pos.z);
+               mario->pos.x, mario->pos.y, mario->pos.z, vlen(vsub(ce, mario->pos)), vlen(vsub(cw, mario->pos)), cf);
+    }
 #endif
     if (mev.sink) { /* MarioActor::exeGameOverSink: the swamp's (SinkDeathMud 31, SinkPoison 18) or the sand's sounds;
                      * at its first step 砂埋まり体 / 手 (SinkDeath 25, Sink 17) or 泥埋まり体 / 手 (31) */
