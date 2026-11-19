@@ -11,7 +11,7 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
-- Class audit A, MapObj/ A-M (fix/645-audit-a-small, #645, 2026-11-18, agent audit-a): every placed class of
+- Class audit A, MapObj/ A-M (fix/645-audit-a-small, #645 / PR #670, 2026-11-18, agent audit-a): every placed class of
   `src/Game/MapObj/[A-M]*.cpp` read against the port, the table in `docs/class-audit-a.md` (102 classes: 67 ok, 12
   fixed here, 23 in issues #646-#653). Fixed, all read from Petari and **not run in PCSX2**: DeadLeaves (update_givers:
   every spin sets Spin: the Spin clip, SE_OJ_LEAVES_SWING, the pieces' SE_OJ_STAR_PIECE_BURST; the item once, dsinit
