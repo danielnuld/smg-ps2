@@ -48968,7 +48968,9 @@ static void collect(Pickup *p, int n, float reach, int *counter, int fx, u32 se)
  * break / explosion ones (sEffectDataTable's rumbling SEs) play once when their SW_A comes on. Only the 12 nearest
  * within 5000 of the camera run (MAX_EMIT 128 is shared with the game's effects); sEffectDataTable's level sounds
  * (exeMove: DrainPipeBubbleA / B, Steam, IcicleRockLight, UFOKinokoLandingBlackSmoke, LavaHomeVolcanoFallingRock)
- * play at every such row that is on, near or not. ponytail: no clipping by
+ * play at every such row that is on, near or not. RandomEffectObj.cpp (FireworksA, ShootingStarArea): emitted once
+ * every arg0 (600) +- arg1 (180) frames, the first after a time from its placement (0: never, as Petari's mStep
+ * going under 0); FireworksA's SE_OJ_FIREWORK_SEA_SHOOT at the emit and _EXPLODE 40 frames on. ponytail: no clipping by
  * the class's own far distance, no demo casts (the once ones: exeMove's shake, SE and rumble at step 7, below) */
 static int ambient_fx(const char *name)
 {
@@ -48995,6 +48997,8 @@ static void ambient_types(void)
                     !strcmp(name, "UFOKinokoLandingBlackSmoke") ? SE_OJ_LV_UFO_KINOKO_SMOKE :
                     !strcmp(name, "LavaHomeVolcanoFallingRock") ? SE_AT_LV_FALLING_ROCK : 0;
         for (unsigned k = 0; k < sizeof once / sizeof once[0]; k++) amb_once[t] |= strcmp(name, once[k]) == 0;
+        if (!strcmp(name, "FireworksA")) amb_once[t] = 3;            /* RandomEffectObj, its two SEs */
+        else if (!strcmp(name, "ShootingStarArea")) amb_once[t] = 2; /* RandomEffectObj */
     }
 }
 
@@ -49007,6 +49011,30 @@ static void ambient_effects(void)
         const Row *r = &sc->objs[i];
         int fx = r->type < 1024 ? amb_fx[r->type] : -1;
         if (fx < 0 || !row_shown(i)) continue;
+        if (amb_once[r->type] >= 2) { /* RandomEffectObj.cpp: row_step mStep + 2 (0 not set), row_turn mSeStep + 1 */
+            int life = r->arg[0] != -1 ? r->arg[0] : 600, width = r->arg[1] != -1 ? r->arg[1] : 180; /* sLifeTime, sRandWidth */
+            if (!row_step[i]) { /* init: getRandomTime, |repeat(x + y + z, 0, mRandWidth)| */
+                float t = width > 0 ? fmodf(r->pos[2] + (r->pos[0] + r->pos[1]), (float)width) : 0;
+                row_step[i] = (unsigned short)((int)(t < 0 ? t + width : t) + 2);
+            }
+            if (r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) continue; /* control: isStateMove */
+            int step = row_step[i] - 2;
+            if (step < 0) continue;
+            if (row_turn[i] > 0 && row_turn[i] < 42 && ++row_turn[i] == 41 && amb_once[r->type] == 3)
+                se_start(SE_OJ_FIREWORK_SEA_EXPLODE, r->pos); /* mSeStep 40 */
+            row_step[i] = (unsigned short)(--step + 2);
+            if (step != 0) continue;
+            float m[16];
+            mat_translate_rot_scale(m, r->pos, r->rot, r->scale);
+            fx_emit(fx, m);
+            if (amb_once[r->type] == 3) se_start(SE_OJ_FIREWORK_SEA_SHOOT, r->pos);
+            row_step[i] = (unsigned short)((int)frand((float)(life - width), (float)(life + width)) + 2);
+            row_turn[i] = 1;
+#ifdef SE_LOG
+            printf("random effect %s row %d: emitted, next in %d\n", sc->types + 32 * r->type, (int)i, row_step[i] - 2);
+#endif
+            continue;
+        }
         if (amb_once[r->type]) { /* once, when its switch comes on (row_turn: played) */
             if (r->sw[SW_A] >= 0 && sw_on(r, SW_A) && !row_turn[i]) {
                 float m[16];
