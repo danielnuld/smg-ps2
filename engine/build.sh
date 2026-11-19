@@ -69,7 +69,8 @@
 # ota: with packs, Mario spins OtaKing's coconuts back until it goes down and takes its star (-DOTA_TEST)
 # tomb: StarDustGalaxy/3, TombSpider's SpiderThread appeared, Mario before it, touched every 120 frames (-DTOMB_TEST)
 # bsb: HoneyBeeKingdomGalaxy/3, BossStinkBug started and hip dropped through its three phases until its star (-DBSB_TEST)
-# dino: with packs, Mario punches DinoPackun's tail ball until it goes down and takes its star (-DDINO_TEST)
+# dino: with packs, Mario punches DinoPackun's tail ball until it goes down and takes its star (-DDINO_TEST);
+#       XF=-DDINO_STAR: a star piece on its body 30 frames into each chase (the hit reaction)
 # bubble: with packs, Mario over an AirBubbleGenerator with little oxygen (-DBUBBLE_TEST)
 # swim: with packs, Mario dropped in a water area (-DSWIM_TEST)
 # sidestep: with packs, Mario walks into the nearest wall, leans on it and side steps both ways, then jumps off (-DSIDESTEP_TEST)
