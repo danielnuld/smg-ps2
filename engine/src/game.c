@@ -52898,10 +52898,52 @@ static void dm_selector_actor_update(void)
     dn_end(&dm.gs);
 }
 
+/* AstroDome.cpp (the dome's room, placed AstroDome: its model by the dome's id): SelectStart -> Disappear (BRK
+ * Disappear, 59 frames, its collision off at the first step, killed at the BRK's end), SelectEnd -> appear (shown,
+ * BRK Appear, its collision on; Wait at its end). adome.nrv: 0 Wait, 1 Disappear, 2 dead, 3 Appear.
+ * AstroDomeGalaxySelector's SW_A: on at init, off at appear (the select's start), on at kill (its end).
+ * ponytail: the BRK's fade is not drawn (the room stays whole for Disappear's 59 frames, and is whole at once at
+ * Appear); AstroDomeObservatory's Z_SpotLight_v material is not hidden in a time-keep demo */
+static struct { int nrv, step; } adome;
+static void adome_selector_sw(int on)
+{
+    int t = scene_type(sc, "AstroDomeGalaxySelector");
+    for (u32 i = 0; t >= 0 && i < sc->nobjs; i++)
+        if ((int)sc->objs[i].type == t && sc->objs[i].sw[SW_A] >= 0) sw_set(&sc->objs[i], SW_A, on);
+}
+static int adome_row(int row) /* an AstroDome row: slice.py names it after its dome's model (ASTRO_MODELS) */
+{
+    static const char *const n[7] = {"AstroDome", "AstroDomeObservatory", "AstroDomeWell", "AstroDomeKitchen", "AstroDomeBedRoom", "AstroDomeMachine", "AstroDomeTower"};
+    const char *c = sc->types + 32 * sc->objs[row].type;
+    for (int k = 0; k < 7; k++) if (!strcmp(c, n[k])) return 1;
+    return 0;
+}
+static void update_astro_dome(void)
+{
+    static const Scene *seen;
+    if (seen != sc) { seen = sc; adome.nrv = adome.step = 0; adome_selector_sw(1); }
+    if (!adome.nrv) return;
+    int st = adome.step++;
+    if (adome.nrv == 3) { /* exeAppear */
+        if (st == 0) game_rebind(); /* showModel, validateCollisionParts: its instance as placed */
+        if (st >= 59) adome.nrv = 0; /* isBrkStopped: Wait */
+        return;
+    }
+    for (int i = 0; i < ninsts; i++) { /* exeDisappear, then dead */
+        Inst *in = &insts[i];
+        if (!adome_row(in->row)) continue;
+        in->kcl = NULL;                                       /* invalidateCollisionParts */
+        if (adome.nrv == 2 || st >= 59) in->invisible = 1;    /* isBrkStopped: kill */
+    }
+    if (st >= 59) adome.nrv = 2;
+}
+
 static void dm_msg(int msg)
 {
     switch (msg) {
     case M_SELECT_START:
+        adome.nrv = 1; adome.step = 0; /* AstroDome::receiveOtherMsg: Disappear */
+        adome_selector_sw(0);          /* AstroDomeGalaxySelector::appear: offSwitchA */
         butler_sync(1);
         dm.a_on = 1; /* AstroDomeAsteroid: trySyncAppearMsgSelectStart */
         if (dm.a_row >= 0) printf("dome asteroid %d: appear%c", dm.a_row, 10);
@@ -52916,6 +52958,8 @@ static void dm_msg(int msg)
         menu_dome_open();
         break;
     case M_SELECT_END:
+        adome.nrv = 3; adome.step = 0; /* AstroDome::receiveOtherMsg: appear() */
+        adome_selector_sw(1);          /* AstroDomeGalaxySelector::kill: onSwitchA */
         butler_sync(0);
         dm.a_on = 0;
         ads_select(0);
@@ -53040,6 +53084,15 @@ static void dm_bluestar_update(void)
     case BS_WAIT: break;
     case BS_TRACTION: {
         if (FIRST(&dm.bs) && mario_anim) mario_play("spacestruggle", 1.0f, 1);
+        { /* exeBindTraction: SE_OJ_LV_MAGIC_PNT_G_PULL (its level the distance to Mario, as GCaptureTarget's) and _POINT */
+            static u32 lv[2];
+            int d = (int)vlen(vsub(dm.bs_home, mario->pos));
+            float k = (d - 100) / 1900.0f;
+            lv[0] = se_level(SE_OJ_LV_MAGIC_PNT_G_PULL, &dm.bs_home.x, lv[0]);
+            if (lv[0]) se_volpitch(lv[0], d <= 100 ? 1.0f : d >= 1500 ? 0.8f : 1.0f - 0.2f * (d - 100) / 1400.0f,
+                                   d <= 100 ? 0.5f : d >= 2000 ? 2.0f : 0.5f + 1.5f * k * k);
+            lv[1] = se_level(SE_OJ_LV_MAGIC_PNT_G_POINT, &dm.bs_home.x, lv[1]);
+        }
         float t = ease_in_out_f((float)dm.bs.step / 90.0f); /* cBindTractionFrame */
         dm.host = dm.bs_start;
         dm.host.p = vadd(dm.bs_start.p, vmul(vsub(dm.bs_home, dm.bs_start.p), t));
@@ -59773,6 +59826,7 @@ void game_update(void)
     LQ(16, break_boxes());
     LQ(17, update_collapse());
     update_gcap_targets();
+    update_astro_dome();
     LQ(18, update_flips());
     LQ(19, update_hip_switches());
     update_bigbubbles();
