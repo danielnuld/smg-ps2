@@ -296,14 +296,25 @@ static void or_update(void)
     }
 }
 
-static float or_pos[2048][3], or_uv[2048][2];
+/* the tube meshes' buffers (OceanRing, WaterRoad; or_pos TrampleStar's too), from the arena where one is placed */
+static float (*or_pos)[3], (*or_uv)[2]; /* [2048] */
 static u8 or_al[2048];
-static u16 or_tri[3 * 2 * 14 * 64];
+static u16 *or_tri;                     /* [3 * 2 * 14 * 64] */
+static u32 *or_c1, *or_c2;              /* or_mesh's colours, [2048] */
+static void or_alloc(void) /* from game_init */
+{
+    int tube = count_type("OceanRing", 0) + count_type("OceanRingAndFlag", 0) + count_type("WaterRoad", 0);
+    or_pos = tube || count_type("TrampleStar", 0) ? mem_alloc(MEM_SCENE, 2048 * sizeof *or_pos) : NULL;
+    or_uv = tube ? mem_alloc(MEM_SCENE, 2048 * sizeof *or_uv) : NULL;
+    or_tri = tube ? mem_alloc(MEM_SCENE, 3 * 2 * 14 * 64 * sizeof *or_tri) : NULL;
+    or_c1 = tube ? mem_alloc(MEM_SCENE, 2048 * sizeof *or_c1) : NULL;
+    or_c2 = tube ? mem_alloc(MEM_SCENE, 2048 * sizeof *or_c2) : NULL;
+}
 /* loadMaterial's colour C1 x the frame behind (stage 3) as the frame less (1 - C1) x the vertex alpha (GX 76 D7 FF: 89 28 00
  * off, in GS units 44 14 00: `less`, 0xBBGGRR), then the texture added (T x T / 2, stages 0 and 1) at the vertex alpha */
 static void or_mesh(int nv, int nt, int tex, u32 less)
 {
-    static u32 c1[2048], c2[2048];
+    u32 *c1 = or_c1, *c2 = or_c2;
     for (int v = 0; v < nv; v++) {
         u32 a = or_al[v];
         c1[v] = 0x80000000u | ((less >> 16 & 0xFF) * a / 255u) << 16 | ((less >> 8 & 0xFF) * a / 255u) << 8 | (less & 0xFF) * a / 255u;

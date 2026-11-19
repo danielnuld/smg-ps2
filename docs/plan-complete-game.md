@@ -140,8 +140,8 @@ No interim ISOs: Daniel tests at the end.
   ForbidTriangleJumpCube / ForbidJumpCube / DashChargeCylinder (#579), SoundEmitterCube / Sphere and
   QuakeEffectAreaCube (#580), AreaMoveSphere (#581), RasterScrollCube (#492), PlaneCollisionCube /
   BeeWallShortDistArea / GlaringLightArea / DarkMatterCylinder (#638), ExtraWallCheckArea / Cylinder (#639),
-  HazeCube (#655), CollisionArea (#656: 163 placed, its AreaPolygon left). ViewGroupCtrlCube (#718: the VGRP chunk; no LodCtrl in the port). Left: CollisionArea's
-  AreaPolygon, the guidance cubes (Wii controls). Placed in no stage: ShadeCube, RaceJudgeCube,
+  HazeCube (#655), CollisionArea (#656: 163 placed; its AreaPolygon #717). ViewGroupCtrlCube (#718: the VGRP chunk; no LodCtrl in the port). Left:
+  the guidance cubes (Wii controls). Placed in no stage: ShadeCube, RaceJudgeCube,
   CameraRepulsiveSphere / Cylinder, SunLightArea, PipeModeCube, NinForceWindCube, NinAbyssCube, BigBubbleGoalArea,
   WarpCube. An area registers with the manager whose name its placed
   name begins with (IsManagerName), or the one its class names (getManagerName: PlayerSeCube / Sphere / Cylinder ->

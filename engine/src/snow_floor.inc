@@ -54,6 +54,7 @@ static float snow_rand(void) /* MR::getRandom: JMath::TRandom_fast */
     return v.f - 1.0f;
 }
 
+static u16 *snow_xs, *snow_ys; static float *snow_ws; /* snow_move's cells and weights, [4096] (snow_init) */
 static void snow_init(const Scene *s)
 {
     memset(&snow, 0, sizeof snow);
@@ -61,6 +62,9 @@ static void snow_init(const Scene *s)
     snow.rnd = 0x12345678u;
     int t = scene_type(s, "SnowFloor");
     snow.sw_t = scene_type(s, "SnowplowSwitch");
+    snow_xs = t >= 0 ? mem_alloc(MEM_OBJECTS, 4096 * sizeof *snow_xs) : NULL; /* snow_move's cells: only with a floor */
+    snow_ys = t >= 0 ? mem_alloc(MEM_OBJECTS, 4096 * sizeof *snow_ys) : NULL;
+    snow_ws = t >= 0 ? mem_alloc(MEM_OBJECTS, 4096 * sizeof *snow_ws) : NULL;
     for (u32 i = 0; i < s->nobjs; i++) {
         const Row *r = &s->objs[i];
         if (snow.sw_t >= 0 && (int)r->type == snow.sw_t && snow.nsw < 64) snow.sw_rows[snow.nsw++] = (int)i;
@@ -140,8 +144,8 @@ static void snow_touch(typeof(snow.f[0]) *f, int y0, int y1) /* rows dug: the fi
  * move from `from`; returns the depth dug through */
 static float snow_move(typeof(snow.f[0]) *f, const float from[2], const float to_[2], float radius, float amount)
 {
-    static u16 xs[4096], ys[4096];
-    static float ws[4096];
+    u16 *xs = snow_xs, *ys = snow_ys; /* [4096] */
+    float *ws = snow_ws;
     float removed = 0.0f, wsum = 0.0f, dsum = 0.0f;
     u32 count = 0;
     float ux = to_[0] - from[0], uy = to_[1] - from[1], ul = ux * ux + uy * uy;

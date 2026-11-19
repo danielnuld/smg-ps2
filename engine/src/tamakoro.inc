@@ -893,6 +893,7 @@ static void update_tmrs(void)
             }
             continue;
         }
+        o->grav = vmul(up_at(o->pos, vmul(o->grav, -1.0f)), -1.0f); /* onCalcGravity: its gravity where it is now, each frame */
         switch (o->nrv) {
         case TMRB_WAIT:
             o->r.coord = w_rail_nearest(o->r.p, o->r.n, mario->pos); /* moveCoordToNearestPos */
