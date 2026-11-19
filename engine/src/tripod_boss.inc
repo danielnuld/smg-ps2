@@ -483,8 +483,9 @@ static Inst *tb_inst_of(int row);
  * stop is at once (stopSound over 60 frames: se_stop has no fade) */
 static void tb_marker(void)
 {
-    if (tb_start_demo_on() || tb.nrv == TB_BREAKDOWN || tb.nrv == TB_EXPLOSION || tb.nrv == TB_DEAD) return; /* StartDemo / Break */
-    if (tb_ss() && mario->grounded && !tb.warn) {
+    int brk = tb.nrv == TB_BREAKDOWN || tb.nrv == TB_EXPLOSION || tb.nrv == TB_DEAD; /* Break: the parts die, their sounds with them */
+    if (tb_start_demo_on()) return;
+    if (!brk && tb_ss() && mario->grounded && !tb.warn) {
         int n = 0;
         tb.warn = 1;
         for (u32 i = 0; i < sc->nobjs && n < TB_MARKERS; i++) {
@@ -495,10 +496,10 @@ static void tb_marker(void)
         }
         printf("tripod boss: warning on, %d markers%c", n, 10);
     }
-    if (tb.s634 == 3 && tb.warn) {
+    if ((tb.s634 == 3 || brk) && tb.warn) {
         for (int n = 0; n < TB_MARKERS; n++) if (tb.mark[n]) { se_stop(tb.mark[n]); tb.mark[n] = 0; }
         tb.warn = 0;
-        printf("tripod boss: warning off%c", 10);
+        printf("tripod boss: warning off%s%c", brk ? " (break)" : "", 10);
     }
 }
 static void tb_bgm_state(void) /* changeBgmState */

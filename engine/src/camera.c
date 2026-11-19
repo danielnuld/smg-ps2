@@ -12,6 +12,7 @@ const float *(*camera_rail)(int zone, int id, int *n, int *closed);
 int (*camera_gravity)(V3 p, V3 *g);
 int (*camera_map_poly)(V3 a, V3 d, V3 *hp);
 int (*camera_map_ball)(V3 c, float r, V3 *n, float *depth, int max);
+int (*camera_repulsion)(V3 pos, V3 *rep);
 static int inside(const CamArea *a, V3 p)
 {
     if (a->shape == 3 && !camera_big_bubble) return 0; /* BigBubbleCameraArea::isInVolume: a box while he is in a bubble */
@@ -981,6 +982,20 @@ static void view_interp(V3 e, V3 w, V3 u, float roll, float r, int smooth)
         i_watch = vadd(i_watch, vmul(vsub(w, i_watch), r));
         i_eye = vadd(i_watch, vmul(q_zdir(q), d0 + r * (d1 - d0)));
         i_up = q_ydir(q);
+    }
+    { /* translateByRepulsion, then lookAtCenter: in a CameraRepulsiveArea the eye is pushed out and the view turned
+       * back on the watch point (mIsRepulsionOff is never set) */
+        V3 rep;
+        if (camera_repulsion && camera_repulsion(i_eye, &rep)) {
+            V3 z0 = vsub(i_eye, i_watch), z1 = vsub(vadd(i_eye, rep), i_watch);
+            i_eye = vadd(i_eye, rep);
+            if (!near_zero(z0) && !near_zero(z1)) { /* setRotate(front, targetDir) on the matrix: its up with it */
+                z0 = vnorm(z0); z1 = vnorm(z1);
+                V3 ax = vcross(z0, z1);
+                float c = vdot(z0, z1);
+                if (!near_zero(ax)) i_up = rot_axis(i_up, vnorm(ax), acosf(c > 1.0f ? 1.0f : c < -1.0f ? -1.0f : c));
+            }
+        }
     }
     if (!smooth) { f_eye = i_eye; f_watch = i_watch; f_up = i_up; return; }
     Q4 qf = q_slerp(pose_quat(f_eye, f_watch, f_up, 0.0f), pose_quat(i_eye, i_watch, i_up, 0.0f), 0.3f);
