@@ -22171,6 +22171,7 @@ void game_test_sink_input(int frame, int code)
                 V3 c = vmul(vadd(vadd(tri_pos(&t, 0), tri_pos(&t, 1)), tri_pos(&t, 2)), 1.0f / 3.0f);
                 n++;
                 if (vdot(tri_n(&t), up_at(c, tri_n(&t))) < 0.9f) continue;
+                if (in_water(vadd(c, vmul(tri_n(&t), 100.0f)), tri_n(&t), NULL) || in_water(vadd(c, vmul(tri_n(&t), 5.0f)), tri_n(&t), NULL)) continue; /* (a beach's sand goes on under its sea) */
                 at = frame; test_nolost = 1;
                 m->pos = vadd(c, vmul(tri_n(&t), 100.0f)); m->hvel = v3(0, 0, 0); m->vup = 0;
                 printf("sink test: row %d, put at %.0f %.0f %.0f\n", insts[i].row, m->pos.x, m->pos.y, m->pos.z);
@@ -22187,9 +22188,11 @@ void game_test_sink_input(int frame, int code)
         else if (t >= 200 && t < 203) pad_force = PAD_CROSS;
     } else if (t >= 200 && t < 333 && (t - 200) % 30 < 3) pad_force = PAD_CROSS;
     if (t % 10 == 0 && t <= 700)
-        printf("sink f %d: floor %d grounded %d jumping %d sink %d bury %d/%d poison %d life %d walk %.2f ofs %.0f clip %s miss %d\n", t, m->floor,
+        printf("sink f %d: floor %d grounded %d jumping %d sink %d bury %d/%d poison %d life %d walk %.2f ofs %.0f clip %s miss %d wade %d%d severe %d hip %d g %d s %d sd %.0f s2 %d\n", t, m->floor,
                m->grounded, m->jumping, m->sink, suke.on, suke.out, m->poison, life, m->walk, vlen(m->sink_ofs),
-               mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-", miss_running());
+               mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-", miss_running(), m_wade.under, m_wade.deep,
+               m_floor_severe(m, code), m->hip, ground_attr & 0x3F, tri_attr(&mw.shadow) & 0x3F,
+               vdot(vsub(mw.shadow_pos, mw.ground_pos), vmul(m->up, -1.0f)), mw.s2);
 }
 /* Test builds (MARIO2D_TEST): from Mario's first free frame, if he is in no 2D area he is held in the first
  * PlaneModeCube's first floor under its top (TeresaMario2DGalaxy, KoopaBattleVs galaxies); then the stick right 120 frames, left 120, up
@@ -23359,7 +23362,8 @@ static void update_mario_(void)
                 }
                 m_set_weight(w, MC.mSliderTiltRatio);
             }
-        } else if (m->side_step && m->grounded && !m->jumping) { /* MarioSideStep's clips are no walk motions */
+        } else if (suke.on) ; /* MarioBury / MarioSukekiyo: its clips (埋まり loops: not "busy") are no walk motions */
+        else if (m->side_step && m->grounded && !m->jumping) { /* MarioSideStep's clips are no walk motions */
             if (m_anim_on("壁押し")) { m_decide_walk_speed(m); m_check_wall_push(m); }
             else if (m->turning || m->turn_brake) m_decide_walk_speed(m);
             m_update_brake(m);
@@ -23542,7 +23546,7 @@ static struct { int cyl0, cyl1, tinted; u8 prm[3]; } m_eff = {-1, -1, 0, {255, 2
 static int m_floor_severe(const Player *m, int code)
 {
     if (m->floor != code) return 0;
-    int g = ground_attr & 0x3F;
+    int g = tri_attr(&m_gtri) & 0x3F; /* mGroundPolygon's (ground_attr is the last body sweep's: 0 when it met nothing) */
     if (vdot(vsub(mw.shadow_pos, mw.ground_pos), vmul(m->up, -1.0f)) > 30.0f) return code == g;
     int s = tri_attr(&mw.shadow) & 0x3F;
     return s == code && s == g;

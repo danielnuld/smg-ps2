@@ -11,6 +11,31 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Mario's sounds the port never played (feat/575-mario-sounds, #575, 2026-11-18): the press (プレスダメージ), the bee
+  wall landing, Teresa's float, Luigi's slide, the spin back; jumpToHipDrop's spin hip drop (_3E5); tryJump's /
+  tryBackJump's dive into deep water (sw_under_water_full: 飛び込みジャンプ, 声高飛び込み) and its failure landing;
+  the pull-back's landing (_430 0xE: 倒れ); MarioDarkDamage (DarkMatterCube: 声沼沈み, 150 frames of ダークマター沈み,
+  the game over); MarioSwim's wall hit with the shell (亀壁ヒット); the effect objects' level sounds
+  (sEffectDataTable); GalaxyNamePlate's new effect SE; the staff roll's thank you as Luigi. PCSX2: a plain
+  HeavenlyBeachGalaxy/1 runs; each sound was not provoked (build with XF=-DSE_LOG to see one). Repack: every galaxy
+  with a DarkMatterCube or ForbidWaterSearchCube (slice.py LOGIC). Left out: the spin hip drop's homing, the dark
+  mask and ダークマター死亡, sendPunch / tryJetAttack on the wall's sensor.
+- changeGameOverAnimation (#572, 2026-11-18): game.c m_game_over_anim picks the down clip by what Mario was doing
+  (座りダウン, 感電, 炎, 仰向け / 俯せ, 奈落, つぶれ, 水泳, 埋まり; none frozen); it was "down" / "deathwater". PCSX2:
+  mode miss runs its whole flow (miss, game over, save window); SINK_TEST=25 ends in 埋まりダウン (diebury).
+- Sink floors, poison and MarioBury (#565, 2026-11-18): m_update_on_sand / m_update_on_poison (MarioWalk.cpp:
+  mSinkTimer in the walk speed, the walk clips, the jump out, the look offset, exeGameOverSink) and MarioSukekiyo.cpp
+  (suke_start / suke_update: stuck in Sand after a hip drop or a hard landing, out with A or a spin). Test
+  XF=-DSINK_TEST=<floor code>: Mario put on the first dry face of it. The game's collision has no Sink (17) or
+  SinkPoison (18) face at all (every ObjectData .pa counted): only Sand 13, SinkDeath 25, NoStampSand 30,
+  SinkDeathMud 31. PCSX2: 25 in SandClockGalaxy/1 sinks 4 a frame to 255, 埋まりダウン, the miss; 13 in
+  HeavenlyBeachGalaxy/1: the hip drop buries him (burystandwait), A gets him out (burystandend), closed 40 frames on.
+  Two faults the test found: m_floor_severe read ground_attr (the last body sweep's, 0 when it met nothing) for
+  mGroundPolygon's code (now m_gtri's), and the walk animation replaced 埋まり (a loop is not "busy").
+  EggStar 1's route unchanged (star at f 4281). Left out: the 砂埋まり / 泥埋まり effects, Sukekiyo's head-down
+  start (doLanding's landing type 1: with MarioLauncher, #566).
+- map_line (#563, 2026-11-18): MR::getFirstPolyOnLineToMap stepped spheres of 10 along the line; now kcl_line
+  (checkArrow: the first face entered from its front), as map_poly. Route unchanged.
 - Carried drops (fix/491-drop-carried, 2026-11-07): game.c drop_taking after MarioActorTakeMsg.cpp
   damageDropThrowMemoSensor / rushDropThrowMemoSensor: the held JetTurtle's DAMAGEDROP (resetPositionAndVanish: Vanish /
   VanishRed / VanishGold, Restart or killed when _E0 is off) and RUSHDROP (its Drop nerve: up 10, ahead 10, boundDrop,
