@@ -1484,6 +1484,13 @@ int main(void)
         pad_force = 0;
         if (frame == 1340) printf("miss test f %u: save window, pointer on BoxRight %d\n", frame, menu_test_point("BoxRight"));
         if (frame == 1360 || frame == 1660) pad_force = PAD_CROSS; /* Yes, then the done window's key */
+#ifndef MISS_RETRY_YES
+#define MISS_RETRY_YES 1 /* XF=-DMISS_RETRY_YES=0: No on the comet's retry button (back to the dome) */
+#endif
+        { /* a comet's scenario (BOOT=EggStarGalaxy/4): the CometRetryButton, the pointer on its button, X every second */
+            static int rt;
+            if (menu_test_point_retry(MISS_RETRY_YES) && ++rt % 60 == 40) { pad_force = PAD_CROSS; printf("miss test f %u: retry button X\n", frame); }
+        }
 #endif
 #if defined(PACKS) && defined(DOME_TEST)
         { /* the dome: R2 at the blue star, Good Egg opened (New), then chosen and confirmed, マリオ飛び出し, its scenario 1 */

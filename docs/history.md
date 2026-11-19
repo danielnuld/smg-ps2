@@ -23,6 +23,19 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   note). **Repack: slice_all.py SnowCapsuleGalaxy** (no sound pack: sfxcut already keeps the class's sounds from
   TrickRabbitSnowCollect.cpp / TrickRabbitSnow.cpp). Checked: an overlay slice of SnowCapsuleGalaxy 1 (TYPE has both
   classes, ANIM the 34 rabbit clips and PStar's TakeOutStarTrickRabbit, TALK 432 -> 1872 bytes).
+- The comets' layouts (feat/662-sudden-death-comet, #660 #662, 2026-11-19): SuddenDeathMeter (menu.c hm.sudden:
+  MarioMeter::initLifeCount with a life of 1 swaps the layout; no Danger / Damage1 / Recover / WaitStart, mAlpha 0.3
+  until requestForceAppear's Appear, BreakMeter / ZeroMeter as MeterLayout's), with MarioActor::init's life of 1 in a
+  Dark comet's scenario (game.c cur_comet: the current scenario's comet, as CometEventKeeper) and MR::
+  executeOnWelcomeAndRetry's requestForceAppearHPMeter; GalaxyCometScreenFilter (csf_*: CometScreenFilter's Color
+  at the comet's frame, drawn before the HUD, off at endCometEvent); CometRetryButton (crb_*: after a miss in a
+  comet's scenario its PlayerMissLeft, then Yes: the stage again / No: back to the dome; game.c miss_after_wipe);
+  BombTimerLayout (bt_*, menu_bomb_timer_*: no host yet, #732). NoteCounter has no layout in RMGE01. tools/lyt.py
+  COMMON: SuddenDeathMeter, BombTimer, RetryButton (menus.bin +71 KB). **Repack: lyt.py** (menus.bin). The filter
+  is in the code but off and out of the packs (#661 open): it multiplies the frame, lyt.c has no such blend and
+  drew an opaque blob (seen in CosmosGardenGalaxy 4). Seen in PCSX2: the retry button in EggStarGalaxy 4 and
+  CosmosGardenGalaxy 4 (`comet retry: yes`, the stage again), a life of 1 under the Dark comet. Test: `miss`
+  with BOOT=EggStarGalaxy/4 (the retry button: XF=-DMISS_RETRY_YES=0 answers No) or a Dark comet's scenario.
 - CollisionArea's AreaPolygon (feat/717-area-polygon, #717, 2026-11-19, agent areas2): the 118 CollisionAreas with
   arg3 not 0 put a DynamicCollisionObj of two triangles on one face of their box (#713 had the push alone). `cpoly_set`
   (AreaPolygon::setSurface, DynamicCollisionObj::createCollision / updateTriangle / updateCollisionHeader): the

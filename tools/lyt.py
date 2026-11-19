@@ -419,6 +419,9 @@ COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad
           "PlayerLeft",  # PlayerMissLeft (its CenterPlayerLeft; the HUD's PlayerLeft is layout.py's)
           "OneUp",  # OneUpBoard
           "Sight",  # MarioLauncherLayout
+          "SuddenDeathMeter",  # MarioMeter with a life of 1 (the Dark comet)
+          "BombTimer",  # BombTimerLayout
+          "RetryButton",  # CometRetryButton
           "InformationWindow")  # StageResultInformer's DisplayInformationForResult (InformationMessage)
 # ponytail: no DPDPointerSub (the 2P pointer) nor DPDPointerNumber (the player number, shown only with two remotes
 # connected): one pad here
