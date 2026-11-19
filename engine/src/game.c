@@ -46486,6 +46486,9 @@ static void update_coin_groups(void)
         Pickup *p = (cgroups[g].purple ? purple : coins) + cgroups[g].first;
         if (row_dead[row]) continue;
         if (row_turn[row] == 0) {
+#ifdef CGROUP_TEST /* XF=-DCGROUP_TEST: every waiting CoinGroup's appear switch on at frame 300 */
+            if (game_frame == 300) { sw_set(r, SW_APPEAR, 1); printf("coin group %d: test switch on (arg1 %d)\n", row, r->arg[1]); }
+#endif
             if (!sw_on(r, SW_APPEAR)) continue;
             if (row_camset[row] != -1) { /* isExistActorCamera: requestStartDemo */
                 if (!pd_try_start("出現", row)) continue;
