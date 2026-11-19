@@ -21,9 +21,8 @@
  * isStarPointerInScreen); CameraDPD's fovy (38 + 0.05 x: MarioLauncher has no Z zoom) is the prog camera's; no
  * requestMarioLauncherGuidance layout (MarioLauncher.cpp:233); the Shell sensor's receiveMsgPush does not punch its
  * pusher back (MarioLauncher.cpp:394: the port's pushes have no sender);
- * ACTMES_LAUNCHER_BREAKABLE (:677) is answered by no class in Petari; MarioLauncherLayout's Sight (Sight.arc, one
- * 64 x 64 quad) is not in tools/layout.py LAYOUTS (a texture in every scene's font chunk): the pointer's cursor marks
- * the aim until it is packed (ml_draw_sight draws it then) */
+ * ACTMES_LAUNCHER_BREAKABLE (:677) is answered by no class in Petari. MarioLauncherLayout's Sight (Sight.arc, one
+ * 64 x 64 quad) is menus.bin's (tools/lyt.py COMMON; menu.c menu_sight) */
 enum { ML_WAIT, ML_READY, ML_PLAYERIN, ML_PREP, ML_AIM, ML_FLIGHT, ML_KILL, ML_LAND, ML_REJECT };
 #define ML_MAX 8
 static struct {
@@ -313,7 +312,7 @@ static int ml_bind(Player *m)
 /* MarioLauncherLayout: Telescope's Sight at the pointer (appearAt) */
 static void ml_draw_sight(void)
 {
-    if (mla.row >= 0 && mla.sight) lay_draw("Sight", -1, 1.0f, (cur_x - 320.0f) / TK_KX, (224.0f - cur_y) / TK_KY);
+    menu_sight(mla.row >= 0 && mla.sight, cur_x, cur_y);
 }
 
 #ifdef LAUNCHER_TEST
