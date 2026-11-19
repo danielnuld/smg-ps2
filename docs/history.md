@@ -79,6 +79,15 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   shown by its SW_APPEAR (needs each name's class), the rotators' start SE at a reverse (isOnReverse), the Start /
   Stop effects of classes not in jpa.py NAMED. **Release: sound.py --pack for every galaxy** (the table's names are
   in game.c's sources now: simplest with the full repack).
+- #590 GameAudio's directors (2026-11-18, agent bgm): AudBgmConductor::movement's water states (bgm_conductor_tick:
+  while STM_GALAXY_03 / 04 play, the BGM's state 1, 5 with the camera in water, 4 with the shell's jet, 6 with both;
+  the mixes were in mbgm_tab already), AudCameraWatcher (water_obj at the camera: SE_AT_LV_UNDER_WATER, state bit 2;
+  MarioSwim's jet sets bit 4), AudioEffectArea + AudEffectDirector (update_audio_effect: the area Mario, or for types
+  3 / 4 the camera, is in by its priority; type 3 the BGM's volume to 0 over 90 and SE_AT_LV_WATERFALL_CAVE, type 4
+  SE_AT_LV_PHNCV_TERESA_ROOM; 23 areas, 20 of them type 1 = reverb only). ponytail: no AudEffector (reverb send,
+  cutoff, special effects), no setFarCamera. Tests: `swim` (HeavenlyBeachGalaxy/1, XF=-DAUDIOFX_TEST: from frame 1500
+  Mario put in each AudioEffect area). Repack: slice.py LOGIC AudioEffectCube / Sphere / Cylinder (every galaxy
+  with one), tools/sfxcut.py GLOBAL_DIRS + GameAudio (every scenario's sound.bin: SE_AT_LV_UNDER_WATER).
 - #587 BGM calls nothing made (2026-11-18, agent bgm; docs/sound-gaps.md's list of Petari's BGM calls gone through by
   file): the title's STM_TITLE (TitleSequenceProduct: at the logo, stopped over 75 at A + B) and the file select's
   MBGM_FILE_SELECT (FileSelector::exeTitleEnd; its state 5 far / 6 near by the camera: updateBgm; stopped over 90 at
