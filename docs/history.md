@@ -16,10 +16,11 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   (pipe_trans: calcTrans eased in from its placement to its top, LavaAppear kept at its placement,
   SE_OJ_LV_PIPE_APPEAR_MAGMA), and from Mario's jump out (the partner's tryHideDown) WaitToHideDown 40, HideDown 15
   (eased back, LavaVanish, SE_OJ_LV_PIPE_VANISH_MAGMA), then hidden; it takes nobody meanwhile. EarthenPipeInWater:
-  SE_OJ_LV_PIPE_IN_WATER while its stream runs (_19C: from init, with its SW_A where it has one). A pipe whose SW_A
-  is off takes nobody (exeWait: invalidateHitSensors). tools/jpa.py NAMED EarthenPipe (LavaAppear / LavaVanish).
-  ponytail: the water pipes' stream model and BinderWater sensors; the rising pipe collides at its top from the
-  first frame. **Release: slice_all.py resident.bin + resident_luigi.bin + every EarthenPipe galaxy** (jpa.py NAMED
+  SE_OJ_LV_PIPE_IN_WATER while its stream runs (_19C: from init, with its SW_A where it has one). tools/jpa.py
+  NAMED EarthenPipe (LavaAppear / LavaVanish). ponytail: the water pipes' stream model and BinderWater sensors; the
+  rising pipe collides at its top from the first frame; a pipe whose SW_A is off still takes Mario (exeWait's
+  invalidateHitSensors, EarthenPipe.cpp:225: tried and taken out, the Gateway's first pipe has SW_A 1008 and the pipe
+  test could no longer enter it: port it with whatever turns that switch on). **Release: slice_all.py resident.bin + resident_luigi.bin + every EarthenPipe galaxy** (jpa.py NAMED
   EarthenPipe) **and sound.py --pack** for them (the two magma / water level SEs).
 - OceanFloaterLandParts (feat/509-ocean-floater, #509, 2026-11-18): OceanFloaterTypeU was a still model. statics.inc
   st_floater_u after OceanFloaterLandParts.cpp: Wait on its rail, Move from its demo's action (the rail mover runs

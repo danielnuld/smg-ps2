@@ -1668,9 +1668,10 @@ static int scene_stop;           /* MR::stopScene: frames the actors stay still 
  * jump). The hidden partner (arg2 1): WaitToShowUp 20, ShowUp 30 (calcTrans eased in from its placement to its top,
  * LavaAppear, SE_OJ_LV_PIPE_APPEAR_MAGMA), and from the jump WaitToHideDown 40, HideDown 15 (eased back, LavaVanish,
  * SE_OJ_LV_PIPE_VANISH_MAGMA), then hidden. EarthenPipeInWater: SE_OJ_LV_PIPE_IN_WATER while its stream runs (_19C:
- * from init, with its SW_A where it has one); a pipe with its SW_A off takes nobody (exeWait: invalidateHitSensors).
+ * from init, with its SW_A where it has one).
  * ponytail: the water pipes' stream model and BinderWater sensors, no processBgmPlayerIn / Out; the rising pipe's
- * collision at its top from the first frame */
+ * collision at its top from the first frame; exeWait's invalidateHitSensors while a pipe's SW_A is off (EarthenPipe.cpp:225:
+ * HeavensDoorGalaxy's first pipe has one, SW 1008) */
 typedef struct { V3 top, up, front; float hf, vf; int id, partner, zone, row, mode, water; u32 lv; } Pipe; /* mode arg2: 1 / 2
                     * hidden until the partner is used (row_step[row] 1 while out), 1 hides again after the exit */
 static int pipe_out = -1; /* the mode 1 pipe Mario came out of, hidden once the pipes re-arm */
@@ -42393,7 +42394,6 @@ static void update_pipes(void)
     for (int i = 0; i < npipes; i++) {
         const Pipe *p = &pipes[i];
         if (p->partner < 0 || vlen(vsub(c, vsub(p->top, vmul(p->up, 50.0f)))) > 70.0f + HIT_BODY_R) continue;
-        if (sc->objs[p->row].sw[SW_A] >= 0 && !sw_on(&sc->objs[p->row], SW_A)) continue; /* exeWait: its sensors off */
         if (i == pipe_hide || (row_step && (p->mode == 1 || p->mode == 2) && !row_step[p->row])) continue; /* WaitToHideDown / HideDown / Hide */
         V3 d = vsub(mario->pos, p->top);
         if (vlen(vtangent(d, p->up)) > 50.0f && vdot(d, p->up) < -5.0f) continue; /* beside the pipe, below its top */
