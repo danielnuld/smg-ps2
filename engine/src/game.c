@@ -1126,6 +1126,19 @@ static void pole_init(void);
 static void dossun_place(Inst *in);
 static int nrbms, nsbms; static const Model *m_jghead, *m_jbhead, *m_rbeam, *m_mogustone, *m_moguhole;
 const char *game_stage_name = ""; /* the galaxy being played (main.c: its pack name) */
+int game_scenario_no(void) /* GameSystemSceneController::getCurrentScenarioNo: the number trySetCurrentScenarioNo placed */
+{
+    char gal[48];
+    const char *sl = strchr(game_stage_name, '/');
+    if (!sl) return -1;
+    snprintf(gal, sizeof gal, "%.*s", (int)(sl - game_stage_name), game_stage_name);
+    return gd_placed_scenario(gal, atoi(sl + 1));
+}
+int game_stage_scenario(const char *galaxy, int no)
+{
+    size_t l = strlen(galaxy);
+    return !strncmp(game_stage_name, galaxy, l) && game_stage_name[l] == '/' && game_scenario_no() == no;
+}
 static void draw_mogu_extras(void), draw_mogucchi_extras(void), draw_whirls(void), update_whirls(void);
 static int t_whirl = -1;
 #define MAX_WBULLETS 16
@@ -3238,8 +3251,8 @@ void game_init(const Scene *s, const unsigned char *blob)
         char gal[48];
         const char *sl = strchr(game_stage_name, '/');
         snprintf(gal, sizeof gal, "%.*s", sl ? (int)(sl - game_stage_name) : (int)strlen(game_stage_name), game_stage_name);
-        opening_visited = sl && gd_visited(gal, atoi(sl + 1));
-        if (sl) gd_set_visited(gal, atoi(sl + 1));
+        opening_visited = sl && gd_visited(gal, game_scenario_no());
+        if (sl) gd_set_visited(gal, game_scenario_no());
     }
 }
 
@@ -15567,7 +15580,7 @@ static float m2_signed_h(V3 a, V3 b, V3 axis) /* MR::diffAngleSignedHorizontal *
 static V3 m2_norm0(V3 v, int *zero) { *zero = vdot(v, v) < 1e-12f; return *zero ? v : vnorm(v); } /* MR::normalizeOrZero */
 static void m2_adjust_ground(Player *m, float *rx, float *ry) /* stick2DadjustGround */
 {
-    if (!strcmp(game_stage_name, "HellProminenceGalaxy/3")) return; /* isStageCameraRotate2D */
+    if (game_stage_scenario("HellProminenceGalaxy", 3)) return; /* isStageCameraRotate2D */
     if (m2.t10 && m->grounded && !m->jumping) { m2.t10 = 0; m2_clear(); m2.b66C = 0; }
     m2.side = m2.fx; m2.up = m2.fy; m2.nrm = vmul(m2.fz, -1.0f);
     m2.v6A0 = m2.nrm;
@@ -22942,7 +22955,7 @@ static void update_mario_(void)
     int zero = vlen(gup) < 0.5f;
     if (!zero) m->up = gup;
     else if (m->grounded && vlen(m->ground_n) > 0.5f) m->up = vnorm(m->ground_n);
-    if (fo.on && !strcmp(game_stage_name, "HeavensDoorGalaxy/2")) { /* Mario::isUseFooSpecialGravity: towards one point */
+    if (fo.on && game_stage_scenario("HeavensDoorGalaxy", 2)) { /* Mario::isUseFooSpecialGravity: towards one point */
         V3 d = vsub(m->pos, v3(14760.0f, -10676.2f, 6770.0f));
         if (vlen(d) > 1e-6f) m->up = vnorm(d);
     }
@@ -42586,7 +42599,7 @@ int game_test_astro_cube(int mode) /* tests: Mario put in the first AstroChangeS
 }
 static void astro_cube(int row, const Row *r)
 {
-    int id = r->arg[0] == 0 ? (game_stage_name[strlen(game_stage_name) - 1] - '0') : r->arg[1];
+    int id = r->arg[0] == 0 ? game_scenario_no() : r->arg[1]; /* _3C: getCurrentScenarioNo */
     if (ac_row >= 0) {
         if (row != ac_row || ac_wait++ != 5) return;
         switch (r->arg[0]) {
@@ -44760,9 +44773,9 @@ static void update_items(void)
                 memset(&res, 0, sizeof res);
                 snprintf(res.stage, sizeof res.stage, "%s", gal);
                 res.star = id; res.prev_stars = gd_star_num(); res.coins = got_coins; res.pieces = got_pieces;
-                res.prev_max_coin = gd_max_coins(gal, sl ? atoi(sl + 1) : 1);
+                res.prev_max_coin = gd_max_coins(gal, id);
                 gd_set_star(gal, id);
-                gd_update_max_coins(gal, sl ? atoi(sl + 1) : 1, got_coins); /* the coin best score */
+                gd_update_max_coins(gal, id, got_coins); /* reflectStageResultSequenceCoin: the cleared star's */
                 res.after_stars = gd_star_num();
                 seq_set_result(&res);
                 seq_set_cleared(id); /* GameSequenceFunction::getClearedPowerStarId */
@@ -45278,8 +45291,10 @@ static void bgm_play(const char *track)
 void game_bgm_stage(void) /* startCurrentStageBGM; sequenced ones (LibraryRoom...) are not streams: galaxy 01 */
 {
     const char *track = "SMG_galaxy01_strm";
+    char scen[48]; /* startStageBGMFromStageName(getCurrentStageName, getCurrentScenarioNo) */
+    snprintf(scen, sizeof scen, "%.*s/%d", (int)strcspn(game_stage_name, "/"), game_stage_name, game_scenario_no());
     for (u32 i = 0; i < sizeof music_tab / sizeof music_tab[0]; i++)
-        if (!strcmp(music_tab[i].scen, game_stage_name)) track = music_tab[i].track;
+        if (!strcmp(music_tab[i].scen, scen)) track = music_tab[i].track;
     bgm_last[0] = 0;
     bgm_play(track);
 }
@@ -45449,9 +45464,8 @@ static int starter_bgm_on_welcome(void) /* ScenarioStarter::isStartBgmOnWelcome 
 {
     const char *c = bgm_comet();
     if (!strcmp(c, "Red") || !strcmp(c, "Black")) return 0;
-    return !strcmp(game_stage_name, "EggStarGalaxy/1") || !strcmp(game_stage_name, "HoneyBeeKingdomGalaxy/1") ||
-           !strcmp(game_stage_name, "FactoryGalaxy/1") || !strcmp(game_stage_name, "FactoryGalaxy/2") ||
-           !strcmp(game_stage_name, "FactoryGalaxy/3");
+    return game_stage_scenario("EggStarGalaxy", 1) || game_stage_scenario("HoneyBeeKingdomGalaxy", 1) ||
+           (on_stage("FactoryGalaxy") && game_scenario_no() <= 3);
 }
 static int bgm_permitted(void) /* DemoSoundKeeper::isPermitBgmChange: not with a red / black comet in the stage */
 {
@@ -55751,8 +55765,8 @@ static void wipe_ring_center(void) /* WipeRing::updatePlayerPos: getMarioCenterP
     if (game_frame == 600) { menu_wipe_circle(1, 900); printf("wipe test: close" "\n"); }
     if (game_frame == 1800) { menu_wipe_circle(0, 900); printf("wipe test: open" "\n"); }
 #endif
-    if (!strcmp(game_stage_name, "IceVolcanoGalaxy/1") && vlen(vsub(mario->pos, v3(15060.0f, -11800.0f, 1260.0f))) < 600.0f) return;
-    if (!strcmp(game_stage_name, "CosmosGardenGalaxy/4")) return; /* isStageSuddenDeathDodoryu */
+    if (game_stage_scenario("IceVolcanoGalaxy", 1) && vlen(vsub(mario->pos, v3(15060.0f, -11800.0f, 1260.0f))) < 600.0f) return;
+    if (game_stage_scenario("CosmosGardenGalaxy", 4)) return; /* isStageSuddenDeathDodoryu */
     if (screen_pos(c, &x, &y)) menu_wipe_circle_center(x, y);
     else menu_wipe_circle_center(320.0f, 224.0f);
 }
