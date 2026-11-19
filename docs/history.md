@@ -19,6 +19,32 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   `XF=-DSE_LOG` (StarDustGalaxy 1: its ShootingStarArea rows emit in turn); FireworksA not run (its rows wait for
   SW_A 17 in OceanRingGalaxy). ponytail: no clipping (far 400, radius 1500), appear()'s new first time. **Release:
   sound.py --pack** OceanRingGalaxy (the two firework SEs are new in game.c).
+- WaterRoad (feat/567-water-road, #567, 2026-11-18): Map/WaterRoad.cpp in `engine/src/water_road.inc` (wrd_*): the
+  tube of water of OceanRingGalaxy (one placement; its demo ウォーターロード出現デモ[ブッシュポンプ], sheet
+  WaterRoadAppear, starts on SW 1003, the ValveSwitch of scenarios 3 and 6). A demo cast, dead until the sheet's
+  appear (dx_cast_hook): SW_A on, DemoStart (SE_OJ_LV_WATER_ROAD_APPEAR, SE_AT_LV_EARTHQUAKE through part 0),
+  DemoGrowUp (the Top effect, SE_OJ_WATER_ROAD_GROW_START, a strong shake and rumble, the rail coord eased out over
+  part 1 with SE_OJ_LV_WATER_ROAD_GROW, the part's camera on its tip), the End effect and DemoWaitEnd, Wait. The bind
+  on its Binder sensor (its radius 500 at the rail's nearest place to Mario, not under 300 above the rail's start;
+  mode_rush), its バインド中 camera on the player, RideStart (WaterRoadIn, SE_OJ_WATER_ROAD_BIND_IN) / RideWait
+  (SwimFlutter) / RideSpin (a swing: SwimSpin, SE_PM_TORNADE_IN_WATER_ST, SE_PM_LV_TORNADE_IN_WATER, + 50 for 30
+  frames), the speed x 0.99 within 100 .. 150, SE_OJ_LV_WATER_ROAD_BIND, Mario's matrix up the rail; at the goal
+  SE_OJ_WATER_ROAD_BIND_END, SE_PV_JUMP_M, endBindAndPlayerJump(0), Disappear (alpha to 0 over 30, kill).
+  SE_AT_LV_WATER_ROAD at the rail's nearest place to the camera. WaterRoadModelInfo: the high and low models' line
+  points as Petari makes them (a ring where the rail's direction left the last by 0.998 / 0.99, tested every 100),
+  u 0.05 a loop point and v the coord x 0.0001, the low one past 10000 of its box, drawn up to the rail coord while
+  it grows. `tools/jpa.py` NAMED WaterRoad (Top, End). Test: plain `XF=-DWATERROAD_TEST` in OceanRingGalaxy/3 (the
+  demo's switch on at frame 1000, Mario put in its foot 120 frames after it waits, a swing 60 frames into the ride).
+  ponytail: a line point keeps its rail place and axes (40 B, MEM_OBJECTS), the 12 loop points are made at the draw;
+  the water as OceanRing's (ocean_ring.inc or_mesh: Water.bti's two stages one sample scrolled as stage 0, the
+  screen term C1 55 96 BE as the frame less 1 - C1), no indirect warp, no EnvMap.bti stage, no R8_EQ stage; its box
+  from the rail's polyline; the rail is the pack's polyline (15 points: both models get 15 rings; Petari's Bezier turns all along). In PCSX2 (overlay
+  packs): the demo, the growth under its camera with Top, End, the ride, the spin, the jump out, Disappear; `se+` for
+  GROW, BIND, BIND_END, EARTHQUAKE, AT_LV_WATER_ROAD, TORNADE, JUMP_M once the sound pack was cut again (`se?`
+  before); no log line seen for APPEAR, GROW_START and BIND_IN. Route test: star got. Cost: about 8 KB of the ELF
+  (nm wrd_*; the line points, 2 x 15 x 40 B, in MEM_OBJECTS); memcheck after it: 36864 B left before the packs'
+  region loses 256 KB. **Release: slice_all.py resident.bin + resident_luigi.bin** (its two effects, +5 KB) **and
+  sound.py --pack OceanRingGalaxy** (its SEs).
 - Class audit A, MapObj/ A-M (fix/645-audit-a-small, #645 / PR #670, 2026-11-18, agent audit-a): every placed class of
   `src/Game/MapObj/[A-M]*.cpp` read against the port, the table in `docs/class-audit-a.md` (102 classes: 67 ok, 12
   fixed here, 23 in issues #646-#653). Fixed, all read from Petari and **not run in PCSX2**: DeadLeaves (update_givers:
