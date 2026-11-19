@@ -3,7 +3,9 @@
 
 #include "blob.h"
 
-extern const char *game_stage_name; /* set before game_init: "<Galaxy>/<n>" */
+extern const char *game_stage_name; /* set before game_init: "<Galaxy>/<n>", n the selected scenario (getCurrentSelectedScenarioNo) */
+int game_scenario_no(void); /* MR::getCurrentScenarioNo: the placed scenario (a hidden star's: getPlacedHiddenStarScenarioNo) */
+int game_stage_scenario(const char *galaxy, int no); /* isEqualStageName(galaxy) && getCurrentScenarioNo() == no */
 void game_init(const Scene *s, const unsigned char *blob);
 void game_set_time_limit(int seconds);
 int game_time_left(void);
@@ -46,6 +48,7 @@ int game_test_petari(void);
 int game_test_sambo(void);
 int game_test_bomb_teresa(void);
 int game_test_bigbubble(int f);
+int game_test_launcher(void);
 int game_test_dring(void);
 int game_test_seesaw(int phase);
 int game_test_follow(int phase);
@@ -304,6 +307,9 @@ int game_test_rpb(int put); /* library test: RosettaPictureBook's nerve (-1 none
 int game_test_demo(int k);   /* tests: demo k's appear switch on (-1: the running demo's step, -1 none; -2: its anim camera's frame; -3: Mario's clip * 1000 + frame) */
 void game_bgm(const char *id); /* MR::startStageBGM by its sound id (MBGM_ / BGM_ / STM_ ...) */
 void game_bgm_stop(int frames); /* MR::stopStageBGM */
+void game_bgm_sub(const char *id); /* MR::startSubBGM */
+int game_bgm_is(const char *id);  /* MR::isPlayingStageBgmName */
+void game_bgm_state(int state, int frames); /* MR::setStageBGMState */
 void game_bgm_stage(void);   /* MR::startCurrentStageBGM: the scenario's music stream (music_tab.h) */
 void game_bgm_first(void);   /* GameScene::startStagePlayFirst's: the stage BGM unless the opening / starter start it */
 void game_bgm_tick(void);    /* per frame before audio_update: a sub BGM over, the stage BGM back */

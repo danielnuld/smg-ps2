@@ -233,7 +233,7 @@ void seq_galaxy_move(int type, const char *stage, int scenario, int start_id, in
     /* setBeforeStageScenario: the stage being left (a clear: the cleared stage and its star) */
     int cur_no;
     stage_of(sq.before, sizeof sq.before, &cur_no);
-    sq.before_no = type == SEQ_STAGE_CLEAR ? sq.cleared : cur_no;
+    sq.before_no = type == SEQ_STAGE_CLEAR ? sq.cleared : gd_placed_scenario(sq.before, cur_no);
     sq.start_set = start_id >= 0; sq.start_id = start_id; sq.start_zone = start_zone;
     if (type == SEQ_STAGE_CLEAR) /* requestGalaxyMove: FindingLuigiEventScheduler::updateOnStageResult, then update */
         gd_luigi_stage_result(sq.before, sq.before_no, result_set && result.prev_stars == result.after_stars);
