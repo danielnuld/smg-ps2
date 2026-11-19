@@ -47422,7 +47422,13 @@ static void put_test(void)
                 cls[n > 0 ? n : 0] = 0;
                 for (char *c = cls; *c; c++) if (*c == '\r' || *c == '\n') *c = 0;
                 row = game_test_put_at(cls, PUT_UP);
-                printf("put file: %s row %d" "\n", cls, row);
+                if (row >= 0) { /* PUT_UP along the row's own up (an area of a turned zone) */
+                    V3 x, z;
+                    row_axes(&sc->objs[row], &x, &z);
+                    mario->pos = vadd(row_pos(&sc->objs[row]), vmul(vcross(z, x), PUT_UP));
+                }
+                printf("put file: %s row %d, inside %d, SW_A %d" "\n", cls, row, row >= 0 && area_inside(&sc->objs[row], mario->pos),
+                       row >= 0 ? sc->objs[row].sw[SW_A] : -1);
             }
         }
 #endif
@@ -49176,7 +49182,12 @@ static void wall_shade_calc(void)
     }
     V3 hp, n;
     int ci;
-    if (!map_line(mw.c, vmul(dir, len), &hp, &n, &ci)) return;
+    if (!map_line(mw.c, vmul(dir, len), &hp, &n, &ci)) {
+#ifdef PUT_TEST
+        { static int t; if (t++ % 60 == 0) printf("wall shade: row %d cyl %d, no face within %d" "\n", wsh.row, wsh.cyl, (int)len); }
+#endif
+        return;
+    }
     wsh.pos = hp; wsh.n = n;
     if (!fading) wsh.d = 0.9f * wsh.d + 0.1f * vlen(vsub(hp, mw.c));
     wsh.cur = 1 - wsh.cur; /* updateRandomTexture */
