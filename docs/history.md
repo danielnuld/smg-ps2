@@ -18,6 +18,85 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   3500). BombHeiLauncher: its SW_A listened as on / off edges (onSwitchA: countdown 0, LauncherWait: the bomb at once;
   offSwitchA: Stop). Jellyfish: knockOut (jf_knock) from fire balls, shells, the rainbow attack and explosions.
   Test: built plain, host tests, the route test, memcheck; NOT run in PCSX2 (unverified-2026-11-18.md). No repack.
+- Trick rabbits (feat/632-trick-rabbits, #632, 2026-11-18): TrickRabbitFreeRun (ReverseKingdomGalaxy 1) and
+  TrickRabbit (CosmosGardenGalaxy 1) had no gameplay (a still model, the star out from the start). engine/src/trick.inc,
+  on the Gateway rabbits' kit (GwRabbit, rr_state = WalkerStateRunaway, RunawayRabbit's WalkerStateBlowDamage):
+  RabbitStateWaitStart (Wait / SmallTurn / HitReaction / Trample / Spin / Pointing / Talk and their sounds) and
+  RabbitStateCaught (the 捕まり demo: Caught, CaughtLand, CaughtEvent; Mario's Catch clips, the PStar model's
+  TrickRabbitLand / Wait) shared; TrickRabbitFreeRun's nerves (WaitStart, the 逃走 demo, RunawayStart with
+  MBGM_GALAXY_02_CHASE, Runaway at 0.7 / 1.5 by Mario's distance, BlowDamage from a star piece, Caught,
+  PowerStarDemo, GiveUp); TrickRabbit's (its rail graph: slice.py rgph_chunk bakes the rail and its Path_ID links
+  as nodes and edges with their point args, chunk RGPH; DemoRunaway / DemoJump along the arg7 -2 edges, Wait,
+  Runaway with selectEdgeRunnaway and the route level, BrakeTurn, JumpStart / Jump on a ParabolicPath, Tumble /
+  FallDown / ComebackRoute, Caught with SE_SY_TOTAL_COMPLETE, WaitPowerStarDemo, GiveUp). Both declare their star
+  (slice.py declare_stars; trk_star_out lets it out 200 over the rabbit) and wait for their zone's collision
+  (w_zone_ground: active from the scene's start they fell through their planet while its zone was loaded low).
+  Left: MultiEventCamera (TrickRabbit's demo camera), SpotMarkLight, foot prints, the ThicketJump effect,
+  isBindedGroundBrake, the blow from other actors; TrickRabbitFreeRunCollect (SnowCapsuleGalaxy: TrickRabbitSnow /
+  TrickRabbitSnowCollect, its clip names are cut at 31 characters by slice.name32) is not ported. Test: plain with
+  XF="-DTRICK_TEST -DPACKS_OVERLAY=<overlay>" on ReverseKingdomGalaxy/1 or CosmosGardenGalaxy/1 (Mario put before
+  the rabbit, A through its talk, a star piece / a drop onto it, then the catch). Seen in PCSX2: TrickRabbitFreeRun end to end (its talk, the demo and the chase BGM, the star piece's BlowDamage, the catch, the power star appear demo with it as declarer, GiveUp); TrickRabbit only to
+  its WaitStart (97 nodes, 109 edges read, it stands on its ground; the test's Mario, put 170 before it, fell off its
+  platform, so its talk and what follows were not run). Until they are, slice.py makes TrickRabbit's RGPH, declarer
+  and PStar only with SMG_RGPH set in the environment: the release packs leave it as it was. Next: fix the test's
+  Mario placement in trk_test, slice CosmosGardenGalaxy with SMG_RGPH=1 into an overlay, run it, then drop the
+  switch. **Release: slice_all.py ReverseKingdomGalaxy** (TrickRabbitFreeRun's declarer and PStar).
+  the rabbit, A through its talk, a star piece / a drop onto it, then the catch). Seen in PCSX2: TrickRabbitFreeRun end to end (its talk, the demo and the chase BGM, the star piece's BlowDamage, the catch, the power star appear demo with it as declarer, GiveUp). **Release: slice_all.py
+  ReverseKingdomGalaxy, CosmosGardenGalaxy** (the declarers, PStar, RGPH).
+- Mario's miss events (feat/674-miss-events, #674, 2026-11-18): EventAbyss and EventFireDown have their own timelines
+  now (PlayerEventAbyss.cpp / PlayerEventFireDown.cpp: the MissLayout at init, the HUD out at 25 / 100, the wipe once
+  the layout's Appear is over and 15 frames in, a life at 120), EventDown keeps its own. MarioActorNrvGameOverNonStop
+  (forceGameOverNonStop: the last life at a fire dance's or a needle's start, on a fire floor in the dance, frozen or
+  paralysed off the ground) no longer holds Mario: the dance goes on under the layout and the wipe, and joins the fire
+  run whatever his life (connectToFireRun). MarioActorNrvGameOverAbyss: 奈落ダウン and he drifts on, his last move x
+  0.99 + the camera's z x 0.35 a frame. MarioActor::drawPreWipe (startPlayerDownWipe: EventDown / FireDown / RaceDown,
+  not sinking, not frozen): a black box over the world, alpha _A6C x 1.75 (224 past 128) of 255, and Mario's model
+  once more over it (game_draw: his draw block run again after the effects). menu_miss_anim_end (isMissAnimEnd).
+  Test: a plain build XF=-DDOWN_TEST=<k> (1 his last life at a needle's prick, 2 a plain miss, 3 the Abyss nerve, 0 one
+  of them by the lives left on each try of the stage); in a route build (XF="-DMISS_EVENTS=1 -DDOWN_TEST=0") off the
+  route's stage. PCSX2 (a plain build, DOWN_TEST 0, EggStarGalaxy 1, three
+  tries): EventDown: the layout at 45, the wipe at 100, a life at 120, the stage again at 220; the world darkens round
+  him (pictures: Mario bright behind the TooBad text). NonStop (doNeedleWithInitialDamage with one life): `mario down
+  (non stop)`, the layout at once, he is thrown 660 up by the dance while the world darkens, the wipe at 61 (the
+  layout's Appear over), a life at 120, the stage again at 182. Abyss: the layout at once, no darkening, the wipe at
+  61, he drifts into the screen (900 in 100 frames). A black hole's miss ran the same timeline.
+  ponytail: the death cameras (昇天カメラ / 奈落カメラ) are not started, the game camera follows him through the
+  Abyss drift; the blended instances are drawn after the box (not darkened); the freeze model and the water column step
+  twice in the pass; setSoundVolumeSetting, startDownWipe's _390 test; doLanding's forced jump with no life left
+  (MarioJump.cpp:2294) is not a NonStop game over.
+- Class audit B, first pass (feat/654-rail-mover, #654 / #664 / #671 / #680, 2026-11-18): `docs/class-audit-b.md` is the
+  table (MapObj N to Z, Map, Ride, Gravity: 174 classes with behaviour, 142 static ones), with what was read line by
+  line and what was only checked by its names. **The rail mover** (game.c update_railers, MapPartsRailMover.cpp): its
+  speed is worked out when Move starts (the start, a point passed, an end left) from its current point, the one it
+  passed last going either way (railer_point: BezierRail::getCurrentCtrlPointIndex), point_arg0 kept where a point
+  sets none (a part came back at the speed of the point ahead); point_arg1 eases to it over that many frames
+  (updateAccel: 54 placements); point_arg7 1 makes point_arg0 the frames to the next point (calcMoveSpeedTime:
+  KoopaVS2's 2D steps); a stop lasts both StopAtPoint nerves (2 x point_arg5 + 2 frames, where it passed the point,
+  not on it); closed rails go round (45 placements rode to the last point and back: QuestionBoxMoveStepB,
+  AsteroidMoveA, KoopaVS2's square steps); restartAtEnd after the end's stop (MoveStopType 2 jumped first, 3 killed
+  first); MoveConditionType 1 waits at each end for Mario to step off and on again (reachedEndPlayerOn);
+  SignMotionType 1: MoveStart's 50 frames of shake; RailInitPosType: the rail's place nearest to the placement
+  (railer_init; the port started every part at its rail's start). Two arena arrays more a scene (row_rstep,
+  row_racc: 6 B a row). slice.py: point_arg7 and path_arg4 folded into the points' arg5 word (rail_arg5),
+  SignMotionType in the map part's packed word (bits 26-28): older packs read as before (no sign, no time, the
+  nearest place). XF=-DRAILER_LOG prints a part's coordinate, speed and nerve bits every 20 frames. Left: the rail
+  rotator (MapPartsRailRotator), the collision shaking with the model in MoveStart, GeneralMapParts' own sign
+  motions. **SpaceMine** turns a degree a frame, rides its rail (22 placements stood still), is blown up by a star
+  piece shot, by invincible Mario and (arg1 set) by the ground, and pushes Mario when he does not take its attack;
+  **NeedlePlant** shaken by a shot, killed by invincible Mario; **PomponPlant** swung by a shot;
+  **QuarterRollGravityRoomArrow** (statics.inc st_qrarrow) was drawn still: its RollGravityA / B (Reverse) clips on
+  SW_A / SW_B (slice.py SKINNED_OBJ); **StarPieceFlow** rides its closed rail's last part (all 28 are closed: the
+  pieces jumped from the last point to the first); **SpiderCoin**'s Touch (it turns), rub and TouchAndApart (the
+  pointer back on it within 30 frames) free the coin, not only A; a hip drop that lands on a **PunchBox** breaks it
+  (_8C is set by Mario's ACTMES_FLOOR_TOUCH: the port said never); **SimpleBreakableObj**: nothing while its SW_A is
+  off (SandUpDownTowerBreakableWallB), IcicleRock and the walls not broken by a hip drop. Run in PCSX2
+  (XF=-DRAILER_LOG): PhantomGalaxy 1 (three AsteroidMoveA apart on their closed rail), IceVolcanoGalaxy 1 (the
+  IceLavaIsland steps: stops of 62 frames, the ends), BattleShipGalaxy 1 (UFOStrongA's ease 0 to 1, a closed rail).
+  Not run in PCSX2: the mines' rails and shots, the arrow, the flows, SpiderCoin, the hip drop on a PunchBox, the
+  packs' new bits (D:/smg-ps2-wt/unverified-2026-11-18.md). Issues written: #665 SandUpDownEffectObj, #666 SnowMan, #667
+  SandCapsulePressGround, #668 Tsukidashikun's clips, #669 effects never spelled, #672 StarPieceGroup's time limit and
+  switches, #677 CoinGroup's time limit, #680 PunchBox's other attacks, #681 WaterLeakPipe's Freeze, #683 the chip
+  treasure boxes, #684 the Ride classes' marks.
 - CollisionArea (feat/638-areas-named-nowhere, #656, 2026-11-18, agent areas2): 163 placed in 29 stage archives (20
   galaxies), its rows were not in the packs. `update_collision_areas` (CollisionArea::movement, keep_effects) and
   `col_area_hit` (hitCheck): Mario's centre against the centre origin box by a radius (arg2: 50 in 20 of them, else

@@ -24,7 +24,10 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
   'PATH'  u32 n, n × {u16 zone, u16 closed, s32 id, u32 npts, u32 nraw, s32 stop_type (path_arg1), s32 path_arg0 (RaceRail's race id),
           f32 pts[npts][3], f32 raw[nraw][3], nraw × {f32 coord, s32 arg0, s32 arg5}, nraw × {s32 arg1, s32 arg2}}:
           pts the rail as a polyline (Bezier parts sampled, bezier_polyline), raw its JMap points (pnt0), each with its
-          distance along pts and its point_arg0 / point_arg5 (map parts: speed, stop time), point_arg1 / 2 (Rock)
+          distance along pts and its point_arg0 / point_arg5 (map parts: speed, stop time), point_arg1 / 2 (Rock).
+          The arg5 word of a rail whose points set point_arg7 1 (MapPartsRailMover's speed from a time) or whose
+          path_arg4 is set (its RailInitPosType): max(arg5, 0) | bit 30 (point_arg7 1) | on the first point
+          (path_arg4 + 1) << 28 (rail_arg5)
   'MODL'  u32 n, n × {char[32] name, f32 bounding radius}
   'KCL '  u32 n, n × {char[32] model, u32 size, bytes[size] (little-endian KCL, kcl_to_le), pad to 4}
   'VUMD'  u32 n, 12 pad, n × {char[32] name, u32 ngroups, f32 qscale, 8 pad, ngroups × {u32 nverts (3 per
@@ -89,6 +92,7 @@ SKINNED_OBJ += ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp")  # TicoShop: NPCDat
 SKINNED_OBJ += ("CircleShell", "CircleStrawberry")  # SmallStone.cpp: WindLoop / WindEnd, CircleShell's Kind BVA (game.c stone_pose)
 SKINNED_OBJ += ("IceMerameraKingShock", "IceMerameraKingBreak")  # IceMerameraKing: its ShockWave's Shock, its break model's Break
 SKINNED_OBJ += ("DashRing",)  # DashRing.cpp: Loop / Start / End / Revival (game.c update_drings)
+SKINNED_OBJ += ("QuarterRollGravityRoomArrow",)  # its RollGravityA / B (Reverse) clips (game.c statics.inc st_qrarrow)
 SKINNED_OBJ += ("DeadLeaves", "DesertMovingLandSmall")  # DeadLeaves.cpp: Spin (game.c update_givers); DesertMovingLand's small one: Vibration (update_dlands)
 SKINNED_OBJ += ("PrizeRing",)  # PrizeRing.cpp: Start / Loop / End, its Number BVA (game.c syati.inc)
 SKINNED_OBJ += ("JumpGuarder", "JumpGuarderHead")  # JumpGuarder (game.c update_rbeamers: rbeamer 3) and its head
@@ -213,7 +217,7 @@ def sky_sea(b, mat3, m):
 EXTRA = {"ConcreteBlock": ("ConcreteBlockBreak",),  # SimpleBreakableObj: its break ModelObj (game.c break_inst)
          "WaterfallCaveCover": ("WaterfallCaveCoverBreak",),  # MapObjActor::tryCreateBreakModel (statics.inc st_wcc)
          "Syati": ("PrizeRing",),  # Syati::initRings: its five PrizeRings (game.c syati.inc)
-         "TeresaRacer": ("PStar",), "PenguinRacerLeader": ("PStar",), "PenguinCoach": ("PStar",), "LuigiNPC": ("PStar",), "LuigiEvent": ("PStar",),  # TakeOutStar's mStarModel (game.c tos_*)
+         "TeresaRacer": ("PStar",), "PenguinRacerLeader": ("PStar",), "PenguinCoach": ("PStar",), "LuigiNPC": ("PStar",), "LuigiEvent": ("PStar",), "TrickRabbitFreeRun": ("PStar",),  # TakeOutStar's mStarModel (game.c tos_*); RabbitStateCaught's mPowerStarModel (trick.inc)
          "WatchTowerRotateStep": ("WatchTowerRotateStepLift",),  # its four PartsModels (statics.inc st_wtower)
          "UFOKinokoUnderConstruction": ("UFOKinokoLandingAstro",), "LargeChain": ("LargeChainFixPoint",),  # LargeChain: its fixed points
          "TicoGalaxy": ("TicoFatGoodsStarPiece", "Tico~5"),  # TicoFat's goods; its TicoStarRing (Tico::initBase(5): ColorChange 5)  # its init: that model once isUFOKinokoUnderConstruction is over (statics.inc)
@@ -258,6 +262,8 @@ def morph_arcs(o):
         a = [s32(v) for v in o["args"]]
         return () if o["name"] == "WoodBox" and a[4] in (0, -1) or o["name"] == "KoopaStatue" and a[3] != 1 else (KINOKO[o["name"]],)
     if o["name"] == "Kinopio" and s32(o["args"][2]) == 8:  # mIsSpawnPowerStarMode: its TakeOutStar's star model (game.c kinopio_nerve)
+        return ("PStar",)
+    if o["name"] == "TrickRabbit" and RGPH_ON:  # RabbitStateCaught's mPowerStarModel
         return ("PStar",)
     if o["name"] not in MORPH_ARCS:
         return ()
@@ -403,22 +409,35 @@ def rows(b):
 def map_parts(b, rs):
     """mappartsinfo rows: Obj_arg0-3 as usual, the MapPartsRotator columns in args 4-7: RotateSpeed, RotateAngle,
     RotateAxis, then bit 30 (a map part) | RotateType (bits 0-3, default 1) | RotateAccelType << 4 | MoveConditionType
-    << 8 | RotateStopTime << 12 (unset: Petari's defaults, 0 but the type). A seesaw's RotateAccelType is its inertia
-    (100-2000, over the four bits): written whole to arg 3, which those classes do not read."""
+    << 8 | RotateStopTime << 12 | SignMotionType << 26 (unset: Petari's defaults, 0 but the type). A seesaw's
+    RotateAccelType is its inertia (100-2000, over the four bits): written whole to arg 3, which those classes do
+    not read."""
     n = len(rs)
     seesaws = {"PhantomShipHandle", "LavaHomeSeesaw", "KoopaShipSeesawStep", "IceVolcanoBalanceStepA", "IceVolcanoBalanceStepB",
                "IceMountainSeesawSlipA", "IceMountainSeesawSlipB", "IceMountainSeesawSlipC", "IceMountainSeesawSlipD",
                "IceMountainSeesawNoSlipA"}  # MapPartsSeesaw1AxisRotator / 2AxisRotator / LavaHomeSeesawRotator hosts
     col = {f: int_or(b, f, n, -1) for f in ("RotateSpeed", "RotateAngle", "RotateAxis", "RotateType", "RotateAccelType",
-                                           "MoveConditionType", "RotateStopTime")}
+                                           "MoveConditionType", "RotateStopTime", "SignMotionType")}
     for i, r in enumerate(rs):
         g = lambda f, d: col[f][i] if col[f][i] >= 0 else d
         r["args"][4:8] = [col["RotateSpeed"][i], col["RotateAngle"][i], col["RotateAxis"][i],
                           1 << 30 | g("RotateType", 1) & 15 | (g("RotateAccelType", 0) & 15) << 4 |
-                          (g("MoveConditionType", 0) & 15) << 8 | min(g("RotateStopTime", 0), 0x3FFF) << 12]
+                          (g("MoveConditionType", 0) & 15) << 8 | min(g("RotateStopTime", 0), 0x3FFF) << 12 |
+                          (g("SignMotionType", 0) & 7) << 26]
         if r["name"] in seesaws:
             r["args"][3] = col["RotateAccelType"][i]
     return rs
+
+
+def rail_arg5(a5, a7, init):
+    """A rail's point_arg5 words with MapPartsRailMover's point_arg7 (1: point_arg0 is the time to the next point)
+    and path_arg4 (RailInitPosType) folded in (the PATH chunk's header); untouched where neither is set."""
+    out = list(a5)
+    for i, v in enumerate(out):
+        bits = (1 << 30 if a7[i] == 1 else 0) | ((init + 1) << 28 if i == 0 and 0 <= init <= 2 else 0)
+        if bits:
+            out[i] = (max(v, 0) & 0xFFFF) | bits
+    return out
 
 
 def stage_files(path):
@@ -488,8 +507,10 @@ def scene(fs, galaxy, scenario):
             paths.append(dict(zone=zid, id=pid, camera=i < len(usage) and usage[i] == "Camera", closed=int(str(closed[i] if i < len(closed) else "").lower() == "close"),
                               pts=list(zip(*p0)), cin=list(zip(*p1)) or list(zip(*p0)), cout=list(zip(*p2)) or list(zip(*p0)),
                               stop=int_or(info, "path_arg1", len(ids), -1)[i], parg0=int_or(info, "path_arg0", len(ids), -1)[i], arg0=int_or(pts, "point_arg0", npt, -1),
-                              arg5=int_or(pts, "point_arg5", npt, -1), arg1=int_or(pts, "point_arg1", npt, -1),
-                              arg2=int_or(pts, "point_arg2", npt, -1)))
+                              arg5=rail_arg5(int_or(pts, "point_arg5", npt, -1), int_or(pts, "point_arg7", npt, -1), int_or(info, "path_arg4", len(ids), -1)[i]),
+                              arg1=int_or(pts, "point_arg1", npt, -1),
+                              arg2=int_or(pts, "point_arg2", npt, -1), arg3=int_or(pts, "point_arg3", npt, -1),
+                              arg7=int_or(pts, "point_arg7", npt, -1), link=int_or(info, "Path_ID", len(ids), -1)[i]))
     for o in objs:
         if o["name"].startswith("AssemblyBlock") and (o["zone"], o["l_id"]) in homes:
             o["home"] = homes[(o["zone"], o["l_id"])]
@@ -1898,6 +1919,50 @@ def path_entry(p):
             b"".join(struct.pack("<ii", a1[i], a2[i]) for i in range(n)))
 
 
+# TrickRabbit's rail graph, star declarer and PStar only when SMG_RGPH is set in the environment: its nerves past
+# WaitStart (game.c trick.inc trm_update) were not run in PCSX2 yet; without RGPH the engine leaves it as it was
+RGPH_ON = bool(__import__("os").environ.get("SMG_RGPH"))
+
+
+def rgph_chunk(keep, paths):
+    """'RGPH': TrickRabbit's rail graph (MR::createRailGraphFromJMap, RailGraphUtil.cpp addRailToGraph): its rail and
+    the rails linked from it by Path_ID; a point within 100 of a node is that node (the nearest), consecutive points
+    are joined by an edge with the earlier point's args, a closed rail's last to its first. u32 n, n x {s32 row,
+    u32 nnodes, u32 nedges, f32 nodes[nnodes][3], nedges x {u16 a, u16 b, s16 arg0, arg1, arg2, arg3, arg7, pad}}."""
+    if not RGPH_ON:
+        return b""
+    out = []
+    s16 = lambda v: max(-0x8000, min(0x7FFF, s32(v) if v >= 0 else v))
+    for row, o in enumerate(keep):
+        if o["name"] != "TrickRabbit" or o["path"] < 0:
+            continue
+        by_id = {p["id"]: p for p in paths if p["zone"] == o["zone"]}
+        nodes, edges, rid, seen = [], [], o["path"], set()
+        while rid in by_id and rid not in seen:
+            seen.add(rid)
+            p = by_id[rid]
+            prev = first = -1
+            args = (-1,) * 5
+            for i, pt in enumerate(p["pts"]):
+                near = min(range(len(nodes)), key=lambda k: math.dist(nodes[k], pt), default=-1)
+                if near < 0 or math.dist(nodes[near], pt) >= 100.0:
+                    nodes.append(pt)
+                    near = len(nodes) - 1
+                if prev != -1 and near != prev:
+                    edges.append((prev, near) + args)
+                if i == 0:
+                    first = near
+                prev = near
+                args = tuple(s16(p[k][i]) for k in ("arg0", "arg1", "arg2", "arg3", "arg7"))
+            if p["closed"] and prev != -1 and first != prev:
+                edges.append((prev, first) + args)
+            rid = p.get("link", -1)
+            rid = -1 if rid in (-1, 0xFFFF) else rid
+        out.append(struct.pack("<iII", row, len(nodes), len(edges)) + b"".join(struct.pack("<3f", *n) for n in nodes) +
+                   b"".join(struct.pack("<HH5hH", *e, 0) for e in edges))
+    return chunk(b"RGPH", struct.pack("<I", len(out)) + b"".join(out)) if out else b""
+
+
 def to_world(zones, up_ids, items):
     """Zone-local rows (pos, rot) -> world, in place: world = zone placement composed up its chain of parents.
     Returns each zone's world (rotation rows, translation)."""
@@ -2076,6 +2141,8 @@ def declare_stars(keep, scenario, appear, jp):
             k = None if 1 <= s32(r["args"][0]) <= 3 else -1
         elif r["name"] == "Kinopio":  # Kinopio::init: declarePowerStar in its power star mode (mBehavior 8)
             k = None if s32(r["args"][2]) == 8 else -1
+        elif r["name"] == "TrickRabbitFreeRun" or (r["name"] == "TrickRabbit" and RGPH_ON):  # their init: declarePowerStar
+            k = None
         elif r["name"] in ("LuigiNPC", "LuigiEvent"):  # LuigiNPC::isDeclarePowerStarType: Afraid, Event, OnTree, Arrested
             t = s32(r["args"][0]) + (2 if r["name"] == "LuigiEvent" else 0)
             k = None if t == 0 or 2 <= t < 5 else -1
@@ -2182,6 +2249,7 @@ def placement(fs, galaxy, scenario):
     fol = [(i, o["oid"]) for i, o in enumerate(keep) if 0 <= o.get("oid", -1) < 0x8000 and ("Gravity" in o["name"] or o["name"] in ("SwitchCube", "SwitchArea"))]
     if fol:
         out.append(chunk(b"FOLW", struct.pack(f"<I{2 * len(fol)}h", len(fol), *[x for f in fol for x in f])))
+    out.append(rgph_chunk(keep, paths))
     out.append(chunk(b"ZPAR", struct.pack(f"<I{len(zones)}i", len(zones),
                                           *[-1 if i == 0 else up_ids.get(i, 0) for i in range(len(zones))])))
     jp2en = dict(zip(B.bcsv_column(names, "jp_name"), B.bcsv_column(names, "en_name")))
