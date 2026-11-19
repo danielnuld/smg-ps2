@@ -11,6 +11,17 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- TrampleStar (feat/702-trample-star, #702, 2026-11-18): MapObj/TrampleStar.cpp in `engine/src/trample_star.inc`
+  (trs_*): the rubber ball of PhantomNestZone (PhantomGalaxy 3; PoyoPoyoPlanetZone's two are in no galaxy). The
+  shared mesh as Petari makes it (the cube divided three times: 486 vertices, 768 faces, the LOD's 192, the
+  overlaps), the bind on its body sensor (the rate his speed in 30 .. 50, the nearest vertex, not while he moves out
+  of it), BindingCapture (10 / 15 frames: the rate on the vertices within 400, x 0.85), BindingShoot (the springs 0.1
+  / 0.2, the jump at the capture vertex's zero crossing, x 1.5 with A, its sounds, Jump2; step 120), his matrix at
+  the capture vertex, the LOD past 5000. Everything in MEM_OBJECTS (about 24 KB of the scene's arena). Its texture:
+  `tools/slice.py` TEX_ONLY TrampleStar. Test: plain `XF=-DTRAMPLE_TEST`, PhantomGalaxy/3: in PCSX2 (overlay pack) the bind, the capture, the shot (he leaves at 26 up), again on each landing, the ball drawn with its texture; its three sounds answer `se?` until the sound pack is cut again. ponytail: drawn unlit
+  (texture x its material colour; no actor light, no Mario shadow stage); the divide's edge lookup is a list, not
+  Petari's check flag table. Cost: about 6.0 KB of the ELF (nm trs_*); its mesh and state, about 24 KB, in MEM_OBJECTS only where one is placed; memcheck on a plain build of main with the six classes of this batch: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB. **Release: slice_all.py PhantomGalaxy + sound.py --pack PhantomGalaxy**
+  (SE_OJ_TRAMPOLINE_LAND_L / BOUND_S / BOUND_L answer `se?`).
 - GravityLightRoad (feat/651-gravity-light-road, #651, 2026-11-18): MapObj/GravityLightRoad.cpp in
   `engine/src/gravity_light_road.inc` (glr_*): KoopaBattleVs3Galaxy's five beams. Its body sensor (250 at the foot of
   Mario's centre on the beam's line, 2500 x scale y long) binds him inside its cylinder (390 round the axis): Fall,
