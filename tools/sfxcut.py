@@ -31,7 +31,7 @@ DEFAULT_CAP = 6000
 ONE_VARIANT = True  # a note whose key comes from a register (random variant) keeps only its program's first region
 # Map/, Ride/ and AreaObj/ hold placeable classes (WaterRoad, Flag, SpinDriver, SurfRay...): their sounds count only
 # where the class is placed, like Enemy/ or MapObj/.
-GLOBAL_DIRS = {"Player", "Screen", "System", "Scene", "Camera", "Util", "AudioLib", "GameAudio", "Demo", "LiveActor", "Effect",
+GLOBAL_DIRS = {"Player", "Screen", "System", "Scene", "Camera", "Util", "AudioLib", "Demo", "LiveActor", "Effect",
                "Gravity", "NameObj", "Speaker", "RhythmLib"}
 SE_RE = re.compile(r'"((?:SE|HOMESE)_[A-Z0-9_]+)"')
 

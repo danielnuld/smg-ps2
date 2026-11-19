@@ -87,7 +87,7 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   SE_AT_LV_PHNCV_TERESA_ROOM; 23 areas, 20 of them type 1 = reverb only). ponytail: no AudEffector (reverb send,
   cutoff, special effects), no setFarCamera. Tests: `swim` (HeavenlyBeachGalaxy/1, XF=-DAUDIOFX_TEST: from frame 1500
   Mario put in each AudioEffect area). Repack: slice.py LOGIC AudioEffectCube / Sphere / Cylinder (every galaxy
-  with one), tools/sfxcut.py GLOBAL_DIRS + GameAudio (every scenario's sound.bin: SE_AT_LV_UNDER_WATER).
+  with one), tools/sound.py scenario_keep (the sound.bin of every scenario with water: SE_AT_LV_UNDER_WATER; with those areas: theirs).
 - #587 BGM calls nothing made (2026-11-18, agent bgm; docs/sound-gaps.md's list of Petari's BGM calls gone through by
   file): the title's STM_TITLE (TitleSequenceProduct: at the logo, stopped over 75 at A + B) and the file select's
   MBGM_FILE_SELECT (FileSelector::exeTitleEnd; its state 5 far / 6 near by the camera: updateBgm; stopped over 90 at
