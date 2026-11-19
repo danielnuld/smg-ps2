@@ -10474,6 +10474,32 @@ static void snow_joints(Inst *in) /* the bucket gone with the head (hideMaterial
 static void update_snowmen(void)
 {
     static const char *const clip[7] = {"", "melthead", "meltbody", "", "", "downhead", "downbody"};
+#ifdef SNOW_TEST /* plain build XF=-DSNOW_TEST (IceVolcanoGalaxy/1, SnowMan sliced with its clips): Mario held by the
+                  * first SnowMan, a fire ball on its head 100 frames after it is in, one on its body 100 after that */
+    {
+        static int tf, t0 = -1;
+        tf++;
+        int ty = scene_type(sc, "SnowMan");
+        for (u32 q = 0; ty >= 0 && q < sc->nobjs && t0 < 0; q++)
+            if ((int)sc->objs[q].type == ty) { V3 p = row_pos(&sc->objs[q]); mario->pos = vadd(p, vmul(up_at(p, mario->up), 900.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; break; }
+        FOR_KIND(i, snowman) {
+            Inst *in = &insts[i];
+            if (!in->snowman || in->kparent >= 0 || row_dead[in->row]) continue;
+            V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), base = v3(in->m[12], in->m[13], in->m[14]);
+            if (t0 < 0) { t0 = tf; printf("snow test: snowman row %d in at f %d, anim %p skin %p%c", in->row, tf, (const void *)in->anim, (const void *)in->md->skin, 10); }
+            if (tf < t0 + 400) { mario->pos = vadd(base, vadd(vmul(up, 500.0f), vmul(vnorm(v3(in->m[8], in->m[9], in->m[10])), 700.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+            if (tf == t0 + 100) fireball_hits_snowman(vadd(base, vmul(up, 250.0f * in->s)));
+            if (tf == t0 + 200) fireball_hits_snowman(vadd(base, vmul(up, 100.0f * in->s)));
+            if (tf > t0 + 95 && tf % 10 == 0) {
+                int parts = 0, on = 0;
+                for (int j = i + 1; j < ninsts; j++) if (insts[j].kparent == i && insts[j].row == in->row) { parts++; on += insts[j].kcl != NULL; }
+                printf("snow test f %d: nerve %d step %d parts %d (on %d) sw %d %d%c", tf - t0, row_turn[in->row], row_step[in->row], parts, on,
+                       sc->objs[in->row].sw[SW_A] >= 0 ? sw_on(&sc->objs[in->row], SW_A) : -1, sc->objs[in->row].sw[SW_B] >= 0 ? sw_on(&sc->objs[in->row], SW_B) : -1, 10);
+            }
+            break;
+        }
+    }
+#endif
     FOR_KIND(i, snowman) {
         Inst *in = &insts[i];
         if (!in->snowman || in->kparent >= 0 || row_dead[in->row] || !row_shown(in->row)) continue;
