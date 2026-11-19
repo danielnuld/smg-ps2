@@ -11,6 +11,9 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- TripodBoss's marker stopped at its break (fix/tripod-marker-break, 2026-11-18): #599's tb_marker left the parts'
+  SE_BM_TRIPOD_MARKER playing when the boss broke down with Mario on it (the parts die there in Petari: their sound
+  objects with them). Test: plain -DTB_TEST -DDKJ_TEST -DSE_LOG TriLegLv1Galaxy/1.
 - AnimScaleController on the walkers (feat/521-walker-asc, #521, 2026-11-18): Takobo, Jellyfish, JellyfishElectric,
   Mogu, Petari, KoteBug and Unizo squash and stretch as Petari's mScaleController does (game.c wa_start / wa_update
   over asc_core: startHitReaction, startAnim with startAndAddScaleVelocityY). Test XF="-DASC_KIND=<walker kind>
