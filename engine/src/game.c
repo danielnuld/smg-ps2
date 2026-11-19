@@ -2062,6 +2062,9 @@ typedef struct { int inst, sub, prism; const unsigned char *kcl; } Tri;
 static int ncpolys;
 static const unsigned char *cpoly_at(int i, V3 *c, float *r);
 static const float cp_ident[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+#ifdef PUT_TEST
+static int cpoly_hits; /* the AreaPolygons' sphere hits since the put test's last line */
+#endif
 static const unsigned char *xpart_kcl(int sub)
 {
     return sub < ICE_STEPS ? kcl_icestep : sub - ICE_STEPS < ncpolys ? cpoly_at(sub - ICE_STEPS, NULL, NULL) : NULL;
@@ -2234,6 +2237,9 @@ static int kcl_query_(V3 c, float radius, Hit *out, int max)
         float lc[3] = {c.x, c.y, c.z};
         KclHit h[4];
         int got = kcl_check_sphere(pk, lc, radius, h, max - n < 4 ? max - n : 4);
+#ifdef PUT_TEST
+        cpoly_hits += got;
+#endif
         for (int j = 0; j < got; j++) {
             const float *fn = kcl_face_normal(pk, h[j].prism);
             float lp[3] = {lc[0], lc[1], lc[2]};
@@ -48069,6 +48075,15 @@ static void put_test(void)
                     row_axes(&sc->objs[row], &x, &z);
                     mario->pos = vadd(row_pos(&sc->objs[row]), vmul(vcross(z, x), PUT_UP));
                 }
+                if (row >= 0 && !strcmp(cls, "CollisionArea")) { /* 150 over the top face of the first one with an AreaPolygon */
+                    int t = (int)sc->objs[row].type;
+                    for (u32 i = 0; i < sc->nobjs; i++)
+                        if ((int)sc->objs[i].type == t && sc->objs[i].arg[3] != 0 && sc->objs[i].scale[1] >= 0.2f) { row = (int)i; break; }
+                    V3 x, z;
+                    row_axes(&sc->objs[row], &x, &z);
+                    mario->pos = vadd(row_pos(&sc->objs[row]), vmul(vcross(z, x), 500.0f * sc->objs[row].scale[1] + 150.0f));
+                    mario->hvel = v3(0, 0, 0); mario->vup = 0;
+                }
                 printf("put file: %s row %d, inside %d, SW_A %d" "\n", cls, row, row >= 0 && area_inside(&sc->objs[row], mario->pos),
                        row >= 0 ? sc->objs[row].sw[SW_A] : -1);
             }
@@ -50090,8 +50105,11 @@ static void update_collision_areas(void)
     { /* Mario on or against an AreaPolygon (a ground or wall part that is no instance's, its sub from ICE_STEPS on) */
         static int t;
         if (t++ % 60 == 0 && ncol_areas)
-            printf("collision area: mario at %d %d %d grounded %d (part %d sub %d) wall %d" "\n", (int)mario->pos.x, (int)mario->pos.y,
-                   (int)mario->pos.z, mario->grounded, ground_inst, ground_sub, mario->wall);
+        {
+            printf("collision area: mario at %d %d %d grounded %d (part %d sub %d) wall %d, polygon hits %d" "\n", (int)mario->pos.x,
+                   (int)mario->pos.y, (int)mario->pos.z, mario->grounded, ground_inst, ground_sub, mario->wall, cpoly_hits);
+            cpoly_hits = 0;
+        }
     }
 #endif
     for (int i = 0; i < ncol_areas; i++) {
