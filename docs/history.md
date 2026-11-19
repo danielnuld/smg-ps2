@@ -117,8 +117,8 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   (the two-hit path is the L cage's), SE_OJ_SMN_VOLC_COL_S_BREAK (SubmarineVolcanoSmallColumn is not placed).
 - The floaters after Petari (feat/floaters, #783, 2026-11-19; written without the emulator: **not run in PCSX2**
   until its PR says so): LavaFloater (LavaHomeFloaterB, LavaFloatingStepA .. D, FloaterOtakingFloaterA,
-  IceVolcanoFloaterA / B), OceanWaveFloater (OceanPierFloaterA, OceanHexagonFloater) and PhantomShipBoxFloater
-  (A / B / C) had no code, and the generic rotator read their floating force's columns as its own: it turned the
+  IceVolcanoFloaterA / B), OceanWaveFloater (OceanPierFloaterA, OceanHexagonFloater) PhantomShipBoxFloater
+  (A / B / C) and SimpleFloaterObj (IceMountainFloaterA, on MapPartsFloatingForce) had no code, and the generic rotator read their floating force's columns as its own: it turned the
   platform once Mario stood on it (100 rows: HellProminenceGalaxy, KoopaBattleVs3Galaxy, FloaterOtakingGalaxy,
   IceVolcanoGalaxy, HeavenlyBeachGalaxy, OceanFloaterLandGalaxy, OceanPhantomCaveGalaxy). statics.inc `st_float`
   (ST_FLOAT / ST_WFLOAT / ST_BFLOAT, `StFloat` from the arena): FloaterFloatingForceTypeNormal (`st_float_normal`:
@@ -140,6 +140,7 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   plays by id, its source has no SE_ string: **sound packs**, every scenario). Check at the repack: the sound packs'
   sizes (ambient loops) and that soundinfo's l_ids (their own numbering, as areaobjinfo's) upset no link by l_id.
   Left out: 26's fifth startLevelSound argument, its clipping sphere.
+  calcMapGroundUpper for _9C, the lava glow's matrix, LodCtrlPlanet.
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /

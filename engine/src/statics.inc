@@ -306,7 +306,7 @@ static void st_column(Inst *in, StSt *g); /* SubmarineVolcanoBigColumn (below) *
 static void st_flex(Inst *in, StSt *g, int i); /* FlexibleSphere (below) */
 static int st_ccm(Inst *in, StSt *g), st_ccm_rail(int row); static void st_ccm_action(int row); /* CrystalCageMoving (below) */
 static void st_qbox(Inst *in, StSt *g); /* QuestionBoxGalleryObj (below) */
-enum { ST_FLOAT = 101, ST_WFLOAT, ST_BFLOAT }; /* (their own line: the list above is edited by every new class) */
+enum { ST_FLOAT = 101, ST_WFLOAT, ST_BFLOAT, ST_SFLOAT }; /* (their own line: the list above is edited by every new class) */
 static void st_float(Inst *in, int i, int kind), st_float_alloc(const Scene *s); /* the floaters (below) */
 static int nst_st;
 static const Scene *st_st_sc;
@@ -1508,7 +1508,7 @@ static void st_objs_update(void)
         case ST_SCPRESS: if (st_scpress(in, g, i)) return; break;
         case ST_CCM: if (st_ccm(in, g)) return; break;
         case ST_QBOX: st_qbox(in, g); break;
-        case ST_FLOAT: case ST_WFLOAT: case ST_BFLOAT: st_float(in, i, k); break;
+        case ST_FLOAT: case ST_WFLOAT: case ST_BFLOAT: case ST_SFLOAT: st_float(in, i, k); break;
         case ST_TEXSW: { /* SimpleMapObj::init: TexChange (BTK) at arg1 (setupInitInfoTextureChangeArg1; -1 none),
                           * SimpleTextureSwitchChangeObj::changeTexture on its SW_A's rise: frame 1 for good (slice.py
                           * BRK_STEPS: "<class>~<frame>") */
@@ -1965,9 +1965,11 @@ static void st_qbox(Inst *in, StSt *g)
  * 375 / 175 once he is off; still without him: Wait).
  * mMoveConditionType comes whole in arg 3 (slice.py map_parts: its four bits in arg 7 do not hold it); a pack cut
  * before that has -1 there: the floater stays put.
+ * SimpleFloaterObj.cpp (ST_SFLOAT: IceMountainFloaterA) on MapPartsFloatingForce: RotateAccelType 1 the spring motion
+ * as above (still once its velocity is zero; SE_OJ_LV_ICE_M_FLOATER_UP all through MoveReturn), else the normal one
+ * from the start (no MoveFirst, no SW_A); its Ripple at its first place while it moves 0.3 or more a frame.
  * ponytail: _9C's second way (calcMapGroundUpper, when no map lies under it within 1000) is its own place; no
- * DLMakerProjmapEffectMtxSetter (the lava glow is baked), no LodCtrlPlanet; SimpleFloaterObj (IceMountainFloaterA,
- * MapPartsFloatingForce) is not ported */
+ * DLMakerProjmapEffectMtxSetter (the lava glow is baked), no LodCtrlPlanet */
 enum { FFN_MOVEFIRST = 1, FFN_MOVEOFF, FFN_MOVEON };
 enum { FFS_WAIT, FFS_MOVE, FFS_RETURN };
 typedef struct {
@@ -1990,6 +1992,7 @@ static int st_float_class(const char *n) /* its ST_ kind, 0 not a floater */
     for (u32 k = 0; k < sizeof lava / sizeof *lava; k++) if (!strcmp(n, lava[k])) return ST_FLOAT;
     if (!strcmp(n, "OceanPierFloaterA") || !strcmp(n, "OceanHexagonFloater")) return ST_WFLOAT;
     if (!strncmp(n, "PhantomShipBoxFloater", 21) && n[21] >= 'A' && n[21] <= 'C' && !n[22]) return ST_BFLOAT;
+    if (!strcmp(n, "IceMountainFloaterA")) return ST_SFLOAT; /* SimpleFloaterObj */
     return 0;
 }
 static void st_float_alloc(const Scene *s) /* from st_init (game_init) */
@@ -2042,7 +2045,7 @@ static void st_float_normal(Inst *in, StFloat *f, const Row *r, const char *name
     }
     f->pos = vsub(f->base, vmul(f->up, f->d40)); /* updateHostTrans */
 }
-static float st_float_spring(StFloat *f, const Row *r, int on) /* FloaterFloatingForceTypeSpring::movement: the host's speed along _28 */
+static float st_float_spring(StFloat *f, const Row *r, int on, int simple) /* FloaterFloatingForceTypeSpring::movement (simple: MapPartsFloatingForce's spring motion): the host's speed along _28 */
 {
     int sw = r->sw[SW_A] >= 0 && sw_on(r, SW_A), st = ++f->fstep, exe = f->fn;
     float maxd = r->arg[3] > 0 ? (float)r->arg[3] : 0.0f, speed = 0.0f;
@@ -2055,7 +2058,7 @@ static float st_float_spring(StFloat *f, const Row *r, int on) /* FloaterFloatin
         f->svel += (float)r->arg[4] * 0.001f * (f->srest - f->sval);
         f->svel *= (float)r->arg[5] * 0.001f;
     }
-    if (exe == FFS_RETURN && vlen(vsub(f->base, f->pos)) < 0.001f && fabsf(f->svel) < 0.1f) { /* back and still: Wait */
+    if (exe == FFS_RETURN && vlen(vsub(f->base, f->pos)) < 0.001f && (simple ? speed == 0.0f : fabsf(f->svel) < 0.1f)) { /* back and still: Wait */
         f->pos = f->base; f->fn = FFS_WAIT; f->fstep = -1;
         return 0.0f;
     }
@@ -2112,8 +2115,27 @@ static void st_float(Inst *in, int i, int kind)
             if (fabsf(depth - f->a8) < 1.0f) { f->n = 0; f->st = 0; }
         }
     } else {
-        float speed = st_float_spring(f, r, on);
-        f->pos = vadd(f->pos, vmul(f->up, speed)); /* updateHostVelocity: mVelocity */
+        int accel = r->arg[7] > 0 ? r->arg[7] >> 4 & 15 : 0; /* mRotateAccelType: 1 the spring motion */
+        float speed = 0.0f;
+        if (kind == ST_SFLOAT && accel != 1) { /* MapPartsFloatingForce::exeMove (its normal motion: from start on) */
+            float maxd = r->arg[3] > 0 ? (float)r->arg[3] : 0.0f;
+            if (on) { if (maxd <= f->d40) f->v44 = converge(f->v44, 0.0f, 0.05f); else f->v44 += (float)r->arg[4] * 0.0001f; }
+            else if (f->d40 <= 0.0f) f->v44 = converge(f->v44, 0.0f, 0.05f);
+            else f->v44 -= (float)r->arg[5] * 0.0001f;
+            f->v44 *= 0.98f;
+            f->v44 = f->v44 < -50.0f ? -50.0f : f->v44 > 50.0f ? 50.0f : f->v44;
+            f->d40 += f->v44;
+            f->d40 = f->d40 < 0.0f ? 0.0f : f->d40 > maxd ? maxd : f->d40;
+            f->pos = vsub(f->base, vmul(f->up, f->d40));
+            if (f->v44 > 0.1f) f->lv = se_level(SE_OJ_LV_ICE_M_FLOATER_DOWN, &in->m[12], f->lv);
+            else if (f->v44 < -0.1f) f->lv = se_level(SE_OJ_LV_ICE_M_FLOATER_UP, &in->m[12], f->lv);
+            speed = -f->v44; /* _50 */
+        } else {
+            if (kind == ST_SFLOAT && f->fn == FFS_RETURN) f->lv = se_level(SE_OJ_LV_ICE_M_FLOATER_UP, &in->m[12], f->lv); /* exeMoveReturn: 0.1 != _4C */
+            speed = st_float_spring(f, r, on, kind == ST_SFLOAT);
+        }
+        if (kind == ST_SFLOAT && fabsf(speed) >= 0.3f) st_float_fx(f, r, name, "Ripple", f); /* SimpleFloaterObj::exeWait: !isVelocityClose */
+        if (!(kind == ST_SFLOAT && accel != 1)) f->pos = vadd(f->pos, vmul(f->up, speed)); /* updateHostVelocity: mVelocity (the normal motion set its place) */
         draw_at = f->pos;
         if (kind == ST_WFLOAT) {
             int pier = !strcmp(name, "OceanPierFloaterA");
