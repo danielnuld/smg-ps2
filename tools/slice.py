@@ -218,7 +218,7 @@ def sky_sea(b, mat3, m):
 EXTRA = {"ConcreteBlock": ("ConcreteBlockBreak",),  # SimpleBreakableObj: its break ModelObj (game.c break_inst)
          "WaterfallCaveCover": ("WaterfallCaveCoverBreak",),  # MapObjActor::tryCreateBreakModel (statics.inc st_wcc)
          "Syati": ("PrizeRing",),  # Syati::initRings: its five PrizeRings (game.c syati.inc)
-         "TeresaRacer": ("PStar",), "PenguinRacerLeader": ("PStar",), "PenguinCoach": ("PStar",), "LuigiNPC": ("PStar",), "LuigiEvent": ("PStar",), "TrickRabbitFreeRun": ("PStar",),  # TakeOutStar's mStarModel (game.c tos_*); RabbitStateCaught's mPowerStarModel (trick.inc)
+         "TeresaRacer": ("PStar",), "PenguinRacerLeader": ("PStar",), "PenguinCoach": ("PStar",), "LuigiNPC": ("PStar",), "LuigiEvent": ("PStar",), "TrickRabbit": ("PStar",), "TrickRabbitFreeRun": ("PStar",),  # TakeOutStar's mStarModel (game.c tos_*); RabbitStateCaught's mPowerStarModel (trick.inc)
          "WatchTowerRotateStep": ("WatchTowerRotateStepLift",),  # its four PartsModels (statics.inc st_wtower)
          "UFOKinokoUnderConstruction": ("UFOKinokoLandingAstro",), "LargeChain": ("LargeChainFixPoint",),  # LargeChain: its fixed points
          "TicoGalaxy": ("TicoFatGoodsStarPiece", "Tico~5"),  # TicoFat's goods; its TicoStarRing (Tico::initBase(5): ColorChange 5)  # its init: that model once isUFOKinokoUnderConstruction is over (statics.inc)
@@ -242,6 +242,8 @@ EXTRA = {"ConcreteBlock": ("ConcreteBlockBreak",),  # SimpleBreakableObj: its br
          "WoodBox": ("#WoodBox", "WoodBoxBreak"), "KoopaStatue": ("#Break", "KoopaStatueBreak"), "CrystalCageS": ("#CrystalCageS", "CrystalCageSBreak"),
          "CrystalCageM": ("#CrystalCageM", "CrystalCageSBreak"), "CrystalCageL": ("#CrystalCageL:1", "#CrystalCageL", "CrystalCageLBreak"), "RingBeamer": ("JumpBeamerBeam",), "BallBeamer": ("JumpBeamerBeam",), "SubmarineVolcanoBigColumn": ("SubmarineVolcanoBigColumnBreak",), "Mogu": ("MoguStone", "MoguHole"), "Mogucchi": ("MogucchiHole", "MogucchiHillA", "MogucchiHillB", "MogucchiHillC"), "WaterPressure": ("WaterBullet",), "FirePressure": ("FireBullet",), "EyeBeamer": ("EyeBeamerBeam",), "BeamGoRoundPlanet": ("BeamGoRoundBeam",), "FishGroupA": ("FishA",), "FishGroupB": ("FishB",), "FishGroupC": ("FishC",), "FishGroupD": ("FishD",), "FishGroupE": ("FishE",), "FishGroupF": ("FishF",), "SeaGullGroup": ("SeaGull",), "SunakazeKun": ("SunakazeKunTrap",), "ChooChooTrain": ("ChooChooTrainBody",), "BigFan": ("BigFanWind",), "BigFanNoLeg": ("BigFanWind",), "BombHeiLauncher": ("BombHei",), "BombBird": ("BombBirdBomb",), "WaterBazooka": ("WaterBazookaCapsule", "MogucchiShooter", "WaterBazookaBreak", "WaterBullet"), "ElectricBazooka": ("WaterBazookaCapsule", "MogucchiShooter", "ElectricBazookaBreak", "ElectricBullet"), "BombLauncher": ("BombHei",), "JumpBeamer": ("JumpBeamerBeam", "JumpBeamerHead"), "JumpGuarder": ("JumpGuarderHead", "BegomanBaby")}
 # MorphItemObjNeo::makeArchiveList: Mario's (and Luigi's: the packs serve both) model of the power-up, then the container by arg3 (0 ItemBubble, -1 CrystalBox + CrystalBoxBreak; none for BenefitItemInvincible).; IceMarioHandL / R, InvincibleMarioHandL / R (initHand: game.c hands)
+EXTRA["RainCloud"] = ("RainCloudCylinder",)  # RainCloud::makeArchiveList: its rain's cylinder (game.c rc_draw); RainCloudLow / RainCloudVolume not used
+SKINNED_OBJ += ("RainCloud",)  # RainCloud.cpp: Wait / Appear / Disappear / OnBee, the Shadow joint, its Splash / Line10 / Line20 effects (game.c update_rainclouds)
 MORPH_ARCS = {"MorphItemNeoHopper": ("HopperMario", "HopperLuigi"), "MorphItemNeoBee": ("BeeMarioWing", "BeeMario", "BeeLuigi"),
               "MorphItemNeoTeresa": ("TeresaMario", "TeresaLuigi"), "MorphItemNeoIce": ("IceMario", "IceLuigi", "IceMarioHandL", "IceMarioHandR"),
               "MorphItemNeoFire": (), "MorphItemNeoFoo": (), "BenefitItemInvincible": ("InvincibleMario", "InvincibleLuigi", "InvincibleMarioHandL", "InvincibleMarioHandR")}
@@ -263,8 +265,6 @@ def morph_arcs(o):
         a = [s32(v) for v in o["args"]]
         return () if o["name"] == "WoodBox" and a[4] in (0, -1) or o["name"] == "KoopaStatue" and a[3] != 1 else (KINOKO[o["name"]],)
     if o["name"] == "Kinopio" and s32(o["args"][2]) == 8:  # mIsSpawnPowerStarMode: its TakeOutStar's star model (game.c kinopio_nerve)
-        return ("PStar",)
-    if o["name"] == "TrickRabbit" and RGPH_ON:  # RabbitStateCaught's mPowerStarModel
         return ("PStar",)
     if o["name"] not in MORPH_ARCS:
         return ()
@@ -344,6 +344,7 @@ LOGIC = ("SoundEmitterCube", "SoundEmitterSphere", "QuakeEffectAreaCube", "Playe
          "ExtraWallCheckArea", "ExtraWallCheckCylinder",  # Mario's wall shade (game.c wall_shade_calc)
          "HazeCube",  # HeatHazeDirector (game.c haze_update)
          "CollisionArea",  # (game.c update_collision_areas)
+         "ViewGroupCtrlCube",  # ViewGroupCtrl (game.c vg_update)
          # Mario's areas (MR::getAreaObj: game.c area_obj / foo_sphere)
          "CelestrialSphere", "TowerModeCylinder", "NonSleepCube", "EffectCylinder", "SmokeEffectColorAreaCube",
          "MessageAreaCube", "MessageAreaCylinder", "PullBackCylinder", "PlaneModeCube", "PlaneCircularModeCube",
@@ -394,6 +395,7 @@ def rows(b):
     mid = int_or(b, "MessageId", n, -1)
     demo, cast = int_or(b, "DemoGroupId", n, -1), int_or(b, "CastId", n, -1)  # DemoDirector::registerDemoCast
     oid = int_or(b, "Obj_ID", n, -1)  # JMapLinkInfo::setLinkInfo: the objinfo l_id it follows (BaseMatrixFollower)
+    vgroup = int_or(b, "ViewGroupId", n, -1)  # MR::getJMapInfoViewGroupID (ViewGroupCtrl; a SHORT: 0xFFFF none)
     out = []
     for i in range(n):
         out.append(dict(name=names[i], l_id=lid[i], path=path[i], camset=camset[i], pos=[fl[f][i] for f in ROW_FIELDS[:3]],
@@ -403,6 +405,7 @@ def rows(b):
                         priority=int_or(b, "Priority", n, 0)[i], inverse=int_or(b, "Inverse", n, 0)[i],
                         gtype=(B.bcsv_column(b, "Gravity_type") or ["Normal"] * n)[i],
                         sw=[sw[f][i] for f in SW_FIELDS], group=group[i], mid=mid[i], demo=demo[i], cast=cast[i], oid=oid[i],
+                        vgroup=vgroup[i] if 0 <= vgroup[i] < 0x4000 else -1,
                         cls=names[i]))
     return out
 
@@ -474,7 +477,7 @@ def scene(fs, galaxy, scenario):
         for layer in act[s]:
             for f in ("objinfo", "planetobjinfo", "areaobjinfo"):
                 for r in rows(files.get(f"{root}/jmp/placement/{layer}/{f}", b"")):
-                    objs.append(dict(r, zone=zid))
+                    objs.append(dict(r, zone=zid, planet=f == "planetobjinfo"))
             for r in rows(files.get(f"{root}/jmp/childobj/{layer}/childobjinfo", b"")):
                 objs.append(dict(r, zone=zid))
             mp = files.get(f"{root}/jmp/mapparts/{layer}/mappartsinfo", b"")
@@ -1920,18 +1923,11 @@ def path_entry(p):
             b"".join(struct.pack("<ii", a1[i], a2[i]) for i in range(n)))
 
 
-# TrickRabbit's rail graph, star declarer and PStar only when SMG_RGPH is set in the environment: its nerves past
-# WaitStart (game.c trick.inc trm_update) were not run in PCSX2 yet; without RGPH the engine leaves it as it was
-RGPH_ON = bool(__import__("os").environ.get("SMG_RGPH"))
-
-
 def rgph_chunk(keep, paths):
     """'RGPH': TrickRabbit's rail graph (MR::createRailGraphFromJMap, RailGraphUtil.cpp addRailToGraph): its rail and
     the rails linked from it by Path_ID; a point within 100 of a node is that node (the nearest), consecutive points
     are joined by an edge with the earlier point's args, a closed rail's last to its first. u32 n, n x {s32 row,
     u32 nnodes, u32 nedges, f32 nodes[nnodes][3], nedges x {u16 a, u16 b, s16 arg0, arg1, arg2, arg3, arg7, pad}}."""
-    if not RGPH_ON:
-        return b""
     out = []
     s16 = lambda v: max(-0x8000, min(0x7FFF, s32(v) if v >= 0 else v))
     for row, o in enumerate(keep):
@@ -2142,7 +2138,7 @@ def declare_stars(keep, scenario, appear, jp):
             k = None if 1 <= s32(r["args"][0]) <= 3 else -1
         elif r["name"] == "Kinopio":  # Kinopio::init: declarePowerStar in its power star mode (mBehavior 8)
             k = None if s32(r["args"][2]) == 8 else -1
-        elif r["name"] == "TrickRabbitFreeRun" or (r["name"] == "TrickRabbit" and RGPH_ON):  # their init: declarePowerStar
+        elif r["name"] in ("TrickRabbit", "TrickRabbitFreeRun"):  # their init: declarePowerStar
             k = None
         elif r["name"] in ("LuigiNPC", "LuigiEvent"):  # LuigiNPC::isDeclarePowerStarType: Afraid, Event, OnTree, Arrested
             t = s32(r["args"][0]) + (2 if r["name"] == "LuigiEvent" else 0)
@@ -2258,6 +2254,9 @@ def placement(fs, galaxy, scenario):
     cams, cam_index, cam_types = camera.cameras(bcams, float_column, int_or, jp2en, rails)
     cset = [(i, r["camset"]) for i, r in enumerate(keep) if r.get("camset", -1) >= 0]  # ActorCameraInfo: CameraSetId
     out.append(chunk(b"CSET", struct.pack("<I", len(cset)) + b"".join(struct.pack("<Hh", i, v) for i, v in cset)))
+    # VGRP: (row, ViewGroupId; bit 14: a planetobjinfo row, PlanetMap's LodCtrlPlanet) for game.c vg_init (ViewGroupCtrl)
+    vgrp = [(i, r["vgroup"] | (0x4000 if r.get("planet") else 0)) for i, r in enumerate(keep) if r.get("vgroup", -1) >= 0]
+    out.append(chunk(b"VGRP", struct.pack("<I", len(vgrp)) + b"".join(struct.pack("<Hh", i, v) for i, v in vgrp)))
     out.append(demo_chunk(fsp, demos, gpos, keep, jp2en, se_table()))
     out.append(canm_chunk(Path(fs), set(types), galaxy, B.placed_scenario(sd, galaxy, scenario)))  # after demo_chunk: DEMO_CANM; StartScenario<getCurrentScenarioNo>.canm
     # GHST: GhostPlayer's packets (GhostPlayer::init: <stage>.gst / <stage>Luigi.gst of GhostData<stage>.arc, as on
