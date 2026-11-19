@@ -11,6 +11,16 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- EarthenPipe's hidden partner and water stream (feat/594-pipe, #594, 2026-11-18): the hidden pipe (arg2 1) was shown
+  at once and hidden at once when the first pipe was armed again. Now as Petari: WaitToShowUp 20, ShowUp 30
+  (pipe_trans: calcTrans eased in from its placement to its top, LavaAppear kept at its placement,
+  SE_OJ_LV_PIPE_APPEAR_MAGMA), and from Mario's jump out (the partner's tryHideDown) WaitToHideDown 40, HideDown 15
+  (eased back, LavaVanish, SE_OJ_LV_PIPE_VANISH_MAGMA), then hidden; it takes nobody meanwhile. EarthenPipeInWater:
+  SE_OJ_LV_PIPE_IN_WATER while its stream runs (_19C: from init, with its SW_A where it has one). A pipe whose SW_A
+  is off takes nobody (exeWait: invalidateHitSensors). tools/jpa.py NAMED EarthenPipe (LavaAppear / LavaVanish).
+  ponytail: the water pipes' stream model and BinderWater sensors; the rising pipe collides at its top from the
+  first frame. **Release: slice_all.py resident.bin + resident_luigi.bin + every EarthenPipe galaxy** (jpa.py NAMED
+  EarthenPipe) **and sound.py --pack** for them (the two magma / water level SEs).
 - OceanFloaterLandParts (feat/509-ocean-floater, #509, 2026-11-18): OceanFloaterTypeU was a still model. statics.inc
   st_floater_u after OceanFloaterLandParts.cpp: Wait on its rail, Move from its demo's action (the rail mover runs
   only then: st_floater_rail in update_railers), SE_OJ_HUGE_FLOATER_MOVE_ST / LV / ED and RiseBubble, Done at the
