@@ -28,8 +28,9 @@ typedef struct {
     V3 fix[10];
     u8 col[10 * 10]; /* mColors of the points (the fix points' stay white) */
 } StFlag;
-static StFlag st_flags[ST_FLAG_MAX];
-static StFlagPt st_flag_pts[ST_FLAG_PTS];
+static StFlag *st_flags;      /* [st_flag_cap] */
+static StFlagPt *st_flag_pts; /* [st_flag_pts_cap]: both from the arena (st_flag_alloc) */
+static int st_flag_cap, st_flag_pts_cap;
 static int st_nflags;
 static const Scene *st_flag_sc;
 static int st_flag_class(const char *n)
@@ -38,6 +39,17 @@ static int st_flag_class(const char *n)
                                     "FlagPeachCastleB", "FlagPeachCastleC", "FlagTamakoro"};
     for (u32 i = 0; i < sizeof k / sizeof *k; i++) if (!strcmp(n, k[i])) return 1;
     return 0;
+}
+/* from game_init (st_flag_init waits for the first update: the zones' models; an allocation there a zone swap would
+ * release): a StFlag a placed Flag, at most ST_FLAG_MAX, and their points, 10 x 10 each at most, ST_FLAG_PTS in all */
+static void st_flag_alloc(void)
+{
+    int n = 0;
+    for (u32 i = 0; i < sc->nobjs; i++) n += st_flag_class(sc->types + 32 * sc->objs[i].type);
+    st_flag_cap = n < ST_FLAG_MAX ? n : ST_FLAG_MAX;
+    st_flag_pts_cap = n * 100 < ST_FLAG_PTS ? n * 100 : ST_FLAG_PTS;
+    st_flags = n ? mem_alloc(MEM_OBJECTS, (u32)st_flag_cap * sizeof *st_flags) : NULL;
+    st_flag_pts = n ? mem_alloc(MEM_OBJECTS, (u32)st_flag_pts_cap * sizeof *st_flag_pts) : NULL;
 }
 static void st_flag_init(void) /* Flag::init + appear, every placed Flag of the scene */
 {
@@ -48,7 +60,7 @@ static void st_flag_init(void) /* Flag::init + appear, every placed Flag of the 
         const char *n = sc->types + 32 * r->type;
         if (!st_flag_class(n)) continue;
         const Model *md = scene_model(sc, n);
-        if (!md || !md->vu_ngroups || st_nflags == ST_FLAG_MAX) continue;
+        if (!md || !md->vu_ngroups || st_nflags == st_flag_cap) continue;
         StFlag *f = &st_flags[st_nflags];
         memset(f, 0, sizeof *f);
         f->row = (int)i; f->tex = md->vu[0].tex;
@@ -66,7 +78,7 @@ static void st_flag_init(void) /* Flag::init + appear, every placed Flag of the 
         } else if (!strcmp(n, "FlagPeachCastleB") || !strcmp(n, "FlagPeachCastleC")) {
             f->nv = 5; f->nu = 5; f->iu = 500.0f / f->nu; f->iv = 400.0f / (f->nv - 1);
         } else if (!strcmp(n, "FlagRaceA")) f->nosnd = 1;
-        if (used + f->nu * f->nv > ST_FLAG_PTS) { printf("flag %u: no room for its points%c", i, 10); continue; } /* ponytail: ST_FLAG_PTS a scene */
+        if (used + f->nu * f->nv > st_flag_pts_cap) { printf("flag %u: no room for its points%c", i, 10); continue; } /* ponytail: ST_FLAG_PTS a scene */
         f->p = &st_flag_pts[used]; used += f->nu * f->nv;
         float m[16], one[3] = {1, 1, 1};
         mat_translate_rot_scale(m, r->pos, r->rot, one);
@@ -232,7 +244,7 @@ static void st_flag_test(void)
 }
 #endif
 /* ---- MapObj classes by placed type: their per-row state (StSt, kept across rebinds) ---- */
-enum { ST_NONE = 1, ST_MARBLE, ST_HDSTEP, ST_TURTLE, ST_SWFLOAT, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_WTOWER, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE, ST_FLOATERU }; enum { FU_WAIT = 1, FU_MOVE, FU_DONE }; /* st_floater nerves */
+enum { ST_NONE = 1, ST_MARBLE, ST_HDSTEP, ST_TURTLE, ST_SWFLOAT, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_WTOWER, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE, ST_FLOATERU, ST_QRARROW }; enum { FU_WAIT = 1, FU_MOVE, FU_DONE }; /* st_floater nerves */
 /* Placed classes whose Petari behaviour is the model drawn with its animations and collision (the engine's generic
  * instance does that): LavaGalaxyParts.cpp (LavaShellTowerStep, LavaStepA / B / C: startBtk / Brk / Bpk / Btp of its
  * name, collision, clipping; ponytail: the steps' DLMakerProjmapEffectMtxSetter lava glow is baked at slice time and
@@ -270,6 +282,7 @@ static int st_kind_name(const char *n)
     if (!strcmp(n, "CannonFortressBreakStepA") || !strncmp(n, "CannonFortressRotateBreakStep", 29)) return ST_CFSTEP; /* CannonFortressBreakStep */
     if (!strcmp(n, "ItemAppearStoneSpinDriver")) return ST_IASTONE; /* ItemAppearStone */
     if (!strcmp(n, "OceanFloaterTypeU")) return ST_FLOATERU; /* OceanFloaterLandParts */
+    if (!strcmp(n, "QuarterRollGravityRoomArrow")) return ST_QRARROW;
     if (!strcmp(n, "SurprisedGalaxy") || (!strncmp(n, "Surp", 4) && strlen(n) > 10 && !strcmp(n + strlen(n) - 6, "Galaxy"))) return ST_SURP;
     for (u32 k = 0; k < sizeof st_still / sizeof *st_still; k++) if (!strcmp(n, st_still[k])) return ST_STILL;
     return ST_NONE;
@@ -878,6 +891,21 @@ static void st_lavaball(Inst *in, StSt *g)
     mat_translate_rot_scale(in->m, r->pos, r->rot, s);
     in->s = s[0];
 }
+/* QuarterRollGravityRoomArrow.cpp after Petari: Wait (no clip: its bind pose); its SW_A coming on RollOnA (the
+ * RollGravityA clip, kept at its end), going off RollOffA (RollGravityAReverse, then Wait); its SW_B the same with
+ * RollOnB / RollOffB (RollGravityB / RollGravityBReverse; RollOffB is not left). n: 0 Wait, 1 RollOnA, 2 RollOffA,
+ * 3 RollOnB, 4 RollOffB; on: the switches as last seen (1 SW_A, 2 SW_B) */
+static void st_qrarrow(Inst *in, StSt *g)
+{
+    static const char *const clip[5] = {"", "rollgravitya", "rollgravityareverse", "rollgravityb", "rollgravitybreverse"};
+    const Row *r = &sc->objs[in->row];
+    int a = r->sw[SW_A] >= 0 && sw_on(r, SW_A), b = r->sw[SW_B] >= 0 && sw_on(r, SW_B);
+    if (a != (g->on & 1)) { g->n = a ? 1 : 2; g->st = 0; }      /* listenStageSwitchOnOffA: onRollA / offRollA */
+    if (b != (g->on >> 1 & 1)) { g->n = b ? 3 : 4; g->st = 0; } /* listenStageSwitchOnOffB */
+    g->on = a | b << 1;
+    if (g->n && g->st == 0) { obj_play(in, clip[g->n], 0, 0); printf("gravity room arrow %d: %s%c", in->row, clip[g->n], 10); }
+    else if (g->n == 2 && in->anim && in->anim->done) g->n = 0; /* isBckStopped */
+}
 /* TimerMoveWall.cpp after Petari (TrialBubbleTimerMoveWallA): Wait; its SW_B coming on (listenStageSwitchOnB) ->
  * MoveFront: arg0 frames (300) at arg1 / arg0 (1000 / 300) a frame along its front (TRIBBL_T_MVWALL_ST, LV_..MV) ->
  * MoveBack the same way back -> TRIBBL_T_MVWALL_ED, Wait. n: 0 Wait, 1 front, 2 back; off its place's offset */
@@ -1085,6 +1113,11 @@ static int st_chain(Inst *in, StSt *g) /* 1: rebound */
     m[13] += 200.0f * step;
     fx_named("LargeChain", "Break", m, NULL, g); /* LargeChainParts::kill */
     se_start(SE_OJ_LARGE_CHAIN_BREAK, &m[12]);
+    if (step == 0 || step == n - 1) { /* exeBreak: the lower fixed point goes with part 0, else the upper one (200 over the last part) with the last: each its own kill */
+        if (step) m[13] += 200.0f;
+        fx_named("LargeChain", "Break", m, NULL, NULL);
+        se_start(SE_OJ_LARGE_CHAIN_BREAK, &m[12]);
+    }
     g->on = step + 1;
     printf("large chain %d: part %d broken%c", in->row, step, 10);
     if (step >= n - 1) { g->n = 2; row_kill(in->row); }
@@ -1379,6 +1412,7 @@ static void st_objs_update(void)
         case ST_CFSTEP: if (st_cfstep(in, g, i)) return; break;
         case ST_IASTONE: if (st_iastone(in, g)) return; break;
         case ST_FLOATERU: st_floater_u(in, g); break;
+        case ST_QRARROW: st_qrarrow(in, g); break;
         case ST_TEXSW: { /* SimpleMapObj::init: TexChange (BTK) at arg1 (setupInitInfoTextureChangeArg1; -1 none),
                           * SimpleTextureSwitchChangeObj::changeTexture on its SW_A's rise: frame 1 for good (slice.py
                           * BRK_STEPS: "<class>~<frame>") */
