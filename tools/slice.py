@@ -350,7 +350,7 @@ TEX_ONLY = ("Flag", "FlagKoopaA", "FlagKoopaB", "FlagRaceA", "FlagKoopaCastle", 
             "TrampleStar",  # TrampleStar::init: TrampleStar.arc's TrampleStar.bti (game.c trample_star.inc)
             "SwingRope")  # SwingRopeGroup: SwingRope.arc's SwingRope.bti (game.c swing_rope.inc)
 DUMMY_TEX = ("MapDummy",)  # AstroMapBoard: GalaxyMapController::capture's picture (TEXT pad0 1: render_target_capture)
-LOGIC = ("SoundEmitter", "SoundEmitterCube", "SoundEmitterSphere", "QuakeEffectAreaCube", "PlayerSeCube", "PlayerSeSphere", "PlayerSeCylinder", "MercatorCube", "MirrorAreaCube", "SnowFloor", "SnowplowSwitch", "FallOutFieldDraw", "ClipFieldSwitch", "RaceRail", "NPCSupportRail", "BallRail", "SphereRailDash", "FluffWind", "Fountain", "SpringJetWater", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "TimerSwitch", "SkeletalFishBossRail", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "KoopaSwitchKeeper", "KoopaPowerUpSwitch", "KoopaViewSwitchKeeper", "KoopaRestarterVs3", "BossKameckMoveRail", "TripodBossBaseJointPosition", "TripodBossStepPoint", "TripodBossStepStartArea", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
+LOGIC = ("SoundEmitterCube", "SoundEmitterSphere", "QuakeEffectAreaCube", "PlayerSeCube", "PlayerSeSphere", "PlayerSeCylinder", "MercatorCube", "MirrorAreaCube", "SnowFloor", "SnowplowSwitch", "FallOutFieldDraw", "ClipFieldSwitch", "RaceRail", "NPCSupportRail", "BallRail", "SphereRailDash", "FluffWind", "Fountain", "SpringJetWater", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "TimerSwitch", "SkeletalFishBossRail", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "KoopaSwitchKeeper", "KoopaPowerUpSwitch", "KoopaViewSwitchKeeper", "KoopaRestarterVs3", "BossKameckMoveRail", "TripodBossBaseJointPosition", "TripodBossStepPoint", "TripodBossStepStartArea", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "ForbidTriangleJumpCube", "HeavySteeringCube", "DashChargeCylinder", "ForbidJumpCube",  # Mario::updateCubeCode
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "CameraRepulsiveCylinder", "CameraRepulsiveSphere", "DeathCube", "DeathSphere",
          "DeathCylinder", "AreaMoveSphere", "RestartCube", "StarPieceSpot", "WaterCube", "WaterSphere", "WaterCylinder",
@@ -366,6 +366,7 @@ LOGIC = ("SoundEmitter", "SoundEmitterCube", "SoundEmitterSphere", "QuakeEffectA
          "RasterScrollCube", "DarkMatterCube", "ForbidWaterSearchCube",  # doDarkDamage; MarioSwim::checkUnderWaterFull (#575)
          "PrologueDirector", "PurpleCoinStarter", "ExterminationKuriboKeySwitch", "AstroOverlookObj", "AstroOverlookAreaCylinder", "CoinBox", "GhostPlayer",
          "BigBubbleMoveLimitterPlane", "BigBubbleMoveLimitterCylinder", "DodoryuClosedCylinder")  # BigBubbleMoveLimitter (game.c bgb_limit_pos)  # areas (areaobjinfo) travel as OBJS rows too
+LOGIC += ("SoundEmitter",)  # SoundEmitter.cpp: the soundinfo rows (game.c update_sound_emitters)
 
 
 def col(b, field, n, default=0):
