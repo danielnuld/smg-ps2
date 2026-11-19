@@ -104,10 +104,14 @@ No interim ISOs: Daniel tests at the end.
   Not kept (by hand): slope-ahead data (_4DC/_4D8/_380), checkStrikePointToMap, Teresa's thick ball, hang camera,
   animated parts (leaves / Move joint) always count as moving. Pending with it: tryDrop's wall branches. SlipUp
   effect added to jpa.py (repack).
-- [ ] Mario statuses not ported (inventory 2026-10-25, checked against game.c 2026-11-18): doCubeWarp (WarpCube
-  areas), MarioStick, bodyClap (the coin pull's catches in a bind), PlayerEvent FireDown and drawPreWipe (drawn: for
-  an afternoon with the emulator), MarioSearchLight; MarioSpin's tornado tilt / wall (the tornado jump's state is
-  in: feat/mario-moves, merged); the spin hip drop's homing (MatrixControl's table). Nothing to port as decompiled:
+- [ ] Mario statuses not ported (inventory 2026-10-25, checked against game.c 2026-11-18): MarioStick;
+  MarioSearchLight (the jet shell's light: SearchLightCone is not in resident.bin, its draw is a light volume through
+  destination alpha, its sensor is for TeresaWater and the SearchTurtle group); the spin hip drop's homing on
+  MarioActor::_4A8 (the sensor under him: there is no sensor list). Done 2026-11-18 (#673, #674, #675): MarioStep
+  seen working, EventAbyss / EventFireDown with the NonStop game over and drawPreWipe, MarioSpin's tornado tilt, the
+  spin hip drop's homing on the map parts of MatrixControl's table, the dive's sliding task. Nothing to port:
+  doCubeWarp (no scenario places a WarpCube), bodyClap (collect() takes the pieces within 120 in a bind too), the
+  spin's wall (reflectWallOnSpinning was in). Nothing to port as decompiled:
   MarioBump (checkAllWall's _4DC needs diffAngleAbs, radians, over 30) and MarioFrontStep (doFrontStep wants his
   ground under 30 degrees and his gravity under 0.25 on -_374, the ground's normal when the gravity was set: only a
   frame in which the ground's normal jumps).

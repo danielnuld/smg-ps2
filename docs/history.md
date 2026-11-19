@@ -11,6 +11,27 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Mario's miss events (feat/674-miss-events, #674, 2026-11-18): EventAbyss and EventFireDown have their own timelines
+  now (PlayerEventAbyss.cpp / PlayerEventFireDown.cpp: the MissLayout at init, the HUD out at 25 / 100, the wipe once
+  the layout's Appear is over and 15 frames in, a life at 120), EventDown keeps its own. MarioActorNrvGameOverNonStop
+  (forceGameOverNonStop: the last life at a fire dance's or a needle's start, on a fire floor in the dance, frozen or
+  paralysed off the ground) no longer holds Mario: the dance goes on under the layout and the wipe, and joins the fire
+  run whatever his life (connectToFireRun). MarioActorNrvGameOverAbyss: 奈落ダウン and he drifts on, his last move x
+  0.99 + the camera's z x 0.35 a frame. MarioActor::drawPreWipe (startPlayerDownWipe: EventDown / FireDown / RaceDown,
+  not sinking, not frozen): a black box over the world, alpha _A6C x 1.75 (224 past 128) of 255, and Mario's model
+  once more over it (game_draw: his draw block run again after the effects). menu_miss_anim_end (isMissAnimEnd).
+  Test: a plain build XF=-DDOWN_TEST=<k> (1 his last life at a needle's prick, 2 a plain miss, 3 the Abyss nerve, 0 one
+  of them by the lives left on each try of the stage); in a route build (XF="-DMISS_EVENTS=1 -DDOWN_TEST=0") off the
+  route's stage. PCSX2 (a plain build, DOWN_TEST 0, EggStarGalaxy 1, three
+  tries): EventDown: the layout at 45, the wipe at 100, a life at 120, the stage again at 220; the world darkens round
+  him (pictures: Mario bright behind the TooBad text). NonStop (doNeedleWithInitialDamage with one life): `mario down
+  (non stop)`, the layout at once, he is thrown 660 up by the dance while the world darkens, the wipe at 61 (the
+  layout's Appear over), a life at 120, the stage again at 182. Abyss: the layout at once, no darkening, the wipe at
+  61, he drifts into the screen (900 in 100 frames). A black hole's miss ran the same timeline.
+  ponytail: the death cameras (昇天カメラ / 奈落カメラ) are not started, the game camera follows him through the
+  Abyss drift; the blended instances are drawn after the box (not darkened); the freeze model and the water column step
+  twice in the pass; setSoundVolumeSetting, startDownWipe's _390 test; doLanding's forced jump with no life left
+  (MarioJump.cpp:2294) is not a NonStop game over.
 - Mario leftovers (feat/675-mario-leftovers, #675, 2026-11-18), from the plan's "Mario statuses not ported":
   Mario::calcTornadoTilt (MarioSpin.cpp; update_tornado_mario: _54C, TornadoMario's up, eased mTornadoTiltSpeed to his
   head leaning mTornadoTiltAngle to the pad's direction with the stick on in a tornado, back at mTornadoTiltSpeed /
