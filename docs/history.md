@@ -11,6 +11,17 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Mario's ponytail marks, batch 1 (feat/742-mario-marks-1, #742, 2026-11-19): damageFloorCheck / damageWallCheck as
+  MarioDamage.cpp:243 / 301 (m_damage_floor / m_damage_wall): the ground's fire and needle codes only when
+  checkCurrentFloorCodeSevere holds, DamageNormal off the ground's normal (it was his up), PullBack (16) doRecovery,
+  the Death code as forceKill(3); the wall check every frame (it ran only on the ground, on the body sweep's wall)
+  on checkAllWall's walls, the Rebound wall code (6) first: doFlipJump off its normal, and with mDrawStates._10 on:
+  MarioFireDance::start / impact go off the wall only then (they did whenever a wall was touched). tryDrop
+  (MarioJump.cpp:994): the carried move (_184) across the gravity goes into the jump (a tenth when it points at his
+  ground place), _428 15 after the slope slides' clips, the Bee's timers, ショート着地 keeps the slide; _340 is read
+  nowhere. doFlipJump sets the jump kind 3. PCSX2: a plain build XF=-DSINK_TEST=10 HellProminenceGalaxy 1 (put on a
+  DamageFire floor): the dance takes a life at each landing on it, at the last `mario down (non stop)` and he dances
+  on under the layout and the wipe, then the stage again. The route's star at f 4281.
 - Mario's death cameras and the forced jump floors (feat/726-death-cameras, #726, 2026-11-19): the stage cameras
   carry neither 昇天カメラ nor 奈落カメラ (only e:引き戻し is in the bcams): MarioActor declares them in code
   (MarioActor.cpp:388: declareGlobalEventCameraDead(0.35, 0x78, 0x3C), declareGlobalEventCameraAbyss). camera.c:
