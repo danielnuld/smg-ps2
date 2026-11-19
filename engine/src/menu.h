@@ -47,6 +47,19 @@ void menu_miss_start(void);          /* MissLayout ("TooBad") */
 int menu_miss_anim_end(void);        /* its Appear over (or not started) */
 void menu_wipe_koopa(int frames);    /* WipeKoopa: closes over frames (<= 0: 90) */
 int menu_wipe_koopa_closed(void);
+int menu_comet_retry_appear(int left); /* CometRetryButton::appear (0: no layout) */
+int menu_comet_retry_result(void);     /* 0 still up, 1 the stage again, 2 back to the dome */
+int menu_test_point_retry(int yes);
+void menu_comet_filter(int id);        /* GalaxyCometScreenFilter: the comet's id, -1 off */
+void menu_comet_filter_draw(void);
+void menu_meter_force_appear(void);    /* MarioMeter::requestForceAppearHPMeter */
+void menu_bomb_timer_appear(void);     /* BombTimerLayout */
+void menu_bomb_timer_limit(int frames);
+void menu_bomb_timer_suspend(int on);
+void menu_bomb_timer_kill(void);
+int menu_bomb_timer_rest(void);
+int menu_bomb_timer_up(void);
+void menu_bomb_timer_update(void);
 void menu_miss_left_start(int left); /* PlayerMissLeft::appear (left: the lives now) */
 int menu_miss_left_dead(void);
 void menu_wipe_gameover(void);       /* WipeGameOver ("GameOver") */

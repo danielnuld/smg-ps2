@@ -26,16 +26,16 @@ Started 2026-11-18. Rows are in the order seen most. The fixes under #640, #641,
 | StarPieceCounter | game.c spc_* | ok (its modes, cHideFrameMin 3 / 20, the base offsets -94 / -120, the fast count down). Left out: the light effects; the Tico eat mode's guidance frame check (no pointer frame on the PS2) |
 | PurpleCoinCounter | game.c pc_* | ok. Left out: PurpleCoinCounterLight effect |
 | MarioMeter / MeterLayout | menu.c hm_* | ok (its twelve nerves; sAppearTime 120, sWaitStartTime 240, sBreakDelayTime 40 with SE_SY_LIFE_PLATE_DEC, sPowerUpWaitTime 60, sRecoveryCountInterval 5, sMoveToBasePositionTime 25, the alpha 0.3 .. 1.2, Danger's rates 4 / 2). Left out: the Break / Break123 effects |
-| SuddenDeathMeter | - | issue #662 |
+| SuddenDeathMeter | menu.c hm_* (hm.sudden) | fixed #662: MarioMeter's other meter with a life of 1; MarioActor's life of 1 under the Dark comet and requestForceAppearHPMeter at the welcome came with it |
 | MarioSubMeter / SubMeterLayout | menu.c subm_* | ok on its states (Appear, Wait, Danger under 0x40 with its rate, End after 60 frames full at rest); fixed #707: placed from getPlayerPos (it was Mario's centre) |
 | TimeLimitLayout | menu.c tl_* | ok (sTimingTable, the scale 8 frames / 0.5, the count sounds at 600 / 360 / 120, TimeLimit at 600 left). Its Fadeout nerve is left out: the port takes DisplayModeOnNormal as always on (the comet timer's) |
-| NoteCounter | game.c (its count only) | issue #662 |
-| BombTimerLayout | - | issue #662 |
+| NoteCounter | game.c (its count and sounds) | ok: it has no layout (no initLayoutManager in RMGE01): nothing to draw |
+| BombTimerLayout | menu.c bt_* | fixed #662 (the layout and its nerves). Its hosts are not ported: issue #732 |
 | FullnessMeter | game.c (StarPieceTargetMeter / Counter) | ported, not re-read |
 | ScenarioTitle | game.c stitle | ok on its nerves (Appear, Wait, End); the text is drawn by game.c and Appear / End are its pane's 30-frame fade, not played from the brlan: not checked against the animation's curves |
 | InformationMessage / InformationObserver | game.c info_label / info_text (quads, no Appear / End), menu.c (the result's and the staff roll's) | ported, not re-read |
 | CinemaFrame | menu.c ci_* | ported, not re-read |
-| GalaxyCometScreenFilter | - | issue #661 |
+| GalaxyCometScreenFilter | menu.c csf_* | fixed #661 |
 | MarioLauncherLayout (SimpleLayout "Sight") | menu.c sgt_* | fixed #659: Sight.arc was in no pack; it is menus.bin's now (4 KB: no scene repack) |
 | StarPointerLayout / Blur / Controller / Director | menu.c sp_* | ported, not re-read (the Wii pointer as the right stick's cursor) |
 | StarPointerGuidance | menu.c spg_* | ported, not re-read |
@@ -67,7 +67,7 @@ Started 2026-11-18. Rows are in the order seen most. The fixes under #640, #641,
 | MiiSelect, MiiSelectIcon, MiiConfirmIcon | menu.c mii_* (the five fellows) | Mii faces: Wii-only; the fellows' icons ported, not re-read |
 | StaffRoll | menu.c srl_* | ported, not re-read |
 | MoviePlayingSequence, MovieStarter, MovieSubtitles | movie.c, game.c movie_starter | ported, not re-read |
-| CometRetryButton | - | issue #660 |
+| CometRetryButton | menu.c crb_* | fixed #660. Left out: forceOpenWipeCircle / forceCloseWipeCircle |
 | Manual2P, BatteryInfo, HomeButtonLayout, EncouragePal60Window, ErrorMessageWindow, SaveIcon, IsbnManager, OdhConverter / odh | - | Wii-only (2P, the remote's battery, the HOME menu, PAL60, the Wii's NAND errors and banner) |
 
 ## Results, misses, wipes, the sequence

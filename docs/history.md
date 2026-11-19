@@ -11,6 +11,16 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- The comets' layouts (feat/662-sudden-death-comet, #660 #661 #662, 2026-11-19): SuddenDeathMeter (menu.c hm.sudden:
+  MarioMeter::initLifeCount with a life of 1 swaps the layout; no Danger / Damage1 / Recover / WaitStart, mAlpha 0.3
+  until requestForceAppear's Appear, BreakMeter / ZeroMeter as MeterLayout's), with MarioActor::init's life of 1 in a
+  Dark comet's scenario (game.c cur_comet: the current scenario's comet, as CometEventKeeper) and MR::
+  executeOnWelcomeAndRetry's requestForceAppearHPMeter; GalaxyCometScreenFilter (csf_*: CometScreenFilter's Color
+  at the comet's frame, drawn before the HUD, off at endCometEvent); CometRetryButton (crb_*: after a miss in a
+  comet's scenario its PlayerMissLeft, then Yes: the stage again / No: back to the dome; game.c miss_after_wipe);
+  BombTimerLayout (bt_*, menu_bomb_timer_*: no host yet, #732). NoteCounter has no layout in RMGE01. tools/lyt.py
+  COMMON: SuddenDeathMeter, BombTimer, RetryButton, CometScreenFilter. **Repack: lyt.py** (menus.bin). Test: `miss`
+  with BOOT=EggStarGalaxy/4 (the retry button: XF=-DMISS_RETRY_YES=0 answers No) or a Dark comet's scenario.
 - UI audit, SysInfoWindow and the sub meter (fix/679-sysinfo-abutton, #679 #707, 2026-11-19): menu.c si_* gets
   SysInfoWindow's mIconAButton (an IconAButton at AButtonPosition: openWithoutMessage when a Type_Key window appears,
   term at Disappear's first step, killed, moved and drawn with the window: the save's done / error windows had no
