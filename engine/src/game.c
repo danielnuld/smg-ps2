@@ -15830,9 +15830,15 @@ static int m_check_squat(Player *m, int a1) /* MarioModule::checkSquat: Z (R1) *
 
 /* the stick's margins (mStickMarginYstart / X, mStickMarginXstart / Y): one axis dropped or narrowed while the other is
  * held far (MarioModule::calcWorldPadDir, Mario::mainMove) */
+/* Mario::updateCubeCode's areas: _10._11 / _10._12 in a HeavySteeringCube (the stick as it is, no margins; the turn
+ * slowed by mStickHeavyMinRatio up to mStickHeavyMaxAngle and his walk speed with it), mDrawStates._3 in a
+ * ForbidTriangleJumpCube (the wall jump not turned to the way he came), _1C._7 in a ForbidJumpCube (no jump out of
+ * the water with the shell) */
+static int m_heavy, m_no_tri_jump, m_forbid_jump;
 static void m_stick_margin(float *px, float *py)
 {
     float x = *px, y = *py;
+    if (m_heavy) return; /* _10._11 */
     if (fabsf(y) > MC.mStickMarginYstart) {
         if (fabsf(x) < MC.mStickMarginX) x = 0;
         else x = x > 0 ? (x - MC.mStickMarginX) / (1.0f - MC.mStickMarginX) : (x + MC.mStickMarginX) / (1.0f - MC.mStickMarginX);
@@ -15860,7 +15866,9 @@ static void m_input_stick(Player *m)
     while (a > q) { a -= q; quot++; }
     r = a >= q - mg ? q : a <= mg ? 0.0f : q / (q - 2.0f * mg) * (a - mg);
     r += q * quot;
-    m_sx = z * cosf(r); m_sy = z * sinf(r); m_sz = z;
+    if (!m_heavy) { m_sx = z * cosf(r); m_sy = z * sinf(r); } /* (_10._11: mStickPos.x / y stay as read) */
+    else { m_sx = x; m_sy = y; }
+    m_sz = z;
     if (m2.on) m2_adjust_ground(m, &m_sx, &m_sy);
     if (m2.circ) m2_adjust(m, &m_sx, &m_sy);
     if (m_tower.on) m_sy = 0.0f; /* (Mario::inputStick: mStickPos.y) */
@@ -17746,8 +17754,15 @@ static void m_main_move(Player *m)
         else if (m->u_turn) v2 = rot_axis(fs, m->up, m->u_side ? 0.12f : -0.12f);
         else if (ang_abs(m->face, m->sd) < 0.1f) v2 = m->stick_ang0 == m->stick_ang ? m->sd : m->face;
         else {
-            float d = ang_abs(m->face, m->sd);
-            if (!blend_sphere(m->face, m->sd, &v2, clamp01(ts / d))) {
+            float d = ang_abs(m->face, m->sd), f1 = clamp01(ts / d);
+            if (m_heavy) { /* _10._12 */
+                float ratio = MC.mStickHeavyMinRatio;
+                if (d >= MC.mStickHeavyMaxAngle) ratio = 1.0f;
+                else if (d > MC.mStickHeavyMinAngle) ratio += (1.0f - ratio) * ((d - MC.mStickHeavyMinAngle) / (MC.mStickHeavyMaxAngle - MC.mStickHeavyMinAngle));
+                f1 *= ratio;
+                m->walk *= 1.0f - 0.1f * clamp01(1.0f - (3.14159265f - d) / 3.14159265f);
+            }
+            if (!blend_sphere(m->face, m->sd, &v2, f1)) {
                 m->weak_turn = 0;
                 v2 = rot_toward(fs, m->sd, m->up, 22.5f * 3.14159265f / 180.0f);
             }
@@ -19511,13 +19526,14 @@ static void m_check_wall_stick(Player *m)
     m_reset_tornado(m);
 }
 /* MarioWall::startJump: off the wall's normal (turned off the way he came in within 15 frames: mWallTriJumpMargin)
- * x mWallJumpPowerXZ, up x mWallJumpPowerY. ponytail: mDrawStates._3 (ForbidTriangleJumpCube / CubeCamera 2) not kept */
+ * x mWallJumpPowerXZ, up x mWallJumpPowerY; not turned in a ForbidTriangleJumpCube (mDrawStates._3).
+ * ponytail: a CubeCamera with arg1 2 sets _3 too (arg1 1: _2), not kept */
 static int m_wall_start_jump(Player *m)
 {
     if (m_inhibit_wall()) return 0;
     V3 v = m_wall_norm(m);
     m->wall_cancel_n = v;
-    if (m->wall_t < 15 && !near0(m->wall_jv0)) {
+    if (!m_no_tri_jump && m->wall_t < 15 && !near0(m->wall_jv0)) {
         float d = vdot(v, vmul(m->wall_jv0, -1.0f));
         if (d < MC.mWallTriJumpMargin && d > 0.0f) {
             V3 ax = vcross(vmul(m->wall_jv0, -1.0f), v);
@@ -21169,9 +21185,9 @@ static void sw_drop_jet(Player *m, int damage) /* dropJet: the shell thrown (rel
     sw.knock_t = 15; sw.knock = v3(0, 0, 0);
     m_pad_vib(0);
 }
-static void sw_jet_jump(Player *m, int type) /* doJetJump: out of the water with the shell. ponytail: _1C._7 never set */
+static void sw_jet_jump(Player *m, int type) /* doJetJump: out of the water with the shell (not in a ForbidJumpCube: _1C._7) */
 {
-    if (sw.ring_charge) return;
+    if (m_forbid_jump || sw.ring_charge) return;
     float h = 12.0f, v = 15.0f;
     if (sw_check_lvl_a()) { h = 18.0f; v = 30.0f; }
     else if (type == 0) m->digital = 1;
@@ -23189,6 +23205,10 @@ static void update_mario_(void)
             rec.v4C = row_pos(&sc->objs[pb]); rec.v58 = vnorm(vcross(z, x)); rec.s12 = 1;
         }
         if (pb >= 0) m_do_recovery(m);
+        m_no_tri_jump = area_obj("ForbidTriangleJumpCube", m->pos) >= 0;
+        m_heavy = area_obj("HeavySteeringCube", m->pos) >= 0;
+        if (area_obj("DashChargeCylinder", m->pos) >= 0) m_item_dash = MC.mItemDashTimer; /* _434 */
+        m_forbid_jump = area_obj("ForbidJumpCube", m->pos) >= 0;
         if (!dark.on && area_obj("DarkMatterCube", m->pos) >= 0) dark_start(m); /* forceKill(4): doDarkDamage */
     }
     if (dark.on) { /* MarioDarkDamage's update (actionMain): his velocity is not cleared in it (updateCubeCode) */
@@ -42555,13 +42575,13 @@ static int area_inside(const Row *r, V3 p)
 static int area_obj(const char *cls, V3 p)
 {
     /* each class's rows listed once (in order: the first one inside still wins), not a walk over every row a call */
-    static struct { const Scene *at; const char *cls; int t, first, n; } c[24];
+    static struct { const Scene *at; const char *cls; int t, first, n; } c[40];
     static short pool[1024];
     static int npool;
     static const Scene *pool_at;
     int k = 0;
-    while (k < 24 && c[k].cls && c[k].cls != cls) k++;
-    if (k == 24) k = 0;
+    while (k < 40 && c[k].cls && c[k].cls != cls) k++;
+    if (k == 40) k = 0;
     if (c[k].cls != cls || c[k].at != sc) {
         c[k].cls = cls; c[k].at = sc; c[k].t = scene_type(sc, cls);
         if (pool_at != sc) { pool_at = sc; npool = 0; }
@@ -46697,6 +46717,9 @@ static void put_test(void)
         { static const float xyz[3] = {PUT_XYZ}; mario->pos = v3(xyz[0], xyz[1] + PUT_UP, xyz[2]); row = 0; }
 #else
         row = game_test_put_at(PUT_STR(PUT_TEST), PUT_UP);
+#ifdef PUT_TEST2 /* -DPUT_TEST2=<class>: that class when the scene has none of the first (one ELF, two galaxies) */
+        if (row < 0) row = game_test_put_at(PUT_STR(PUT_TEST2), PUT_UP);
+#endif
 #endif
 #ifndef PUT_NOCAM
         if (row >= 0) { camera_start_pos_end(); camera_set_override(1, vadd(mario->pos, v3(0, 1000, 3000)), vadd(mario->pos, v3(0, 1000, 0)), v3(0, 1, 0), 45.0f); }
@@ -46713,6 +46736,7 @@ static void put_test(void)
         for (int i = 0; i < ninsts; i++) if (insts[i].row == row) { in = &insts[i]; break; }
         printf("put test f %d: row %d at %d %d %d, mario %d %d %d" "\n", t, row, in ? (int)in->m[12] : 0, in ? (int)in->m[13] : 0,
                in ? (int)in->m[14] : 0, (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z);
+        printf("put test cube code: heavy %d no tri jump %d forbid jump %d item dash %d" "\n", m_heavy, m_no_tri_jump, m_forbid_jump, m_item_dash);
     }
 }
 #endif
