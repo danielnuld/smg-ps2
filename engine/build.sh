@@ -11,6 +11,8 @@
 #       (-DITEM_TEST)
 # collapse: with packs, Mario dropped onto the first CollapsePlane at frame 120 (-DCOLLAPSE_TEST)
 # box: with packs, Mario spinning on the first breakable box at frame 120 (-DBOX_TEST)
+#      XF=-DPOP_LOG: the first two popped coins' move logged (Coin::exeMove, #646); XF=-DCGROUP_TEST (any mode):
+#      every CoinGroup that waits for its appear switch gets it at frame 300
 # kinoko: OceanPhantomCaveGalaxy/1, a Kanina's and a treasure box's run-time 1-up (-DKINOKO_TEST)
 # bombbird: SandClockGalaxy/1, Mario under a BombBird (its bombs), a hit at 700, a trample at 900 (-DBOMBBIRD_TEST)
 # spin: with packs, Mario caught by the first SpinDriver at frame 120 (-DSPIN_TEST)
