@@ -1630,6 +1630,14 @@ static V3 start_pos;
 #define MAX_LIFE 3              /* Petari: 3 life, a coin gives one back; a LifeUp mushroom makes it 6 until a miss */
 #define START_LIVES 4
 static int life = MAX_LIFE, max_life = MAX_LIFE, misses, lives = START_LIVES, stars;
+static const char *cur_comet(void) /* CometEventKeeper::initCometStatus: the current scenario's comet ("" none) */
+{
+    char gal[32];
+    const char *sl = strchr(game_stage_name, '/');
+    snprintf(gal, sizeof gal, "%.*s", sl ? (int)(sl - game_stage_name) : 31, game_stage_name);
+    return gd_scenario_comet(gal, sl ? atoi(sl + 1) : 1);
+}
+static int miss_retry; /* the CometRetryButton is up (miss_after_wipe) */
 static void miss(void);
 static int miss_running(void);
 static int miss_sink; /* the next miss is MarioActor::exeGameOverSink's (forceGameOverSink: m_update_on_sand) */
@@ -2713,6 +2721,13 @@ void game_init(const Scene *s, const unsigned char *blob)
     lyt_init(s);
     gd_attach(s);
     menu_init(s);
+    { /* CometEventKeeper::init: the comet's screen filter; MarioActor::init: a life of 1 under the Dark comet
+       * (isGalaxyDarkCometAppearInCurrentStage), MarioMeter::initLifeCount: the SuddenDeathMeter */
+        const char *c = cur_comet();
+        if (c[0]) menu_comet_filter(!strcmp(c, "Dark") ? 2 : !strcmp(c, "Ghost") ? 1 : !strcmp(c, "Quick") ? 3 :
+                                    !strcmp(c, "Purple") || !strcmp(c, "Black") ? 4 : 0); /* getCometNameIdFromString */
+        if (!strcmp(c, "Dark")) { life = max_life = 1; menu_meter_init_count(1); }
+    }
     lives = gd_player_left();
     if (!gd_story_passed("スピン権利")) swing_perm = 0; /* GameSequenceProgress::startScene: setPlayerSwingPermission(false) */
     printf("mario: swing permission %d\n", swing_perm);
@@ -14266,6 +14281,7 @@ static void hud_update(void)
     if (hud_welcome && hud_welcome < 1000) hud_welcome++;
     if (!hud_on && (hud_welcome ? hud_welcome > 91 : game_frame > 2 && !hud_had_starter)) {
         hud_on = 1; /* forceAppearDefaultGameLayout: the controller's PlayerNotMoving */
+        menu_meter_force_appear(); /* MR::executeOnWelcomeAndRetry: requestForceAppearHPMeter */
         for (int k = 0; k < 4; k++) hud[k].disp = hud_value(k);
         hudc.nrv = 1; hudc.step = 0;
     }
@@ -14488,6 +14504,7 @@ static void talk_draw(void)
 {
     ntkq = 0;
     if (tk_ttex < 0) return;
+    menu_comet_filter_draw(); /* DrawType_CometScreenFilter: before the layouts */
     hud_draw(); /* under the balloons */
     stitle_draw();
     for (int i = 0; i < 4; i++) { /* TalkBalloonStretch: over the talker, its width the text's */
@@ -24851,13 +24868,16 @@ static int miss_in_abyss(void) { return mev.abyss; }
  * PlayerMissLeft (type 5, not a comet's scenario: isCometStar); the scene starts once it is dead (exeGalaxyMove) */
 static void miss_after_wipe(void)
 {
-    if (mev.pf == 30) {
-        char gal[32];
-        const char *sl = strchr(game_stage_name, '/');
-        snprintf(gal, sizeof gal, "%.*s", sl ? (int)(sl - game_stage_name) : 31, game_stage_name);
-        if (!gd_scenario_comet(gal, sl ? atoi(sl + 1) : 1)[0]) menu_miss_left_start(lives);
+    if (mev.pf == 30) { /* requestEndMissDemo: a comet's scenario has the CometRetryButton (its own PlayerMissLeft) */
+        miss_retry = cur_comet()[0] && menu_comet_retry_appear(lives);
+        if (!miss_retry && !cur_comet()[0]) menu_miss_left_start(lives);
     }
-    if (mev.pf++ >= 30 && menu_miss_left_dead()) seq_galaxy_move(SEQ_MISS, NULL, -1, -1, 0);
+    if (mev.pf++ < 30) return;
+    if (miss_retry) { /* CometRetryButton::exeEnd: requestChangeStageAfterMiss / requestChangeStageGoBackAstroDome */
+        int r = menu_comet_retry_result();
+        if (r == 1) seq_galaxy_move(SEQ_MISS, NULL, -1, -1, 0);
+        else if (r == 2) seq_galaxy_move(SEQ_GALAXY_OUT, NULL, 1, -1, 0);
+    } else if (menu_miss_left_dead()) seq_galaxy_move(SEQ_MISS, NULL, -1, -1, 0);
 }
 static void miss_event_update(void)
 {
@@ -58858,7 +58878,7 @@ void game_update(void)
     LQ(0, update_obj_anims());
 
     if (!opening_on && time_limit && time_on != 2) { /* CometEventExecutorTimeLimit::exeStartEvent; a star: endCometEvent */
-        if (stars) { menu_time_limit_kill(); time_on = 2; }
+        if (stars) { menu_time_limit_kill(); time_on = 2; menu_comet_filter(-1); } /* endCometEvent: the filter's _20 off */
         else {
             if (!time_on) { menu_time_limit_appear(time_limit); time_on = 1; }
             menu_time_limit_update();
