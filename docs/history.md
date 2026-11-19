@@ -28,6 +28,12 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   isBindedGroundBrake, the blow from other actors; TrickRabbitFreeRunCollect (SnowCapsuleGalaxy: TrickRabbitSnow /
   TrickRabbitSnowCollect, its clip names are cut at 31 characters by slice.name32) is not ported. Test: plain with
   XF="-DTRICK_TEST -DPACKS_OVERLAY=<overlay>" on ReverseKingdomGalaxy/1 or CosmosGardenGalaxy/1 (Mario put before
+  the rabbit, A through its talk, a star piece / a drop onto it, then the catch). Seen in PCSX2: TrickRabbitFreeRun end to end (its talk, the demo and the chase BGM, the star piece's BlowDamage, the catch, the power star appear demo with it as declarer, GiveUp); TrickRabbit only to
+  its WaitStart (97 nodes, 109 edges read, it stands on its ground; the test's Mario, put 170 before it, fell off its
+  platform, so its talk and what follows were not run). Until they are, slice.py makes TrickRabbit's RGPH, declarer
+  and PStar only with SMG_RGPH set in the environment: the release packs leave it as it was. Next: fix the test's
+  Mario placement in trk_test, slice CosmosGardenGalaxy with SMG_RGPH=1 into an overlay, run it, then drop the
+  switch. **Release: slice_all.py ReverseKingdomGalaxy** (TrickRabbitFreeRun's declarer and PStar).
   the rabbit, A through its talk, a star piece / a drop onto it, then the catch). Seen in PCSX2: TrickRabbitFreeRun end to end (its talk, the demo and the chase BGM, the star piece's BlowDamage, the catch, the power star appear demo with it as declarer, GiveUp). **Release: slice_all.py
   ReverseKingdomGalaxy, CosmosGardenGalaxy** (the declarers, PStar, RGPH).
 - Mario's miss events (feat/674-miss-events, #674, 2026-11-18): EventAbyss and EventFireDown have their own timelines
