@@ -11,6 +11,14 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Hidden stars' scenario number (fix/508-placed-scenario-no, #508, 2026-11-18): game_scenario_no /
+  game_stage_scenario are GameSystemSceneController::getCurrentScenarioNo, the number
+  ScenarioSelectScene::trySetCurrentScenarioNo placed (gamedata.c gd_placed_hidden_star_scenario,
+  cPlacedHiddenStarInfoTable); game_stage_name keeps the selected one. Its users: the stage BGM, isStartBgmOnWelcome,
+  the visited flag, isStageCameraRotate2D, isUseFooSpecialGravity, AstroChangeStageCube, WipeRing, Dodoryu's sudden
+  death, the star piece group limit, the story's before scenario; the coin best goes to the cleared star. PCSX2: a
+  plain EggStarGalaxy/6 flies in and plays the stage's music. Repack: every galaxy with a hidden star (slice.py:
+  StartScenario<placed>.canm, findStarID by the placed number). Not checked one by one: each user above.
 - Mario's sounds the port never played (feat/575-mario-sounds, #575, 2026-11-18): the press (プレスダメージ), the bee
   wall landing, Teresa's float, Luigi's slide, the spin back; jumpToHipDrop's spin hip drop (_3E5); tryJump's /
   tryBackJump's dive into deep water (sw_under_water_full: 飛び込みジャンプ, 声高飛び込み) and its failure landing;
