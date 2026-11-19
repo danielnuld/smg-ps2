@@ -37919,6 +37919,9 @@ static void update_gaps(void)
                 mario->hip = HIP_START; mario->hip_t = 0; mario->jumping = 1; mario->zero_gr = MC.mHipDropZeroGrTime;
                 if (mario_anim) mario_play("hipdropstart", 1.0f, 0);
             }
+            if (tf > 900 && tf < 1000 && (tf % 6 == 0 || hip_hit)) /* the forced drop: did it land as a hip drop, on this instance? */
+                printf("hipmove test f %d drop: hip %d jumping %d grounded %d bury %d sink %d hip_hit %d hip_inst %d ground %d inst %d\n", game_frame,
+                       mario->hip, mario->jumping, mario->grounded, suke.on, mario->sink, hip_hit, hip_inst, mario_ground, in ? (int)(in - insts) : -1);
             if (tf % 30 == 0 && in) {
                 hm_joint(in, 1, m);
                 printf("hipmove test f %d: %s row %d nerve %d step %d anim %d frame %d Move at %d %d %d, Mario %d %d %d ground %d SW_A %d demo %d\n",
