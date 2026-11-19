@@ -40,6 +40,14 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   MeteorStrikeEnvironment out of the screen is killed (exeMove). ElectricRail's demo Disappear plays
   SE_OJ_ELEC_RAIL_VANISH (still gone at once: no 20-frame shrink). Test: `meteor`. Left of #653: the broken model
   (MeteorStrikeBreak's Break clip), the shadow's growth, ArrowSwitch's lock and push.
+=======
+- UnizoLauncher after Petari (feat/768-unizo-launcher, #768, 2026-11-19): the class had no code and its row was not
+  packed (1 placed: VolcanoPlanetZone, IceVolcanoGalaxy / SkullSharkGalaxy). `update_unizo_launchers`: Wait until its
+  step passes 300, then the first dead one of its four UnizoLand (hosted WALK_UNIZO walkers, `host` -3, dead at
+  first; `walker_cls` UnizoLand) is put at its place (z + its index) and appears; a hosted Unizo's death leaves the
+  row alive. tools/slice.py: LOGIC UnizoLauncher, EXTRA UnizoLand / UnizoLandBreak (**repack** IceVolcanoGalaxy,
+  SkullSharkGalaxy). Test: `walker` with `XF=-DUZL_TEST` ("unizo launcher row", "uzl test" lines). Left out: its
+  Body sensor (100, it attacks nothing).
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /
