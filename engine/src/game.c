@@ -51,8 +51,9 @@ typedef struct { V3 pos; short alive, row; V3 up, at; } Pickup;  /* Coin, Purple
                                                                   * came from, -1 a drop; up: the gravity's at `at` */
 static V3 pick_up(const Pickup *cp);
 static V3 walker_up(void *k, V3 prev);
-enum { PICK_GONE, PICK_ON, PICK_POP_NEW, PICK_POP_BLINK }; /* alive: popping coins cannot be taken while new and
-                                                             * are not drawn on their blink frames */
+enum { PICK_GONE, PICK_ON, PICK_POP_NEW, PICK_POP_BLINK, PICK_WAIT }; /* alive: popping coins cannot be taken while new
+                                                             * and are not drawn on their blink frames; WAIT: a
+                                                             * CoinGroup's coin before its group appears */
 /* The HitSensor list (SensorHitChecker's groups): every host adds its valid sensors (their place, radius and kind)
  * each frame with hs_add; hs_flip at the frame's start keeps the last frame's whole list (hs_last / hs_nlast) for the
  * checks, so every host is seen once whatever the update order (Petari: SensorHitChecker::movement after the actors'
@@ -1330,7 +1331,7 @@ static int breakable(const char *name, const Row *r, int *coins, int *pieces)
         return 7;
     }
     if (strcmp(name, "SpiderMapBlock") == 0) { *coins = 1; return 2; } /* SpiderMapBlock.cpp: isMsgPlayerHipDropFloor kills it */
-    if (strcmp(name, "BreakableTrash") == 0) return 5; /* BreakableCage.cpp (CAGE_TRASH): any enemy attack but fire breaks it */
+    if (strcmp(name, "BreakableTrash") == 0 || strcmp(name, "BreakableFixation") == 0) return 5; /* BreakableCage.cpp (CAGE_TRASH / CAGE_FIX): any enemy attack but fire breaks it */
     if (strcmp(name, "SpiderCoin") == 0) { *coins = 1; return 6; }     /* SpiderCoin.cpp: the pointer frees it (spider_coins; a row, no instance) */
     if (strcmp(name, "KoopaStatue") == 0) {
         if (r->arg[3] == -1) *coins = r->arg[6] > 0 ? r->arg[6] : 1;
@@ -1413,7 +1414,7 @@ static void row_kill(int i)
 static int t_replica = -1;
 static int pickup_on(const Pickup *p, int take)
 {
-    if (p->alive == PICK_GONE || p->alive == (take ? PICK_POP_NEW : PICK_POP_BLINK)) return 0;
+    if (p->alive == PICK_GONE || p->alive == PICK_WAIT || p->alive == (take ? PICK_POP_NEW : PICK_POP_BLINK)) return 0;
     if (p->row >= 0 && take && sc->objs[p->row].type == t_replica && !sw_on(&sc->objs[p->row], SW_A)) /* appearNonActive; only SW_A
                                                                           * activates it (none: never) */
         return 0;
@@ -1435,10 +1436,15 @@ static int piece_colour_next(void) { int k = piece_next; piece_next = (piece_nex
 #define MAX_WRECKS 16           /* break models / broken objects left (break_inst, update_wrecks) */
 static struct { const Model *brk, *left; const char *bname; float m[16]; int t, coins, pieces, row, hide; V3 p, up; } wrecks[MAX_WRECKS]; /* hide: its left model gone at that t (0 never) */
 static int nwrecks;
-/* Coins popping out of what broke (Petari CoinHolder::appearCoinPop, Coin::exeMove): 25 against gravity plus up to 4
- * at random, gravity 1, 0.75 rebound off the ground (impacts of 2 and more), 0.9 / 0.995 damping on the ground / in
- * the air, not to be taken for 30 frames, blinking at the end, gone after 600 */
-typedef struct { int coin, t; V3 vel; } Pop;
+/* Coins popping out of what broke (Petari CoinHolder::appearCoin, Coin::appearMove / exeMove, update_pops): t its
+ * nerve step, grav its gravity, gr / wl / rf with gn / wn / rn its binder's ground, wall and roof of the last move,
+ * fire a DamageFire ground, water mIsInWater (taken at the appear) */
+typedef struct { int coin, t; V3 vel, grav, gn, wn, rn; u8 gr, wl, rf, fire, water; } Pop;
+/* CoinGroup.cpp's groups that wait for their appear switch (update_coin_groups): their coins [first, first + n) of
+ * coins / purple, limit arg1 (the time limit, -1 none) */
+#define MAX_COIN_GROUPS 48
+static struct { short row, first, n, limit; u8 purple, demo; } cgroups[MAX_COIN_GROUPS];
+static int ncgroups;
 static Pop *pops;
 static int npops, box_coins;
 static Inst *insts;
@@ -2087,6 +2093,18 @@ typedef struct { V3 n; float dist; int inst, attr, sub; V3 pos; int prism, flag;
 /* Triangle (Map/HitInfo.hpp): a prism of a placed collision, its data from the part's matrix now (calcAndGetNormal /
  * Pos); inst -1 an IceStep's (sub its index), prism 0 none (mIdx -1) */
 typedef struct { int inst, sub, prism; const unsigned char *kcl; } Tri;
+/* the collision parts that are no instance's (Hit.inst -1): sub under ICE_STEPS an IceStep, from ICE_STEPS on a
+ * CollisionArea's AreaPolygon (cpoly_at: its KCL in world space, NULL while invalid; its bounding sphere) */
+static int ncpolys;
+static const unsigned char *cpoly_at(int i, V3 *c, float *r);
+static const float cp_ident[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+#ifdef PUT_TEST
+static int cpoly_hits; /* the AreaPolygons' sphere hits since the put test's last line */
+#endif
+static const unsigned char *xpart_kcl(int sub)
+{
+    return sub < ICE_STEPS ? kcl_icestep : sub - ICE_STEPS < ncpolys ? cpoly_at(sub - ICE_STEPS, NULL, NULL) : NULL;
+}
 static int nlfs, ground_sub, mario_ground_sub; static int lf_mats(const Inst *in, const float (**mats)[16], const int **coll);
 static void update_leaves(void), leaf_joints(Inst *in), lf_alloc(void);
 static int npls; static void update_palms(void), pl_place(Inst *in);
@@ -2245,6 +2263,30 @@ static int kcl_query_(V3 c, float radius, Hit *out, int max)
             out[n++].dist = h[j].dist;
         }
     }
+    for (int i = 0; i < ncpolys && n < max; i++) { /* CollisionArea's AreaPolygons (inst -1, sub ICE_STEPS + i) */
+        V3 pc;
+        float pr;
+        const unsigned char *pk = cpoly_at(i, &pc, &pr);
+        if (!pk) continue;
+        V3 d = vsub(c, pc);
+        if (vdot(d, d) > (pr + radius) * (pr + radius)) continue;
+        float lc[3] = {c.x, c.y, c.z};
+        KclHit h[4];
+        int got = kcl_check_sphere(pk, lc, radius, h, max - n < 4 ? max - n : 4);
+#ifdef PUT_TEST
+        cpoly_hits += got;
+#endif
+        for (int j = 0; j < got; j++) {
+            const float *fn = kcl_face_normal(pk, h[j].prism);
+            float lp[3] = {lc[0], lc[1], lc[2]};
+            kcl_collide_pos(pk, h[j].prism, h[j].flag, lp);
+            out[n].n = v3(fn[0], fn[1], fn[2]);
+            out[n].inst = -1; out[n].attr = kcl_attribute(pk, h[j].prism); out[n].sub = ICE_STEPS + i;
+            out[n].prism = h[j].prism; out[n].flag = h[j].flag;
+            out[n].pos = v3(lp[0], lp[1], lp[2]);
+            out[n++].dist = h[j].dist;
+        }
+    }
     return n;
 }
 /* Collision::checkStrikeLine over every placed collision (KCollisionServer::checkArrow): the nearest face the segment
@@ -2278,6 +2320,12 @@ static int kcl_line(V3 a, V3 b, V3 *hp, V3 *n, int *inst)
     for (int i = 0; kcl_icestep && i < ICE_STEPS; i++) /* IceStep's collision parts */
         if (ice_steps[i].alive && vlen(vsub(vadd(a, vmul(q.d, 0.5f)), v3(ice_steps[i].m[12], ice_steps[i].m[13], ice_steps[i].m[14]))) < 300.0f + len * 0.5f)
             kl_hit(&q, kcl_icestep, ice_steps[i].m, 1.0f, -1, i);
+    for (int i = 0; i < ncpolys; i++) { /* CollisionArea's AreaPolygons */
+        V3 pc;
+        float pr;
+        const unsigned char *pk = cpoly_at(i, &pc, &pr);
+        if (pk && vlen(vsub(vadd(a, vmul(q.d, 0.5f)), pc)) < pr + len * 0.5f) kl_hit(&q, pk, cp_ident, 1.0f, -1, ICE_STEPS + i);
+    }
     if (q.frac > 1.0f) return 0;
     kcl_line_tri = (Tri){q.inst, q.sub, q.prism, q.kcl};
     if (hp) *hp = vadd(a, vmul(q.d, q.frac));
@@ -2344,7 +2392,13 @@ static int tri_part(const Tri *t, float m[16], float *k)
 {
     if (!t->prism) return 0;
     if (t->inst < 0) {
-        if (t->sub >= ICE_STEPS || !ice_steps[t->sub].alive || t->kcl != kcl_icestep) return 0;
+        if (t->sub >= ICE_STEPS) { /* an AreaPolygon: its KCL is in world space */
+            if (!t->kcl || xpart_kcl(t->sub) != t->kcl) return 0;
+            memcpy(m, cp_ident, 64);
+            *k = 1.0f;
+            return 1;
+        }
+        if (!ice_steps[t->sub].alive || t->kcl != kcl_icestep) return 0;
         memcpy(m, ice_steps[t->sub].m, 64);
         *k = 1.0f;
         return 1;
@@ -2548,7 +2602,7 @@ static int bind_find(V3 *pos, V3 *mv, int *rest, float r, int skip0)
             *rest = i != steps;
             int c = 0;
             for (int k = 0; k < n && b_n < BIND_MAX; k++, c++) {
-                b_tri[b_n] = (Tri){h[k].inst, h[k].sub, h[k].prism, h[k].inst < 0 ? kcl_icestep : insts[h[k].inst].kcl};
+                b_tri[b_n] = (Tri){h[k].inst, h[k].sub, h[k].prism, h[k].inst < 0 ? xpart_kcl(h[k].sub) : insts[h[k].inst].kcl};
                 b_dep[b_n++] = h[k].dist + 1.2f;
             }
             return c;
@@ -2808,7 +2862,7 @@ void game_init(const Scene *s, const unsigned char *blob)
             row_hold[i] = s->objs[i].arg[3] >= 0 ? s->objs[i].arg[3] : 5;
     scene_blob_g = blob;
     npurple = count_type("PurpleCoin", 0) + count_type("CirclePurpleCoinGroup", 1) + count_type("PurpleRailCoin", 1);
-    ngroup_wait = 0; ndone_shown = 0;
+    ngroup_wait = 0; ndone_shown = 0; ncgroups = 0;
     nfats = 0; test_feed = 0; nsambos = 0; ndrings = -1;
     sambo_heads = row_table("CocoSambo", MAX_SAMBOS, sizeof(Anim));
     for (u32 i = 0; i < s->nobjs; i++) { /* the spin drivers a TicoFat's group brings out */
@@ -3050,6 +3104,15 @@ void game_init(const Scene *s, const unsigned char *blob)
             ic += coin_group(coins + ic, r, blob);
         for (int k = c0; k < ic; k++) coins[k].row = i;
         for (int k = p0; k < ip; k++) purple[k].row = i;
+        if ((r->type == t_circle || r->type == t_rail || r->type == t_gcircle || r->type == t_grail) && r->sw[SW_APPEAR] >= 0 &&
+            ic + ip > c0 + p0 && ncgroups < MAX_COIN_GROUPS) { /* CoinGroup::init: useStageSwitchReadAppear */
+            int pu = r->type == t_circle || r->type == t_rail;
+            cgroups[ncgroups].row = (short)i; cgroups[ncgroups].purple = (u8)pu; cgroups[ncgroups].demo = 0;
+            cgroups[ncgroups].first = (short)(pu ? p0 : c0); cgroups[ncgroups].n = (short)(pu ? ip - p0 : ic - c0);
+            cgroups[ncgroups++].limit = (short)r->arg[1];
+            for (int k = c0; k < ic; k++) coins[k].alive = PICK_WAIT;
+            for (int k = p0; k < ip; k++) purple[k].alive = PICK_WAIT;
+        }
         for (int k = s0; k < is; k++) { /* placed: arg3 or random; a group's (new StarPiece, no arg3): random */
             pieces[k].row = i;
             piece_col[k] = r->type == t_piece && r->arg[3] >= 0 && r->arg[3] < PIECE_COLOURS ? r->arg[3] : rand() % PIECE_COLOURS;
@@ -16469,9 +16532,10 @@ static V3 rot_toward(V3 from, V3 to, V3 axis, float ang) /* MR::vecRotAxis */
 static float clamp01(float f) { return f < 0 ? 0 : f > 1 ? 1 : f; }
 
 /* Mario::playSoundJ (MarioSound.cpp): the key's entry in soundlist (mario_snd.h) by its kind (0 on Mario, 1 a level
- * sound on Mario, 2 system, 3 system level), its companion under water, then "声" + key (his voice) on him.
- * ponytail: under water never (the companion entries wait for the swim states) */
+ * sound on Mario, 2 system, 3 system level), its companion (kind & 0xC) while he wades (mDrawStates.mIsUnderwater
+ * or _13), then "声" + key (his voice) on him */
 static u32 mario_lv[256];
+static int m_wading(void);
 static void mario_sound(const char *key)
 {
     float at[3] = {mario->pos.x, mario->pos.y, mario->pos.z};
@@ -16485,6 +16549,8 @@ static void mario_sound(const char *key)
             case 2: se_start(mario_snd[i].id, NULL); break;
             case 3: mario_lv[i] = se_level(mario_snd[i].id, NULL, mario_lv[i]); break;
             }
+            if (((mario_snd[i].kind & ~3) == 4 || (mario_snd[i].kind & ~3) == 8) && mario_snd[i].water && m_wading())
+                mario_sound(mario_snd[i].water);
         }
         if (!strcmp(mario_snd[i].key, voice)) se_start(mario_snd[i].id, at);
     }
@@ -16777,6 +16843,7 @@ static void m_stop_wait(void) /* stopWaitAnimation */
  * 23), _1D (over: water under his shadow), _738 (ripple_h: the ripple's height over the ground), _73C (n: its up);
  * cleared with mDrawStates each frame (swim_update: updateAndClearStrideParameter) */
 static struct { int under, deep, over; float ripple_h; V3 n; } m_wade;
+static int m_wading(void) { return m_wade.under || m_wade.deep; }
 static float frand(float a, float b);
 static void mario_named_fx(const char *name, void *key);
 static float m_prev_frame; /* mPrevAnimFrame */
@@ -16789,7 +16856,8 @@ static void m_ripple(V3 at) /* playEffectSRT("水波紋", 0.2, _73C, at) */
     fx_named("Mario", "WaterRipple", mm, NULL, NULL);
 }
 /* decide(Squat)WalkAnimation's tail: wading, each step (the walk's frame wrapping, then passing 30) splashes and rings
- * (水はね / 水波紋 at 0.2), standing a ring every 64 frames. ponytail: mGroundPos / mShadowPos are his position */
+ * (水はね / 水波紋 at 0.2) at mGroundPos, standing a ring every 64 frames at mShadowPos (MarioWalk.cpp:182-192) */
+static V3 m_ground_pos(void), m_shadow_pos(void);
 static void m_wade_steps(Player *m, int squat)
 {
     float frame = mario_anim ? mario_anim->frame : 0.0f;
@@ -16805,14 +16873,14 @@ static void m_wade_steps(Player *m, int squat)
                     mario_sound(s ? "水跳ね右足" : "水跳ね左足");
                     mario_named_fx(s ? "WaterSplashRight" : "WaterSplashLeft", NULL); /* 水はね右 / 左 */
                 }
-                m_ripple(vadd(vadd(m->pos, vmul(side, s ? 20.0f : -20.0f)), vmul(m->ground_n, m_wade.ripple_h)));
+                m_ripple(vadd(vadd(m_ground_pos(), vmul(side, s ? 20.0f : -20.0f)), vmul(m->ground_n, m_wade.ripple_h)));
 #ifdef WADE_TEST
                 printf("wade test: step %d tsi %d frame %.1f fx %u\n", s, m->tsi, frame, fx_count());
 #endif
             }
         }
     } else if (m_wade.under && game_frame % 64 == 0)
-        m_ripple(vadd(vadd(m->pos, vmul(side, (frand(0.0f, 1.0f) - 0.5f) * 20.0f)), vmul(m->ground_n, m_wade.ripple_h)));
+        m_ripple(vadd(vadd(m_shadow_pos(), vmul(side, (frand(0.0f, 1.0f) - 0.5f) * 20.0f)), vmul(m->ground_n, m_wade.ripple_h)));
     m_prev_frame = frame;
 }
 
@@ -19767,10 +19835,12 @@ static int press_at(int inst) { return inst >= 0 && insts[inst].press; }
 /* Mario::calcDistToCeil(false): the first face up from 30 under him within 230; one under his feet that is no press
  * (sensor, Press floor code 29, nor his ground's) is looked for again from 10 over him; none: 200 */
 static int m_730 = -1; /* _730: the ceiling's part of the last calcDistToCeil */
+static int m_ceil_attr = -1; /* its face's codes (-1: none met): _4C8 as calcDistToCeil leaves it */
+static V3 m_ceil_n;         /* _3B0: its normal */
 static float m_dist_to_ceil(Player *m)
 {
     float off = 30.0f;
-    m_730 = -1;
+    m_730 = -1; m_ceil_attr = -1;
     for (;;) {
         V3 hp, n;
         int ci;
@@ -19780,7 +19850,7 @@ static float m_dist_to_ceil(Player *m)
             off = -10.0f;
             continue;
         }
-        m_730 = ci;
+        m_730 = ci; m_ceil_attr = map_line_attr; m_ceil_n = n;
         return vlen(vsub(hp, m->pos));
     }
 }
@@ -20699,7 +20769,7 @@ static void m_check_all_wall(Player *m)
         V3 dir = vsub(h[i].pos, c), fb = vsub(h[i].pos, m->pos);
         dir = vlen(dir) > 1e-6f ? vnorm(dir) : v3(0, 0, 0); fb = vlen(fb) > 1e-6f ? vnorm(fb) : v3(0, 0, 0);
         float un = vdot(m->up, h[i].n), deg = 180.0f * (acosf(un > 1.0f ? 1.0f : un < -1.0f ? -1.0f : un) / 3.14159f);
-        Tri ht = {h[i].inst, h[i].sub, h[i].prism, h[i].inst < 0 ? kcl_icestep : insts[h[i].inst].kcl};
+        Tri ht = {h[i].inst, h[i].sub, h[i].prism, h[i].inst < 0 ? xpart_kcl(h[i].sub) : insts[h[i].inst].kcl};
         if (deg >= MC.mFlatAngle && vdot(dir, m->face) > 0.0f && vdot(fb, m->face) > 0.0f &&
             angle_d(m, h[i].n) <= MC.mSlipAngle && ang_abs(m->ground_n, h[i].n) > 30.0f) { mw.t4DC = ht; mw.p518 = h[i].pos; mw.f4DC = 1; }
         if (fabsf(un) > 0.5f) { /* (mHeadVec) */
@@ -20716,7 +20786,7 @@ static void m_check_all_wall(Player *m)
         const Hit *w = &h[walls[0]];
         V3 d = vsub(w->pos, c);
         d = vlen(d) > 1e-6f ? vnorm(d) : v3(0, 0, 0);
-        mw.front = (Tri){w->inst, w->sub, w->prism, w->inst < 0 ? kcl_icestep : insts[w->inst].kcl};
+        mw.front = (Tri){w->inst, w->sub, w->prism, w->inst < 0 ? xpart_kcl(w->sub) : insts[w->inst].kcl};
         m_front_tri_n = tri_n(&mw.front);
         mw.p4E8 = w->pos;
         if (vdot(d, w->n) < (m->walling ? -0.9f : -0.999f)) mw.w8 = 1;
@@ -20725,7 +20795,7 @@ static void m_check_all_wall(Player *m)
     }
     if (walls[1] >= 0) {
         const Hit *w = &h[walls[1]];
-        mw.side = (Tri){w->inst, w->sub, w->prism, w->inst < 0 ? kcl_icestep : insts[w->inst].kcl};
+        mw.side = (Tri){w->inst, w->sub, w->prism, w->inst < 0 ? xpart_kcl(w->sub) : insts[w->inst].kcl};
         mw.p500 = w->pos;
         mw.w1A = 1;
         if (w->flag >= 2) mw.w33 = 1; /* isCollisionAtCorner / AtEdge */
@@ -20734,7 +20804,7 @@ static void m_check_all_wall(Player *m)
         const Hit *w = &h[walls[2]];
         V3 bd = vsub(w->pos, c), fd = vsub(mw.p4E8, c);
         if (!(mw.w8 && vdot(bd, fd) >= 0.0f && vlen(bd) >= vlen(fd))) {
-            mw.back = (Tri){w->inst, w->sub, w->prism, w->inst < 0 ? kcl_icestep : insts[w->inst].kcl};
+            mw.back = (Tri){w->inst, w->sub, w->prism, w->inst < 0 ? xpart_kcl(w->sub) : insts[w->inst].kcl};
             mw.p4F4 = w->pos;
             mw.w19 = 1;
         }
@@ -21201,7 +21271,7 @@ static void m_map_info(Player *m)
     if (m->grounded && !m_pg) {
         mw.ground_pos = m->pos;
         if (ground_prism) {
-            mw.last = (Tri){ground_inst, ground_sub, ground_prism, ground_inst < 0 ? kcl_icestep : insts[ground_inst].kcl};
+            mw.last = (Tri){ground_inst, ground_sub, ground_prism, ground_inst < 0 ? xpart_kcl(ground_sub) : insts[ground_inst].kcl};
             mw.l4BC = tri_pt_in(&mw.last, mw.ground_pos);
         }
     }
@@ -21669,7 +21739,9 @@ static int m_side_press(Player *m)
 }
 /* Mario::checkPressDamage: a vertical press (setPress 0), two walls closing in (checkSidePressPre, setPress 1), faces
  * moving into him (checkSidePress), or a wall with the Press floor code while on other ground (setPress 4, 120). The
- * vertical one only near a press object (the checks need one). ponytail: the push off walls closer than 200 (_72C) */
+ * vertical one only near a press object (the checks need one). With the ceiling under 200 (_72C) a faced front wall
+ * pushes him off it by its distance _4E4 x (200 / _72C - 1), a side wall by 60 x that (_72C 100 at least); not in a
+ * jump off a wall leaning over 0.707 on the gravity */
 static int m_check_press(Player *m)
 {
     if (m->launch >= 0) return 0;
@@ -21684,8 +21756,22 @@ static int m_check_press(Player *m)
     if (m_side_press_pre(m)) { m_set_press(m, 1); return 1; }
     if (m_side_press(m)) return 1;
     if (m_wall_floor_code(29) && m->grounded && m->floor != 29) { m_set_press(m, 4); return 1; } /* checkWallFloorCode(0x1D) */
+    float c72 = m_dist_to_ceil(m); /* _72C (Mario::update: calcDistToCeil(true)) */
+    if (c72 < 200.0f) {
+        V3 g = vmul(m->up, -1.0f);
+        if (mw.w8 && (!m->jumping || !(vdot(m_front_wall_norm(), g) > 0.707f))) {
+            if (c72 < 100.0f) c72 = 100.0f;
+            m->s350 = vadd(m->s350, vmul(m_front_wall_norm(), mw.f4E4 * (200.0f / c72) - mw.f4E4)); /* addVelocity */
+        }
+        if (mw.w1A && (!m->jumping || !(vdot(m_side_wall_norm(), g) > 0.707f))) {
+            if (c72 < 100.0f) c72 = 100.0f;
+            m->s350 = vadd(m->s350, vmul(m_side_wall_norm(), 60.0f * (200.0f / c72) - 60.0f));
+        }
+    }
     return 0;
 }
+static V3 m_ground_pos(void) { return mw.ground_pos; }
+static V3 m_shadow_pos(void) { return mw.shadow_pos; }
 
 static void hurt_mario(V3 from, float push);
 static int m_floor_severe(const Player *m, int code);
@@ -21701,6 +21787,22 @@ static int m_damage_floor(Player *m) /* damageFloorCheck: 1 the update ends ther
     case 4: if (!dm_damaging() && m_damage(m, vmul(m->ground_n, 10.0f))) return 1; break; /* _368 x 10 */
     case 15: if (m_paralyze(m)) return 1; break;
     case 16: if (m_do_recovery(m)) return 1; break;
+    }
+    return 0;
+}
+/* Mario::damagePolygonCheck (MarioDamage.cpp:339) on the ceiling within 160 of him (Mario::update: _1C._F, _4C8): its
+ * floor code as the ground's, without the severe test; DamageNormal is MarioSwim::addDamage off its normal */
+static void sw_add_damage(Player *m, V3 dir);
+static int m_damage_polygon(Player *m, int code, V3 n)
+{
+    switch (code) {
+    case 10: return m_fire_dance_damage(m, 0); /* (0x81 too) */
+    case 1: printf("death ceiling\n"); m_pad_vib(3); life = 0; miss(); return 1; /* forceKill(3) */
+    case 4: sw_add_damage(m, vmul(n, 10.0f)); return 1;
+    case 15: return m_paralyze(m);
+    case 16: return m_do_recovery(m);
+    case 24: m_fire_dance_damage(m, 1); return 1;
+    case 25: return 1; /* SinkDeath */
     }
     return 0;
 }
@@ -23802,7 +23904,7 @@ static void m_create_at_field(Player *m)
                 if (fabsf(vdot(vsub(h[j].pos, c), m->up)) > 80.0f) continue;
                 if (h[j].flag >= 2 && h[j].flag <= 4 && ang_abs_h(m_jv(m), vmul(h[j].n, -1.0f), m->up) < 0.7853982f) continue;
             } else if (!swimming) {
-                Tri t = {h[j].inst, h[j].sub, h[j].prism, h[j].inst < 0 ? kcl_icestep : insts[h[j].inst].kcl};
+                Tri t = {h[j].inst, h[j].sub, h[j].prism, h[j].inst < 0 ? xpart_kcl(h[j].sub) : insts[h[j].inst].kcl};
                 float a = (tri_attr(&t) & 0x3F) == 3 ? 60.0f : 45.0f; /* CollisionFloorCode_NoSlip */
                 if (m2.on && tri_moved(&t) && t.inst != m_gtri.inst) {
                     a = -1.0f;
@@ -24619,6 +24721,7 @@ static void update_mario_(void)
     m_dstate10 = 1;
     m_damage_wall(m);
     m_dstate10 = 0;
+    if (m_dist_to_ceil(m) < 160.0f && m_ceil_attr >= 0) m_damage_polygon(m, m_ceil_attr & 0x3F, m_ceil_n); /* _1C._F && _4C8 */
     if (!pg) m->slip_poly = m->grounded && slip_polygon(m, ground_attr & 0x3F, m->ground_n); /* updateGroundInfo: mDrawStates._C */
     if (m->grounded && !m->jumping) m->land_timer++; /* updateTimers: _3CE */
     mario_ground = m->grounded ? ground_inst : -1; mario_ground_sub = ground_sub; mario_wall_inst = m->wall ? wall_inst : -1;
@@ -24762,14 +24865,20 @@ static void miss_event_update(void)
     int f = mev.f, next = 0;
     if (mev.dark) mev.dark_f++; /* MarioActor::controlMain */
 #ifdef DOWN_TEST
-    if (f % 10 == 0 || mev.wipe_f == 1)
-        printf("down f %d: phase %d wipe %d dark %d layout end %d grounded %d clip %s dmg %d pos %.0f %.0f %.0f\n", f, mev.phase, mev.wipe_f, mev.dark_f,
+    if (f % 10 == 0 || mev.wipe_f == 1) {
+        V3 ce, cw, cu;
+        float cf;
+        camera_pose(&ce, &cw, &cu, &cf);
+        printf("down f %d: phase %d wipe %d dark %d layout end %d grounded %d clip %s dmg %d pos %.0f %.0f %.0f cam %.0f from him, its watch %.0f off him, fovy %.1f\n", f, mev.phase, mev.wipe_f, mev.dark_f,
                menu_miss_anim_end(), mario->grounded, mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-", dmg.st,
-               mario->pos.x, mario->pos.y, mario->pos.z);
+               mario->pos.x, mario->pos.y, mario->pos.z, vlen(vsub(ce, mario->pos)), vlen(vsub(cw, mario->pos)), cf);
+    }
 #endif
-    if (mev.sink) { /* MarioActor::exeGameOverSink: the swamp's (SinkDeathMud 31, SinkPoison 18) or the sand's sounds.
-                     * ponytail: its 砂埋まり体 / 手, 泥埋まり体 / 手 effects not ported */
+    if (mev.sink) { /* MarioActor::exeGameOverSink: the swamp's (SinkDeathMud 31, SinkPoison 18) or the sand's sounds;
+                     * at its first step 砂埋まり体 / 手 (SinkDeath 25, Sink 17) or 泥埋まり体 / 手 (31) */
         int swamp = mario->floor == 31 || mario->floor == 18;
+        if (f == 0 && (mario->floor == 25 || mario->floor == 17)) { mario_named_fx("DieBuryBody", NULL); mario_named_fx("DieBuryHand", NULL); }
+        if (f == 0 && mario->floor == 31) { mario_named_fx("DieDeathMudBody", NULL); mario_named_fx("DieDeathMudHand", NULL); }
         mario_sound(swamp ? "沼死亡" : "砂死亡");
         if (f == 90) mario_sound(swamp ? "声沼沈み死亡" : "声砂沈み死亡");
     }
@@ -25115,6 +25224,21 @@ static void hurt_mario(V3 from, float push) /* sendMsgEnemyAttack (the plain one
     mario_attack(ATK_ENEMY, from);
 }
 
+/* Coin::appearMove: a shared coin out at p with vel; its gravity against vel ((0, -1, 0) without one) unless the
+ * place has a gravity (calcGravityOrZero), mIsInWater (makeActorAppeared) */
+static void pop_add(V3 p, V3 vel)
+{
+    Pop *q = &pops[npops++];
+    float depth;
+    memset(q, 0, sizeof *q);
+    q->coin = ncoins; q->vel = vel;
+    q->grav = vlen(vel) > 0.001f ? vmul(vnorm(vel), -1.0f) : v3(0, -1.0f, 0);
+    q->grav = vmul(up_at(p, vmul(q->grav, -1.0f)), -1.0f);
+    q->water = (u8)(in_water(p, vmul(q->grav, -1.0f), &depth) != 0);
+    coins[ncoins].pos = p;
+    coins[ncoins].row = -1;
+    coins[ncoins++].alive = PICK_POP_NEW;
+}
 /* n coins popping out at p (CoinHolder::appearCoinPop): 25 against gravity, randomized by 4 when several */
 static void pop_coins(V3 p, V3 up, int n)
 {
@@ -25125,12 +25249,7 @@ static void pop_coins(V3 p, V3 up, int n)
     for (int k = 0; k < n; k++) {
         V3 rnd = n > 1 ? v3((rand() % 801 - 400) / 100.0f, (rand() % 801 - 400) / 100.0f, (rand() % 801 - 400) / 100.0f)
                        : v3(0, 0, 0);
-        pops[npops].coin = ncoins;
-        pops[npops].t = 0;
-        pops[npops++].vel = vadd(vmul(up, 25.0f), rnd);
-        coins[ncoins].pos = vadd(p, vmul(up, 50.0f));
-        coins[ncoins].row = -1;
-        coins[ncoins++].alive = PICK_POP_NEW;
+        pop_add(p, vadd(vmul(up, 25.0f), rnd));
     }
 }
 
@@ -36119,8 +36238,7 @@ static void update_wrecks(void)
 static void coin_to_velocity(V3 p, V3 vel)
 {
     se_start(SE_SY_COIN_APPEAR_S, NULL);
-    pops[npops].coin = ncoins; pops[npops].t = 0; pops[npops++].vel = vel;
-    coins[ncoins].pos = p; coins[ncoins].row = -1; coins[ncoins++].alive = PICK_POP_NEW;
+    pop_add(p, vel);
 }
 /* SpiderThread (MapObj/SpiderThread*.cpp): TombSpider's web, made by TombSpiderEnvironment (MR::initSpiderThread at the
  * boss's mPosition): 8 radial lines of 8 main points 175 apart hanging from the centre and turned 45 degrees about Z
@@ -37258,20 +37376,38 @@ static void break_inst(const Inst *in, int drops)
         printf("%s %d broken, its coin out\n", name, in->row);
         return;
     }
-    if (!strcmp(name, "BreakableTrash") && nwrecks < MAX_WRECKS) { /* BreakableCage::exeBreak (CAGE_TRASH): IRON_CAGE_BREAK,
-        * hidden, its BreakableCageBreak's Break clip, SW_DEAD at once, stopSceneAtStep(2, 6) within 1500, SW_B off at the
-        * clip's end (kill). ponytail: stopScene at once, not at step 2; the frustum test left out; SW_B left on */
+    if (!strcmp(name, "BreakableFixation")) { /* BreakableCage::exeBreak (CAGE_FIX): BREAK_FIXATION_BREAK, hidden, its Break
+        * effect, SW_DEAD at once, stopSceneAtStep(2, 6) within 1500, SW_B off and kill at the effect's end. ponytail:
+        * stopScene and SW_B at once; the frustum test left out */
+        se_start(SE_OJ_BREAK_FIXATION_BREAK, &p.x);
+        fx_named(name, "Break", in->m, NULL, NULL);
+        if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 0);
+        if (vlen(vsub(mario->pos, p)) < 1500.0f) scene_stop = 6;
+        row_kill(in->row);
+        printf("%s %d broken%c", name, in->row, 10);
+        return;
+    }
+    int bcage = !strcmp(name, "BreakableCage") || !strcmp(name, "BreakableCageRotate") || !strcmp(name, "BreakableCageL");
+    if ((!strcmp(name, "BreakableTrash") || (bcage && scene_model(sc, "BreakableCageBreak"))) && nwrecks < MAX_WRECKS) {
+        /* BreakableCage::exeBreak: IRON_CAGE_BREAK, hidden, its BreakableCageBreak's Break clip (the cages' once their
+         * packs carry it: slice.py), SW_DEAD, stopSceneAtStep(2, 16) with a power star inside (arg7 7), else (2, 6)
+         * within 1500, SW_B off at the clip's end (kill). ponytail: stopScene and SW_B at once, not at step 2 / the
+         * clip's end; the frustum test left out; SW_DEAD at once for every kind (a plain cage / L without arg2 or an
+         * item: at the clip's end); no 破壊 camera demo */
         se_start(SE_OJ_IRON_CAGE_BREAK, &p.x);
         typeof(&wrecks[0]) w = &wrecks[nwrecks++];
         memcpy(w->m, in->m, 64);
         w->bname = "BreakableCageBreak"; w->brk = scene_model(sc, w->bname); w->left = NULL; w->hide = 0;
         w->t = 0; w->row = in->row; w->p = p; w->up = up; w->coins = w->pieces = 0;
         if (r->sw[SW_DEAD] >= 0) sw_set(r, SW_DEAD, 1);
-        if (vlen(vsub(mario->pos, p)) < 1500.0f) scene_stop = 6;
+        if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 0);
+        if (bcage && r->arg[7] == 7) scene_stop = 16; /* isAppearPowerStar */
+        else if (vlen(vsub(mario->pos, p)) < 1500.0f) scene_stop = 6;
         row_kill(in->row);
         printf("%s %d broken%c", name, in->row, 10);
         return;
     }
+    if (bcage) se_start(SE_OJ_IRON_CAGE_BREAK, &p.x); /* (no break model in this pack) */
     if (!strcmp(name, "CrystalCageL") && nwrecks + 1 < MAX_WRECKS) { /* exeBreak: BVA frame 2 (the stump), mPosition at _F8
         * (the map 1000 above to 1000 below it, the cage's own collision left out), CrystalCageLBreak's Break clip at _94
         * (its place before), no Break effect (no effect keeper), no dead switch (tryOnSwitchDead): two wrecks, the clip
@@ -37326,7 +37462,7 @@ static void break_inst(const Inst *in, int drops)
         memcpy(w->m, in->m, 64);
         w->bname = box ? "WoodBoxBreak" : statue ? "KoopaStatueBreak" : "CrystalCageSBreak"; w->hide = 0;
         w->brk = scene_model(sc, w->bname);
-        w->left = statue || (box ? r->arg[1] != 0 : r->arg[0] != 1) ? scene_model(sc, v) : NULL;
+        w->left = statue || (box ? r->arg[1] != 0 : r->arg[0] == -1) ? scene_model(sc, v) : NULL; /* (the cage: mIsBreakObjVisible, arg0 as a bool: unset leaves the stump) */
         w->t = 0; w->row = in->row; w->p = p; w->up = up;
         w->coins = box ? n : 0; w->pieces = box ? sp : 0;
         if (cage) { pop_coins(p, up, n); scene_stop = 3; } /* appearCoinPop at once; stopScene(3) at step 2 */
@@ -37365,7 +37501,10 @@ static int explosion_breaks(V3 at, float rad)
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
         if (row_dead[in->row]) continue;
-        if (!woodbox_reached(in, at, rad) && (in->breaks != 5 || vlen(vsub(at, v3(in->m[12], in->m[13], in->m[14]))) > rad + in->reach)) continue;
+        /* CrystalCage::receiveMsgEnemyAttack: any enemy attack breaks an S / M cage in Wait (its body 130 x scale) */
+        int cage = in->breaks == 1 && !strncmp(sc->types + 32 * sc->objs[in->row].type, "CrystalCage", 11) && sc->types[32 * sc->objs[in->row].type + 11] != 'L' &&
+                   vlen(vsub(at, v3(in->m[12], in->m[13], in->m[14]))) < rad + 130.0f * in->s;
+        if (!cage && !woodbox_reached(in, at, rad) && (in->breaks != 5 || vlen(vsub(at, v3(in->m[12], in->m[13], in->m[14]))) > rad + in->reach)) continue;
         break_inst(in, 1);
         game_rebind();
         return 1;
@@ -37605,8 +37744,23 @@ static void break_boxes(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS));
     update_item_blocks();
-    for (int i = 0; i < ninsts; i++) /* SimpleBreakableObj::initCaseUseSwitchB: SW_B on breaks it */
+    { /* BreakableCage::exeWait (CAGE_NORMAL: BreakableCageRotate): it turns arg0 x 0.01 degrees a frame about its Y */
+        static const Scene *ts;
+        static int tr;
+        if (ts != sc) { ts = sc; tr = scene_type(sc, "BreakableCageRotate"); }
+        for (int i = 0; tr >= 0 && i < ninsts; i++) {
+            Inst *in = &insts[i];
+            const Row *r = &sc->objs[in->row];
+            if ((int)r->type != tr || row_dead[in->row] || r->arg[0] == -1 || !r->arg[0]) continue;
+            float a = r->arg[0] * 0.01f * 0.017453292f, cs = cosf(a), sn = sinf(a), old[16];
+            memcpy(old, in->m, 64);
+            for (int k = 0; k < 3; k++) { float x = old[k], z = old[8 + k]; in->m[k] = cs * x - sn * z; in->m[8 + k] = sn * x + cs * z; }
+            if (mario_ground == i) carry(old, in);
+        }
+    }
+    for (int i = 0; i < ninsts; i++) /* SimpleBreakableObj::initCaseUseSwitchB: SW_B on breaks it (not BreakableCage's kinds: they write SW_B) */
         if ((insts[i].breaks == 4 || insts[i].breaks == 5 || insts[i].breaks == 8) && !row_dead[insts[i].row] && sc->objs[insts[i].row].sw[SW_B] >= 0 &&
+            strncmp(sc->types + 32 * sc->objs[insts[i].row].type, "Breakable", 9) &&
             sw_on(&sc->objs[insts[i].row], SW_B)) {
             break_inst(&insts[i], 1);
             game_rebind();
@@ -46849,29 +47003,133 @@ static void update_items(void)
     }
 }
 
+static void pop_rebound(V3 *v, V3 n, float rv, float rh) /* MR::calcReboundVelocity(vel, normal, rateV, rateH) */
+{
+    float d = vdot(*v, n);
+    if (d < 0.0f) *v = vsub(vmul(vsub(*v, vmul(n, d)), rh), vmul(n, d * rv));
+}
+/* Coin::exeMove for the coins CoinHolder::appearCoin threw out: the nerve first (with the binder's faces of the last
+ * frame), then the move through its binder. ponytail: isPressedRoofAndGround (a press object squeezing it: offBind)
+ * is left out, m_bind has no moving parts' reaction; where the place has no gravity the last one is kept (not the
+ * ground's normal); CoinSpinBlur (exeSpinDrained) waits for the spin's ItemPull */
 static void update_pops(void)
 {
     for (int i = 0; i < npops; i++) {
         Pop *q = &pops[i];
         Pickup *c = &coins[q->coin];
-        if (c->alive == PICK_GONE || q->t >= 600) { c->alive = PICK_GONE; continue; }
-        q->t++;
-        V3 up = up_at(c->pos, mario->up), gn = up, wn;
-        int wall;
-        q->vel = vsub(q->vel, up);
-        V3 center = vadd(c->pos, q->vel);
-        int ground = collide_n(&center, up, 30.0f, &gn, &wn, &wall);
-        c->pos = center;
-        if (ground) { /* calcRebouond */
-            float into = -vdot(q->vel, gn);
+        if (c->alive == PICK_GONE) continue;
+        int st = q->t++; /* its nerve step */
+        if (st >= 600) { c->alive = PICK_GONE; continue; } /* mFlashCtrl->mIsEnded (start(_B0): 600) */
+        if (st > 30 && q->gr && q->fire) { /* past mCannotTime: isBindedGroundDamageFire */
+            float m[16];
+            basis_matrix(m, c->pos, vmul(q->grav, -1.0f), v3(0, 0, 1), 0);
+            fx_named("Coin", "LavaFall", m, NULL, NULL);
+            se_start(SE_OJ_FALL_IN_MAGMA_S, &c->pos.x);
+            c->alive = PICK_GONE;
+            continue;
+        }
+        if (in_death(c->pos)) { c->alive = PICK_GONE; continue; }
+        q->grav = vmul(up_at(c->pos, vmul(q->grav, -1.0f)), -1.0f); /* calcGravityOrZero */
+        V3 up = vmul(q->grav, -1.0f);
+        /* calcRebouond: the roof and the wall 0.6 / 0.5; the ground against -gravity, 0.75 from an impact of 2 (else
+         * 0), its horizontal part halved */
+        if (q->rf) pop_rebound(&q->vel, q->rn, 0.6f, 0.5f);
+        if (q->wl) pop_rebound(&q->vel, q->wn, 0.6f, 0.5f);
+        if (q->gr) {
+            float into = -vdot(q->vel, q->gn), rv = 0.0f;
             if (into >= 2.0f) { /* SE_OJ_COIN_BOUND, level A 100 x into / 30 (into at most 30) over 5: volume A / 100 */
                 int a = (int)(100.0f * (into > 30.0f ? 30.0f : into) / 30.0f);
                 if (a > 5) se_volpitch(se_start(SE_OJ_COIN_BOUND, &c->pos.x), a / 100.0f, 1.0f);
+                rv = 0.75f;
             }
-            if (into > 0) q->vel = vadd(q->vel, vmul(gn, into * (into >= 2.0f ? 1.75f : 1.0f)));
+            pop_rebound(&q->vel, up, rv, 0.5f);
         }
-        q->vel = vmul(q->vel, ground ? 0.9f : 0.995f);
-        c->alive = q->t < 30 ? PICK_POP_NEW : q->t > 480 && (q->t & 4) ? PICK_POP_BLINK : PICK_ON;
+        q->vel = vadd(q->vel, vmul(q->grav, q->water ? 0.3f : 1.0f));
+        /* attenuateVelocity: 0.8 in water, 0.9 on the ground (isOnGround: not leaving it), else 0.995 */
+        q->vel = vmul(q->vel, q->water ? 0.8f : q->gr && !(vdot(q->vel, q->gn) > 0.0f) ? 0.9f : 0.995f);
+        /* its binder (initBinder(55, 70, 0): a sphere of 55 at 70 along its base matrix's Y, -gravity) and the faces
+         * it kept (Binder::storeContactPlane) */
+        V3 ctr = vadd(c->pos, vmul(up, 70.0f)), to = m_bind(ctr, q->vel, 55.0f);
+        c->pos = vadd(c->pos, vsub(to, ctr));
+        float dg = -1.0f, dw = -1.0f, dr = -1.0f;
+        q->gr = q->wl = q->rf = q->fire = 0;
+        for (int k = 0; k < b_n; k++) {
+            V3 n = tri_n(&b_tri[k]);
+            float d = vdot(n, q->grav);
+            if (fabsf(d) < 0.34202015f) { if (dw < b_dep[k]) { dw = b_dep[k]; q->wl = 1; q->wn = n; } }
+            else if (d < 0.0f) { if (dg < b_dep[k]) { dg = b_dep[k]; q->gr = 1; q->gn = n; q->fire = (u8)((tri_attr(&b_tri[k]) & 0x3F) == 10); } }
+            else if (dr < b_dep[k]) { dr = b_dep[k]; q->rf = 1; q->rn = n; }
+        }
+        /* validateHitSensors at mCannotTime (30); FlashingCtrl: from 180 frames left hidden while (left / interval)
+         * is even, interval 10, 5 under 90 left; not in a demo */
+        int left = 600 - (st + 1);
+#ifdef POP_LOG /* XF=-DPOP_LOG: the first popped coins' move every 10 frames */
+        if (i < 2 && (st % 10 == 0 || st < 3)) {
+            V3 h = vsub(q->vel, vmul(up, vdot(q->vel, up)));
+            printf("pop %d f %d: at %.0f %.0f %.0f up %.2f side %.2f gr %d wl %d rf %d water %d\n", i, st, c->pos.x, c->pos.y, c->pos.z,
+                   vdot(q->vel, up), vlen(h), q->gr, q->wl, q->rf, q->water);
+        }
+#endif
+        c->alive = st < 30 ? PICK_POP_NEW
+                 : left <= 180 && !demo_on && !((left / (left < 90 ? 5 : 10)) & 1) ? PICK_POP_BLINK : PICK_ON;
+    }
+}
+
+/* CoinGroup.cpp (CircleCoinGroup, RailCoin and the purple ones) with an appear switch: Appear (the switch on: at
+ * step sAppearDelayTime 3 SE_SY_COIN_APPEAR / SE_SY_PURPLE_COIN_APPEAR and its coins out) or, with an actor camera,
+ * DemoAppear (the demo 出現: startActorCameraTargetSelf, SE_SY_COIN_APPEAR and the coins out at its first step, over
+ * after sDemoAppearTime 90). arg1 >= 0: appearCoinAllTimer (Coin::appearFixTimer(arg1, -1) / exeFixTimer: not to be
+ * taken for 30 frames, flashing as FlashingCtrl, killed after arg1). row_turn: 0 waiting, 1 Appear / DemoAppear, 2 out;
+ * row_step its step. ponytail: the demo cast's コイン出現 action is not registered (a group with a demo and no switch
+ * is out from the start); sAppearCameraTime's blend is the camera's own */
+static void update_coin_groups(void)
+{
+    for (int g = 0; g < ncgroups; g++) {
+        int row = cgroups[g].row;
+        const Row *r = &sc->objs[row];
+        Pickup *p = (cgroups[g].purple ? purple : coins) + cgroups[g].first;
+        if (row_dead[row]) continue;
+        if (row_turn[row] == 0) {
+#ifdef CGROUP_TEST /* XF=-DCGROUP_TEST: every waiting CoinGroup's appear switch on at frame 300 */
+            if (game_frame == 300) { sw_set(r, SW_APPEAR, 1); printf("coin group %d: test switch on (arg1 %d)\n", row, r->arg[1]); }
+#endif
+            if (!sw_on(r, SW_APPEAR)) continue;
+            if (row_camset[row] != -1) { /* isExistActorCamera: requestStartDemo */
+                if (!pd_try_start("出現", row)) continue;
+                V3 x, z;
+                row_axes(r, &x, &z);
+                cgroups[g].demo = (u8)(1 + (camera_actor_start(sc->types + 32 * r->type, "", (unsigned short)row_camset[row], vcross(z, x), z, row_pos(r)) != 0));
+                menu_cinema(1);
+            }
+            row_turn[row] = 1; row_step[row] = 0;
+        }
+        int st = row_step[row];
+        if (row_step[row] < 0xFFFF) row_step[row]++;
+        if (row_turn[row] == 1) {
+            if (st == (cgroups[g].demo ? 0 : 3)) {
+                se_start(cgroups[g].purple && !cgroups[g].demo ? SE_SY_PURPLE_COIN_APPEAR : SE_SY_COIN_APPEAR, NULL);
+                for (int k = 0; k < cgroups[g].n; k++) p[k].alive = cgroups[g].limit < 0 ? PICK_ON : PICK_POP_NEW;
+                printf("coin group %d: %d coins out (limit %d, demo %d)\n", row, cgroups[g].n, cgroups[g].limit, cgroups[g].demo);
+                if (!cgroups[g].demo) { row_turn[row] = 2; row_step[row] = 1; }
+                continue;
+            }
+            if (cgroups[g].demo && st > 90) { /* isGreaterStep(sDemoAppearTime): endDemo, endActorCamera */
+                pd_end("出現");
+                if (cgroups[g].demo == 2) camera_event_stop();
+                menu_cinema(0);
+                cgroups[g].demo = 0; row_turn[row] = 2; row_step[row] = (unsigned short)(st + 1);
+            }
+        }
+        if (cgroups[g].limit < 0 || row_turn[row] == 0) continue;
+        /* exeFixTimer: its coins' step is the frames since they came out (the demo's first step, or the Appear's 3) */
+        if (row_turn[row] == 1 && !cgroups[g].demo) continue;
+        int cs = st - 1, left = cgroups[g].limit - (cs + 1);
+        if (cs < 0) continue;
+        for (int k = 0; k < cgroups[g].n; k++) {
+            if (p[k].alive == PICK_GONE) continue;
+            p[k].alive = left <= 0 ? PICK_GONE : cs < 30 ? PICK_POP_NEW
+                       : left <= 180 && !demo_on && !((left / (left < 90 ? 5 : 10)) & 1) ? PICK_POP_BLINK : PICK_ON;
+        }
     }
 }
 
@@ -48842,6 +49100,16 @@ static void put_test(void)
                     row_axes(&sc->objs[row], &x, &z);
                     mario->pos = vadd(row_pos(&sc->objs[row]), vmul(vcross(z, x), PUT_UP));
                 }
+                if (row >= 0 && !strcmp(cls, "CollisionArea")) { /* 30 before the +X face (its AreaPolygon's first face) of
+                                                                   * the first shown one that has a polygon there */
+                    int t = (int)sc->objs[row].type;
+                    for (u32 i = 0; i < sc->nobjs; i++)
+                        if ((int)sc->objs[i].type == t && (sc->objs[i].arg[3] & 1) && row_shown((int)i)) { row = (int)i; break; }
+                    V3 x, z;
+                    row_axes(&sc->objs[row], &x, &z);
+                    mario->pos = vadd(row_pos(&sc->objs[row]), vmul(x, 500.0f * sc->objs[row].scale[0] + 30.0f));
+                    mario->hvel = v3(0, 0, 0); mario->vup = 0;
+                }
                 printf("put file: %s row %d, inside %d, SW_A %d" "\n", cls, row, row >= 0 && area_inside(&sc->objs[row], mario->pos),
                        row >= 0 ? sc->objs[row].sw[SW_A] : -1);
             }
@@ -50744,11 +51012,75 @@ static int vg_hidden(const Inst *in)
  * (_40), from outside to the radius off the point of the face or edge (if that goes along the normal).
  * hitCheck's corner region (out of all three extents) measures from the corner without the box's centre, as Petari
  * does: it only hits by the world's origin.
- * ponytail: AreaPolygon (arg3 not 0: the face's two triangles 10 out as a DynamicCollisionObj, a wall for his binder
- * and for the other actors) is not ported, the push alone holds him; MarioAccess::addVelocityFromArea's _EA4 and the
- * rush hosts other than a launch star and the Tamakoro (_934) are not checked; no follow matrix */
+ * AreaPolygon (arg3 not 0; a DynamicCollisionObj): the two triangles of one face of the box, 10 wider and farther out
+ * unless he is Teresa Mario (setSurface), as a collision part for every sphere and segment query (kcl_query_ /
+ * kcl_line: Hit.inst -1, sub ICE_STEPS + the area). It starts on face 0 (+X) and moves to the face hitCheck finds
+ * him nearest (its bit in arg3: setSurfaceAndSync); invalid with the area and while _58 holds. Its KCL is built as
+ * DynamicCollisionObj::createCollision / updateTriangle / updateCollisionHeader do: one prism a triangle (its first
+ * vertex, the face and three edge normals, its height), thickness 40, one octree leaf listing prisms 2 and 1.
+ * ponytail: MarioAccess::addVelocityFromArea's _EA4 and the rush hosts other than a launch star and the Tamakoro
+ * (_934) are not checked; no follow matrix; the prisms' attribute (their index, of no attribute table) is 0, a
+ * plain face; the header's block shift is 30, not 33 less the extents' leading zeros (one leaf either way) */
 static short *col_areas; /* the rows; bit 15: _58 */
-static int ncol_areas;
+static int ncol_areas, col_surface; /* (hitCheck's surface: 0 +X, 1 -X, 2 +Y, 3 -Y, 4 +Z, 5 -Z; -1 none) */
+typedef struct { unsigned kcl[59]; V3 c; float r; signed char surface, has, on, teresa; } ColPoly;
+static ColPoly *cpolys;
+static const unsigned char *cpoly_at(int i, V3 *c, float *r)
+{
+    const ColPoly *p = &cpolys[i];
+    if (!p->on) return NULL;
+    if (c) { *c = p->c; *r = p->r; }
+    return (const unsigned char *)p->kcl;
+}
+static void cpoly_set(ColPoly *p, const Row *r, int surface) /* AreaPolygon::setSurface, syncCollision */
+{
+    static const signed char q[6][4][3] = {{{1, -1, -1}, {1, 1, -1}, {1, 1, 1}, {1, -1, 1}}, {{-1, -1, 1}, {-1, 1, 1}, {-1, 1, -1}, {-1, -1, -1}},
+                                           {{-1, 1, -1}, {-1, 1, 1}, {1, 1, 1}, {1, 1, -1}}, {{-1, -1, 1}, {-1, -1, -1}, {1, -1, -1}, {1, -1, 1}},
+                                           {{-1, -1, 1}, {1, -1, 1}, {1, 1, 1}, {-1, 1, 1}}, {{-1, 1, -1}, {1, 1, -1}, {1, -1, -1}, {-1, -1, -1}}};
+    struct { unsigned pos, nrm, prism, octree; float thickness, min[3]; int mask[3], shift, xshift, xyshift; } *h = (void *)p->kcl;
+    struct { float height; unsigned short pos, nrm, edge[3], attr; } *pr = (void *)((unsigned char *)p->kcl + 176);
+    float *pos = (float *)((unsigned char *)p->kcl + 56), *nrm = (float *)((unsigned char *)p->kcl + 80);
+    V3 ax, az, v[4], lo, hi;
+    row_axes(r, &ax, &az);
+    V3 ay = vcross(az, ax), c = row_pos(r);
+    float s[3] = {500.0f * r->scale[0], 500.0f * r->scale[1], 500.0f * r->scale[2]};
+    p->surface = (signed char)surface; p->teresa = player_mode == PM_TERESA;
+    if (!p->teresa) for (int k = 0; k < 3; k++) s[k] += s[k] < 0.0f ? -10.0f : 10.0f; /* (isPlayerElementModeTeresa: not) */
+    for (int i = 0; i < 4; i++) {
+        v[i] = vadd(c, vadd(vadd(vmul(ax, q[surface][i][0] * s[0]), vmul(ay, q[surface][i][1] * s[1])), vmul(az, q[surface][i][2] * s[2])));
+        if (i == 0) lo = hi = v[0];
+        lo = v3(fminf(lo.x, v[i].x), fminf(lo.y, v[i].y), fminf(lo.z, v[i].z));
+        hi = v3(fmaxf(hi.x, v[i].x), fmaxf(hi.y, v[i].y), fmaxf(hi.z, v[i].z));
+    }
+    memset(p->kcl, 0, sizeof p->kcl);
+    h->pos = 56; h->nrm = 80; h->prism = 176; h->octree = 224; h->thickness = 40.0f;
+    h->min[0] = lo.x; h->min[1] = lo.y; h->min[2] = lo.z;
+    float ext[3] = {hi.x - lo.x, hi.y - lo.y, hi.z - lo.z};
+    for (int k = 0; k < 3; k++) { /* updateCollisionHeader: the mask over its extent's bits */
+        unsigned val = (unsigned)(int)ext[k], bits = 0;
+        if (!val) val = 1;
+        while (val >> bits) bits++;
+        h->mask[k] = (int)~((bits >= 32 ? 0u : 1u << bits) - 1u);
+    }
+    h->shift = 30; h->xshift = -1; h->xyshift = -1;
+    for (int i = 0; i < 2; i++) { /* updateTriangle: (0, 1, 2), (0, 2, 3) */
+        V3 v1 = v[0], v2 = v[i + 1], v3_ = v[i + 2];
+        V3 a = vsub(v3_, v1), save = a, b = vsub(v2, v1), cc = vsub(v3_, v2);
+        a = vnorm(a); b = vnorm(b); cc = vnorm(cc);
+        V3 n = vnorm(vcross(b, a));
+        V3 e[4] = {n, vnorm(vcross(vmul(a, -1.0f), n)), vnorm(vcross(b, n)), vnorm(vcross(cc, n))};
+        pos[3 * i] = v1.x; pos[3 * i + 1] = v1.y; pos[3 * i + 2] = v1.z;
+        for (int k = 0; k < 4; k++) { nrm[3 * (4 * i + k)] = e[k].x; nrm[3 * (4 * i + k) + 1] = e[k].y; nrm[3 * (4 * i + k) + 2] = e[k].z; }
+        pr[i + 1].height = vlen(vtangent(save, cc)); /* vecKillElement(SaveForLater, c) */
+        pr[i + 1].pos = (unsigned short)i; pr[i + 1].nrm = (unsigned short)(4 * i);
+        for (int k = 0; k < 3; k++) pr[i + 1].edge[k] = (unsigned short)(4 * i + 1 + k);
+    }
+    *(int *)((unsigned char *)p->kcl + 224) = (int)0x80000004u; /* the leaf: its list 4 on */
+    ((unsigned short *)((unsigned char *)p->kcl + 228))[1] = 2;
+    ((unsigned short *)((unsigned char *)p->kcl + 228))[2] = 1;
+    p->c = vmul(vadd(vadd(v[0], v[1]), vadd(v[2], v[3])), 0.25f);
+    p->r = vlen(vsub(v[0], p->c)) + 40.0f;
+}
 static void col_areas_init(const Scene *s)
 {
     int t = scene_type(s, "CollisionArea");
@@ -50757,6 +51089,30 @@ static void col_areas_init(const Scene *s)
     col_areas = ncol_areas ? mem_alloc(MEM_SCENE, ncol_areas * sizeof *col_areas) : NULL;
     ncol_areas = 0;
     for (u32 i = 0; t >= 0 && i < s->nobjs && i < 0x8000; i++) if ((int)s->objs[i].type == t) col_areas[ncol_areas++] = (short)i;
+    ncpolys = 0;
+    cpolys = ncol_areas ? mem_alloc(MEM_SCENE, ncol_areas * sizeof *cpolys) : NULL;
+    for (int i = 0; i < ncol_areas; i++) { /* CollisionArea::init: no AreaPolygon with arg3 0; setSurface(0) */
+        const Row *r = &s->objs[col_areas[i]];
+        memset(&cpolys[i], 0, sizeof cpolys[i]);
+        if (r->arg[3] == 0) continue;
+        cpolys[i].has = 1;
+        cpoly_set(&cpolys[i], r, 0);
+#ifdef PUT_TEST /* the KCL just built asked as the engine asks it: a sphere of 60 whose centre is 30 before the face's
+                 * middle (a hit 30 deep), a segment from 100 before it to 100 behind (half way) */
+        if (!ncpolys++) {
+            V3 ax, az;
+            row_axes(r, &ax, &az);
+            V3 c = cpolys[i].c, a = vadd(c, vmul(ax, 30.0f)), b = vadd(c, vmul(ax, 100.0f)), d = vmul(ax, -200.0f);
+            float fc[3] = {a.x, a.y, a.z}, fo[3] = {b.x, b.y, b.z}, fd[3] = {d.x, d.y, d.z}, frac = 0.0f;
+            KclHit h[4];
+            int got = kcl_check_sphere((const unsigned char *)cpolys[i].kcl, fc, 60.0f, h, 4);
+            int pr = kcl_check_arrow((const unsigned char *)cpolys[i].kcl, fo, fd, &frac);
+            printf("collision area: polygon self check row %d: sphere hits %d (prism %d flag %d depth %d), segment prism %d at %d / 100" "\n",
+                   (int)col_areas[i], got, got ? h[0].prism : 0, got ? h[0].flag : 0, got ? (int)h[0].dist : 0, pr, (int)(frac * 100.0f));
+        }
+#endif
+    }
+    ncpolys = ncol_areas;
 }
 static int col_area_hit(const Row *r, V3 p, float radius, V3 *pt, V3 *nrm, int *count, float *depth) /* hitCheck */
 {
@@ -50767,6 +51123,7 @@ static int col_area_hit(const Row *r, V3 p, float radius, V3 *pt, V3 *nrm, int *
     float l[3] = {vdot(rel, ax), vdot(rel, ay), vdot(rel, az)};
     V3 axis[3] = {ax, ay, az};
     int out[3], n = 0;
+    col_surface = -1;
     for (int k = 0; k < 3; k++) if (fabsf(l[k]) >= size[k] + radius) return 0;
     for (int k = 0; k < 3; k++) n += out[k] = fabsf(l[k]) >= size[k];
     *count = n; /* _3C */
@@ -50791,6 +51148,7 @@ static int col_area_hit(const Row *r, V3 p, float radius, V3 *pt, V3 *nrm, int *
         float sgn = l[k] < 0.0f ? -1.0f : 1.0f; /* a face (n 1): its normal; an edge (n 2): the two faces' sum */
         nv = vadd(nv, vmul(axis[k], sgn));
         l[k] = sgn * size[k];
+        if (n == 1) col_surface = 2 * k + (sgn < 0.0f);
     }
     *pt = vadd(vadd(vadd(vmul(ax, l[0]), vmul(ay, l[1])), vmul(az, l[2])), c);
     *nrm = vnorm(nv);
@@ -50799,16 +51157,37 @@ static int col_area_hit(const Row *r, V3 p, float radius, V3 *pt, V3 *nrm, int *
 static void update_collision_areas(void)
 {
     int through = player_mode == PM_TERESA && mario->t418; /* MR::isPlayerTeresaDisappear */
+#ifdef PUT_TEST
+    { /* Mario on or against an AreaPolygon (a ground or wall part that is no instance's, its sub from ICE_STEPS on) */
+        static int t;
+        if (t++ % 60 == 0 && ncol_areas)
+        {
+            printf("collision area: mario at %d %d %d grounded %d (part %d sub %d) wall %d, polygon hits %d" "\n", (int)mario->pos.x,
+                   (int)mario->pos.y, (int)mario->pos.z, mario->grounded, ground_inst, ground_sub, mario->wall, cpoly_hits);
+            cpoly_hits = 0;
+        }
+    }
+#endif
     for (int i = 0; i < ncol_areas; i++) {
         int row = col_areas[i] & 0x7FFF;
         const Row *r = &sc->objs[row];
+        ColPoly *cp = &cpolys[i];
+        cp->on = 0;
         if (!row_shown(row)) continue;
         if (r->arg[1] == -1 && through) { col_areas[i] |= (short)0x8000; continue; }
         int s58 = (col_areas[i] & 0x8000) != 0, count = 0;
         float radius = r->arg[2] > 0 ? (float)r->arg[2] : player_mode == PM_TERESA ? 100.0f : 60.0f, depth = 0.0f; /* getPlayerHitRadius */
         if (s58) radius += 5.0f;
         V3 pt, n, push;
-        if (!col_area_hit(r, mw.c, radius, &pt, &n, &count, &depth)) { col_areas[i] &= 0x7FFF; continue; }
+        if (!col_area_hit(r, mw.c, radius, &pt, &n, &count, &depth)) { col_areas[i] &= 0x7FFF; cp->on = cp->has; continue; }
+        cp->on = cp->has && !s58;
+        if (cp->has && col_surface >= 0 && (r->arg[3] & (1 << col_surface)) &&
+            (cp->surface != col_surface || cp->teresa != (player_mode == PM_TERESA))) {
+            cpoly_set(cp, r, col_surface); /* setSurfaceAndSync */
+#ifdef PUT_TEST
+            printf("collision area: row %d polygon on face %d" "\n", row, col_surface);
+#endif
+        }
         if (s58 || r->arg[0] != -1) continue;
         if (count == 0) push = vmul(n, radius + depth);
         else {
@@ -58837,6 +59216,7 @@ void game_update(void)
     update_launch_appear();
     LQ(65, update_switches());
     LQ(66, update_pops());
+    if (ncgroups) update_coin_groups();
     int had = got_coins;
     if (!opening_on) LQ(67, collect(coins, ncoins, 100.0f, 55.0f, &got_coins, FX_COIN_COINGET, SE_SY_COIN)); /* Coin::noticeGetCoin */
     if (got_coins > had && life < max_life) mario_sound("ライフ回復"); /* MarioActor::incLife */

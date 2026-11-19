@@ -23,6 +23,69 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   note). **Repack: slice_all.py SnowCapsuleGalaxy** (no sound pack: sfxcut already keeps the class's sounds from
   TrickRabbitSnowCollect.cpp / TrickRabbitSnow.cpp). Checked: an overlay slice of SnowCapsuleGalaxy 1 (TYPE has both
   classes, ANIM the 34 rabbit clips and PStar's TakeOutStarTrickRabbit, TALK 432 -> 1872 bytes).
+- CollisionArea's AreaPolygon (feat/717-area-polygon, #717, 2026-11-19, agent areas2): the 118 CollisionAreas with
+  arg3 not 0 put a DynamicCollisionObj of two triangles on one face of their box (#713 had the push alone). `cpoly_set`
+  (AreaPolygon::setSurface, DynamicCollisionObj::createCollision / updateTriangle / updateCollisionHeader): the
+  face's quad, 10 wider and farther out unless he is Teresa Mario, as a 236-byte KCL in world space: a prism a
+  triangle (its first vertex, the face normal and the three edge normals, its height), thickness 40, one octree
+  leaf listing prisms 2 and 1. It starts on face 0 (+X); update_collision_areas moves it to the face hitCheck finds
+  Mario nearest when arg3 has its bit (setSurfaceAndSync), and turns it off with the area and while a vanished
+  Teresa Mario passes (_58). The parts that are no instance's (Hit.inst -1) are now of two kinds by their sub:
+  IceStep's (under ICE_STEPS) and the areas' polygons (ICE_STEPS + the area): `xpart_kcl` gives their KCL to every
+  Tri made from a hit, tri_part their matrix (identity), kcl_query_ and kcl_line ask them (`cpoly_at`) after the
+  instances: Mario's binder, the walkers, the camera's lines and the shadows meet them as any face. ColPoly: 256
+  bytes an area from the scene arena. ponytail: the prisms' attribute (their index, of no table) is 0, a plain
+  face; the header's block shift is 30 (one leaf either way). Tests: plain with `-DPUT_TEST=... -DPUT_FILE` and
+  CollisionArea in out/put.txt (Mario put 30 before the +X face of the first shown area with a polygon there;
+  the first KCL built is asked as the engine asks: "polygon self check row N: sphere hits 2 (prism 2 flag 1 depth
+  30), segment prism 1 at 49 / 100"): EggStarGalaxy/2, a plate of the gravity room: one push of 20, then he rests
+  against it, "polygon hits 180" a second; HellProminenceGalaxy/1: 81 hits before he falls (three scene restarts
+  without trouble). XF=-DGROOM_TEST=1 (EggStarGalaxy/2) walks the corner bridge as before (`ok` from f 1220, the
+  same places); the route test (EggStarGalaxy/1, the overlay's CollisionArea rows) gets its star at f 4281.
+  Memory: _end +4736 B (memcheck against the tree before it). No repack of its own (the rows are #713's).
+- Coin::exeMove for the popped coins, CoinGroup's appear (feat/646-coin-move, #646, 2026-11-19): game.c update_pops
+  rewritten after Coin.cpp: the nerve first, with the binder's faces of the last frame (a DamageFire ground past the
+  cannot time 30: LavaFall, SE_OJ_FALL_IN_MAGMA_S, kill; a death area: kill; calcRebouond: roof and wall 0.6 / 0.5, the
+  ground against -gravity 0.75 from an impact of 2 (else 0) with the horizontal part x 0.5 each grounded frame, the
+  port only damped 0.9; gravity x 0.3 and attenuation 0.8 in water, mIsInWater taken at the appear), then the move
+  through its binder (m_bind: 55 at 70 along -gravity; it was a sphere of 30 at the coin). pop_add (appearMove): the
+  coin starts at the place given (pop_coins put it 50 up), its gravity against its velocity where the place has
+  none. FlashingCtrl: flashing from 180 left (it was 120), interval 10, 5 under 90, hidden while (left / interval) is
+  even, not in a demo. CoinGroup (CircleCoinGroup, RailCoin, the purple ones) with an appear switch
+  (update_coin_groups, PICK_WAIT until then): Appear (step 3: SE_SY_COIN_APPEAR / SE_SY_PURPLE_COIN_APPEAR, the coins
+  out) or DemoAppear with an actor camera (出現, 90 frames); arg1 >= 0 the time limit (appearFixTimer: not taken for
+  30 frames, flashing, gone after arg1). ponytail: isPressedRoofAndGround (m_bind has no moving parts' reaction),
+  CoinSpinBlur (no ItemPull), the demo cast's コイン出現 action. jpa.py NAMED: Coin's LavaFall.
+  PCSX2: `box` FlipPanelExGalaxy/1 with XF=-DPOP_LOG: the box's two coins thrown 25 up, falling 1 a frame, each
+  landing answering 0.75 (57 down, 42 up), 10 `se+ 00050017` (SE_OJ_COIN_BOUND); `route` EggStarGalaxy/1: star got, f
+  4281 (built with #652's branch merged in); XF=-DCGROUP_TEST IceVolcanoGalaxy/1: its eight timed groups (arg1 900)
+  out 3 frames after their switch, each with `se? 00000001` (SE_SY_COIN_APPEAR: a new name, in no pack yet). Not
+  run: a lava floor, water, a death area under a coin; the groups' 900 frames to their end. **Release: slice_all.py**
+  (jpa.py NAMED Coin: every scene.bin's PTCL) **+ sound.py --pack** (the global sound.bin and the galaxies': the three
+  new SE names): covered by the full repack.
+- Mario's ponytail marks, batch 2 (feat/749-mario-marks-2, #749, 2026-11-19): Mario::damagePolygonCheck on the
+  ceiling within 160 of him (Mario.cpp:1728; m_damage_polygon on calcDistToCeil's face: fire, needle, electric,
+  PullBack, Death; DamageNormal is MarioSwim::addDamage); checkPressDamage's push off a faced front wall (its
+  distance _4E4 x (200 / _72C - 1)) and a side wall (60 x that) with the ceiling under 200 (MarioPress.cpp:43); the
+  wade's rings at mGroundPos (the steps) and mShadowPos (standing) and not his place (MarioWalk.cpp:182);
+  Mario::playSoundJ's water companion while he wades (kind & 0xC: 水跳ねジャンプ / 水跳ね着地 with ジャンプ踏切 / 着地 /
+  尻ドロップ着地: the table and the packs had them); exeGameOverSink's 砂埋まり体 / 手 and 泥埋まり体 / 手 (jpa.py NAMED
+  Mario: DieBuryBody / DieBuryHand / DieDeathMudBody / DieDeathMudHand: resident.bin has to be packed again to show
+  them). Not run in PCSX2 but for the route (star at f 4281): no test puts him under a damage ceiling, between a
+  wall and a low ceiling, or wading.
+- CrystalCage / BreakableCage, part of #648 (fix/648-cages, 2026-11-19, agent audit-a; **not run in PCSX2**): CrystalCage:
+  arg0 is a bool (mIsBreakObjVisible: only unset leaves the stump; the port tested == 1), an explosion breaks an S / M
+  cage in Wait (receiveMsgEnemyAttack; explosion_breaks, its body 130 x scale). BreakableCage.cpp: BreakableCage /
+  Rotate / L break like BreakableTrash did (break_inst: SE_OJ_IRON_CAGE_BREAK, the BreakableCageBreak model's Break
+  clip once their packs carry it, stopScene 16 with a power star inside (arg7 7), else 6 within 1500, SW_B put off);
+  BreakableFixation (CAGE_FIX, 2 placed, had no code): an explosion breaks it (SE_OJ_BREAK_FIXATION_BREAK, its Break
+  effect, the dead switch); BreakableCageRotate turns arg0 x 0.01 degrees a frame about its Y (break_boxes); a
+  Breakable kind whose SW_B is on is no longer broken by it (they write SW_B; SimpleBreakableObj's rule stays for
+  the others). Left in #648: the item drawn inside a cage (DummyDisplayModel by arg7), SW_DEAD's delays, the 破壊
+  camera demo, the binder of arg2, and what breaks a BreakableCage (still Mario's spin: Petari wants the thrown shell
+  or an enemy attack, #649's shell does not reach map objects yet). **Release: slice_all.py for the galaxies with a
+  BreakableCage / Rotate / L (slice.py: BreakableCageBreak with them) or a BreakableFixation (jpa.py NAMED): covered
+  by the full repack.**
 - GCaptureTarget's own nerves (feat/647-gcapture-target, #647, 2026-11-19, agent audit-a): game.c update_gcap_targets
   after GCaptureTarget.cpp: Wait (the Wait clip's rate, mStarAnimSpeed, down 0.05 a frame to 0; no effect), Pointable
   with Mario within arg1 / 2500 (the TouchAble burst, TargetLight kept, the rate up to 0.5), HitPointer while GCapture
