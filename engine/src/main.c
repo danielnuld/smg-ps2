@@ -1745,6 +1745,12 @@ int main(void)
             if (frame % 10 == 0) printf("dring test f %u: %d\n", frame, st);
         }
 #endif
+#ifdef LAUNCHER_TEST
+        if (frame >= 900 && frame < 4000) { /* MarioLauncher (after the stage start): Mario in, the aim, the shot (or the reject) */
+            int st = game_test_launcher();
+            if (frame % 50 == 0) printf("launcher test f %u: %d\n", frame, st);
+        }
+#endif
 #ifdef BIGBUBBLE_TEST
         if (frame >= 900 && frame < 2400) { /* BigBubble (after the stage start): Mario in, pushed by the pointer, Z out */
             int st = game_test_bigbubble((int)frame);
@@ -2582,7 +2588,11 @@ int main(void)
         {
             static int row = -1;
 #ifdef RAIL_TEST
+#ifdef STAGE_ANM /* (XF=-DSTAGE_TEST=0 -DSTAGE_ANM: game.c game_test_rotor) */
+            if (frame >= 120 && frame % 120 == 0 && row < 0) printf("rail test: on row %d\n", row = game_test_rotor(1));
+#else
             if (frame == 120) printf("rail test: on row %d\n", row = game_test_rotor(1));
+#endif
 #else
             if (frame == 120) printf("rotor test: on row %d\n", row = game_test_rotor(0));
 #endif
