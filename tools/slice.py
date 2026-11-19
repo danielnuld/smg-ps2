@@ -393,8 +393,12 @@ def rows(b):
 def map_parts(b, rs):
     """mappartsinfo rows: Obj_arg0-3 as usual, the MapPartsRotator columns in args 4-7: RotateSpeed, RotateAngle,
     RotateAxis, then bit 30 (a map part) | RotateType (bits 0-3, default 1) | RotateAccelType << 4 | MoveConditionType
-    << 8 | RotateStopTime << 12 (unset: Petari's defaults, 0 but the type)."""
+    << 8 | RotateStopTime << 12 (unset: Petari's defaults, 0 but the type). A seesaw's RotateAccelType is its inertia
+    (100-2000, over the four bits): written whole to arg 3, which those classes do not read."""
     n = len(rs)
+    seesaws = {"PhantomShipHandle", "LavaHomeSeesaw", "KoopaShipSeesawStep", "IceVolcanoBalanceStepA", "IceVolcanoBalanceStepB",
+               "IceMountainSeesawSlipA", "IceMountainSeesawSlipB", "IceMountainSeesawSlipC", "IceMountainSeesawSlipD",
+               "IceMountainSeesawNoSlipA"}  # MapPartsSeesaw1AxisRotator / 2AxisRotator / LavaHomeSeesawRotator hosts
     col = {f: int_or(b, f, n, -1) for f in ("RotateSpeed", "RotateAngle", "RotateAxis", "RotateType", "RotateAccelType",
                                            "MoveConditionType", "RotateStopTime")}
     for i, r in enumerate(rs):
@@ -402,6 +406,8 @@ def map_parts(b, rs):
         r["args"][4:8] = [col["RotateSpeed"][i], col["RotateAngle"][i], col["RotateAxis"][i],
                           1 << 30 | g("RotateType", 1) & 15 | (g("RotateAccelType", 0) & 15) << 4 |
                           (g("MoveConditionType", 0) & 15) << 8 | min(g("RotateStopTime", 0), 0x3FFF) << 12]
+        if r["name"] in seesaws:
+            r["args"][3] = col["RotateAccelType"][i]
     return rs
 
 

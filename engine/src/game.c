@@ -327,7 +327,9 @@ typedef struct {
     int hipsw;       /* hip drop switch (update_hip_switches): 1 HipDropSwitch, 2 HipDropTimerSwitch, 3 PicketSwitch(Big) */
     int rotor;       /* map part with a RotateSpeed: turns (rotor_matrix), carries Mario */
     int halo;        /* ZoneHalo 1 / PowerStarHalo 2: shown only from afar (update_halos); Air 3, AirFar100m 4 (update_airs) */
-    int seesaw;      /* PhantomShipHandle: MapPartsSeesaw1AxisRotator, turned by Mario's weight (update_seesaws) */
+    int seesaw;      /* 1 PhantomShipHandle, 2 a SimpleSeesawObj on one axis (MapPartsSeesaw1AxisRotator), 3 one on two
+                      * (MapPartsSeesaw2AxisRotator), 4 LavaHomeSeesaw (LavaHomeSeesawRotator): turned by Mario's weight
+                      * (update_seesaws) */
     int sky;         /* sky dome (Petari Sky): centred on the camera, drawn first */
     int sun;         /* BrightSun: its Sun model far off the camera along its rotation, drawn with the skies */
     int steam;       /* LavaSteam: vents on a cycle and burns (update_steam) */
@@ -1073,6 +1075,7 @@ static struct {
 } hhps[MAX_HHPS];
 static int nhhps;
 static void seesaw_matrix(Inst *in);
+static u32 seesaw_se(const char *name);
 static int nseesaws;
 #define MAX_BRIDGES 4
 static int nbridges; /* PhantomShipBridge (update_bridges) */
@@ -1080,8 +1083,8 @@ static int nfollows;
 #define MAX_FOLLOWS 8
 #define FOLLOW_N 16
 static struct { int row, nrv, step, n, slot[FOLLOW_N], alive; float angle; V3 x, y, z, off[FOLLOW_N], vel[FOLLOW_N]; } follows[MAX_FOLLOWS];
-#define MAX_SEESAWS 8
-static struct { int row, nrv, step, hip; float vel, angle; } seesaws[MAX_SEESAWS];
+#define MAX_SEESAWS 16 /* (IceMountainZone has twelve) */
+static struct { int row, nrv, step, hip; float vel, angle; Quat q; /* the two axis one's mRotateMtx; vel its mRotateSpeed */ } seesaws[MAX_SEESAWS];
 static int seesaw_of(int row);
 #define MAX_VINES 4
 #define VINE_PTS 256
@@ -5418,7 +5421,7 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->giver = strcmp(name, "DeadLeaves") == 0 ? 1 : strcmp(name, "Pompon2Plant") == 0 || strcmp(name, "Pompon4Plant") == 0 ? 2 : 0;
     ci->hipsw = strcmp(name, "HipDropSwitch") == 0 ? 1 : strcmp(name, "HipDropTimerSwitch") == 0 ? 2 :
                 strncmp(name, "PicketSwitch", 12) == 0 ? 3 : 0;
-    ci->seesaw = strcmp(name, "PhantomShipHandle") == 0;
+    ci->seesaw = strcmp(name, "PhantomShipHandle") == 0 ? 1 : seesaw_se(name) ? 2 : strcmp(name, "LavaHomeSeesaw") == 0 ? 4 : 0;
     ci->bridge = strcmp(name, "PhantomShipBridge") == 0;
     ci->dossun = strcmp(name, "Dossun") == 0;
     ci->onimasu = strcmp(name, "Onimasu") == 0 || strcmp(name, "OnimasuPivot") == 0;
@@ -5737,6 +5740,7 @@ static void game_rebind_(void)
             char bn[40]; snprintf(bn, sizeof bn, "%sBloom", name); in->md_bloom = scene_model(s, bn);
             if (r->type < 1024) { bloom_of[r->type] = in->md_bloom; bloom_ok[r->type] = 1; }
         }
+        if (in->seesaw == 2 && r->arg[6] != 0) in->seesaw = 3; /* setupInitInfoSeesaw: RotateAxis 0 the one axis rotator, else the two axis one */
         if (in->seesaw) { in->rotor = 0; seesaw_matrix(in); }
         in->railer = scene_blob_g && ((r->arg[7] > 0 && (r->arg[7] >> 30 & 1)) || in->eyebeamer || st_rail_obj(name) || !strcmp(name, "OceanSmallTurtle")) && r->path >= 0 ? /* (st_rail_obj: an objinfo RailMoveObj; OceanSmallTurtle's createMapPartsRailMoverForMercator) */
                      find_path(scene_blob_g, r->zone, r->path) : NULL;
@@ -6407,13 +6411,31 @@ int game_test_petari(void) /* the first Petari: Mario 800 off it (it comes, wait
     return -1;
 }
 
-int game_test_seesaw(int phase) /* the first PhantomShipHandle: Mario dropped 150 along its X (phase 0) or onto it in a
-                                 * hip drop (phase 1); its zone first */
+#ifndef SEESAW_N
+#define SEESAW_N 0
+#endif
+int game_test_seesaw(int phase) /* the first seesaw (XF=-DSEESAW_N=k: the k-th row of one, -DSEESAW_AXIS2: the first on two axes): Mario dropped 150 along its X
+                                 * (phase 0) or onto it in a hip drop (phase 1); its zone first */
 {
     test_nolost = 1;
+    int want = -1, nth = 0;
+    static int listed;
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const char *cn = sc->types + 32 * sc->objs[i].type;
+        if (!strcmp(cn, "PhantomShipHandle") || !strcmp(cn, "LavaHomeSeesaw") || seesaw_se(cn)) {
+            if (!listed) printf("seesaw test: %d is row %d %s axis %d arg3 %d\n", nth, (int)i, cn, (int)sc->objs[i].arg[6], (int)sc->objs[i].arg[3]);
+#ifdef SEESAW_AXIS2 /* the first two axis one */
+            if (want < 0 && seesaw_se(cn) && sc->objs[i].arg[6] != 0) want = (int)i;
+            nth++;
+#else
+            if (nth++ == SEESAW_N) want = (int)i;
+#endif
+        }
+    }
+    listed = 1;
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
-        if (!in->seesaw) continue;
+        if (!in->seesaw || in->row != want) continue;
         int k = seesaw_of(in->row);
         if (k < 0) return -1;
         V3 pos = v3(in->m[12], in->m[13], in->m[14]), up = up_at(pos, mario->up);
@@ -6425,16 +6447,14 @@ int game_test_seesaw(int phase) /* the first PhantomShipHandle: Mario dropped 15
             mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
             if (phase) { mario->hip = HIP_START; mario->hip_t = 0; }
         }
-        if (game_frame % 20 == 0) printf("seesaw: nrv %d angle %d vel x100 %d on %d hip %d\n", seesaws[k].nrv, (int)seesaws[k].angle, (int)(seesaws[k].vel * 100), mario_ground == i, mario->hip);
+        if (game_frame % 20 == 0) printf("seesaw %s kind %d: nrv %d angle %d up %d %d %d vel x1000 %d on %d hip %d\n", sc->types + 32 * sc->objs[in->row].type, in->seesaw, seesaws[k].nrv, (int)seesaws[k].angle, (int)(in->m[4] * 1000), (int)(in->m[5] * 1000), (int)(in->m[6] * 1000), (int)(seesaws[k].vel * 1000), mario_ground == i, mario->hip);
         return seesaws[k].nrv;
     }
-    int ty = scene_type(sc, "PhantomShipHandle");
-    for (u32 i = 0; i < sc->nobjs; i++)
-        if (sc->objs[i].type == ty) {
-            V3 p = row_pos(&sc->objs[i]);
-            mario->up = up_at(p, mario->up); mario->pos = vadd(p, vmul(mario->up, 400.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
-            return -2;
-        }
+    if (want >= 0) {
+        V3 p = row_pos(&sc->objs[want]);
+        mario->up = up_at(p, mario->up); mario->pos = vadd(p, vmul(mario->up, 400.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return -2;
+    }
     return -1;
 }
 
@@ -37802,24 +37822,72 @@ static int mp_running(const Row *r, int row)
  * along its X / (0.1 x inertia: RotateAccelType, 1000 unset); after 2 frames the restoring force (RotateStopTime x
  * 0.01 towards its first up; slower than 0.1 and upright: stopped) and friction 0.99; clamped to RotateSpeed x 0.01
  * a frame; RotateAngle > 0 limits it (bounced back x -0.5). A hip drop on it adds 40 x that. Stopped: Stay. */
+/* SimpleMapObj.cpp: SimpleSeesawObj is a MapObjActor with one of the two seesaw rotators (setupInitInfoSeesaw:
+ * RotateAxis 0 the one axis one, else MapPartsSeesaw2AxisRotator), started at init (no SW_B on any placed), its move
+ * sound from sSeDataTable while it turns faster than 0.001. MapPartsSeesaw2AxisRotator.cpp: Stay until Mario stands on
+ * it, then Move for good: with him on it, it blends (blendMtxRotate: JMAQuatLerp) towards its base turned RotateAngle
+ * about its up x his place in its frame, by 0.001 x his distance / inertia (RotateAccelType, 500 unset; a tenth of it
+ * in the hip drop's frame), then back towards its base by 0.0001 x RotateStopTime. The inertia is over the pack's four
+ * RotateAccelType bits: slice.py map_parts writes it whole to arg 3 (unused by these classes); an older pack's row
+ * keeps the four bits.
+ * LavaHomeSeesaw.cpp / LavaHomeSeesawRotator.cpp: the one axis seesaw again with its own nerves: it starts at 0.01 a
+ * frame; Stay turns too (no friction) until Mario lands, then MoveStart: a weak camera shake, ON_METAL, 0.7 a frame
+ * down for steps 0-5 and back up for 6-7, Move at 8; Stay again when slower than 0.01 and level; no "stopped" snap.
+ * ponytail: its projection map's offset (initAfterPlacement: updateMtxUseBaseMtxWithLocalOffset) is not made. */
 enum { SS_STAY, SS_MOVESTART, SS_MOVE, SS_HIPDROP };
+static u32 seesaw_se(const char *name) /* sSeDataTable */
+{
+    static const struct { const char *name; u32 se; } t[] = {
+        {"KoopaShipSeesawStep", SE_OJ_LV_KOOPA_SHIP_SEESAW}, {"IceVolcanoBalanceStepA", SE_OJ_LV_VOL_BAL_STEP_ROT},
+        {"IceVolcanoBalanceStepB", SE_OJ_LV_VOL_BAL_STEP_ROT}, {"IceMountainSeesawSlipA", SE_OJ_LV_ICE_M_SEESAW_S},
+        {"IceMountainSeesawSlipB", SE_OJ_LV_ICE_M_SEESAW_M}, {"IceMountainSeesawSlipC", SE_OJ_LV_ICE_M_SEESAW_L},
+        {"IceMountainSeesawSlipD", SE_OJ_LV_ICE_M_SEESAW_L}, {"IceMountainSeesawNoSlipA", SE_OJ_LV_ICE_M_SEESAW_S},
+    };
+    for (u32 i = 0; i < sizeof t / sizeof t[0]; i++) if (!strcmp(name, t[i].name)) return t[i].se;
+    return 0;
+}
+static Quat seesaw_base(const Row *r, V3 *up) /* the placement's rotation (its base matrix at init) */
+{
+    float m[16], one[3] = {1, 1, 1};
+    mat_translate_rot_scale(m, r->pos, r->rot, one);
+    if (up) *up = v3(m[4], m[5], m[6]);
+    return q_from_axes(v3(m[0], m[1], m[2]), v3(m[4], m[5], m[6]), v3(m[8], m[9], m[10]));
+}
 static int seesaw_of(int row)
 {
     for (int i = 0; i < nseesaws; i++) if (seesaws[i].row == row) return i;
     if (nseesaws == MAX_SEESAWS) return -1;
     memset(&seesaws[nseesaws], 0, sizeof seesaws[0]);
     seesaws[nseesaws].row = row; seesaws[nseesaws].step = -1; /* start(): Stay */
+    seesaws[nseesaws].hip = -1; /* (its start() still to run: update_seesaws) */
+    seesaws[nseesaws].q = seesaw_base(&sc->objs[row], NULL);
     return nseesaws++;
 }
-static void seesaw_matrix(Inst *in) /* its placement turned `angle` about its own Z */
+static void seesaw_matrix(Inst *in) /* calcAndSetBaseMtx: its rotator's mRotateMtx at its place */
 {
     const Row *r = &sc->objs[in->row];
     int k = seesaw_of(in->row);
-    float base[16], rz[16], a = k >= 0 ? seesaws[k].angle * 0.0174533f : 0;
-    mat_translate_rot_scale(base, r->pos, r->rot, r->scale);
-    mat_identity(rz);
-    rz[0] = cosf(a); rz[1] = sinf(a); rz[4] = -sinf(a); rz[5] = cosf(a);
-    mat_mul(in->m, base, rz);
+    if (k < 0) { mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale); return; }
+    V3 ax[3];
+    q_axes(seesaws[k].q, &ax[0], &ax[1], &ax[2]);
+    for (int j = 0; j < 3; j++) {
+        in->m[4 * j] = ax[j].x * r->scale[j]; in->m[4 * j + 1] = ax[j].y * r->scale[j]; in->m[4 * j + 2] = ax[j].z * r->scale[j];
+        in->m[4 * j + 3] = 0; in->m[12 + j] = r->pos[j];
+    }
+    in->m[15] = 1;
+}
+static float seesaw_angle(V3 up, V3 gup) /* calcRotatedAngle: its up against gravity's, degrees */
+{
+    float c = vdot(vnorm(up), gup);
+    if (fabsf(1.0f - c) < 0.001f) c = 1.0f;
+    if (fabsf(c) < 0.001f) c = 0.0f;
+    return acosf(c > 1 ? 1 : c < -1 ? -1 : c) * 57.29578f;
+}
+static float seesaw_sign(float x) { return x > 0 ? 1.0f : x < 0 ? -1.0f : 0.0f; } /* MR::sign */
+static Quat q_lerp(Quat a, Quat b, float t) /* JMAQuatLerp (the nearer of b and -b), kept unit */
+{
+    if (a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w < 0) b = (Quat){-b.x, -b.y, -b.z, -b.w};
+    return q_norm((Quat){a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t});
 }
 /* PhantomShipBridge.cpp: with SW_A it waits (no BCK: its bind pose) until SW_A turns on, then MoveA; SW_B on:
  * MoveB; without SW_A it is at MoveA's end at once (setStateMoveA). Step 55 of either: shakeCameraNormal. Its Move
@@ -37916,14 +37984,95 @@ static void update_seesaws(void)
         const Row *r = &sc->objs[in->row];
         int packed = r->arg[7] > 0 ? r->arg[7] : 0, acc = packed >> 4 & 15, stop = packed >> 12 & 0x3FFF;
         float vmax = r->arg[4] != -1 ? r->arg[4] * 0.01f : 0, limit = r->arg[5] > 0 ? (float)r->arg[5] : 0;
-        float inertia = 0.1f * (acc > 0 ? (float)acc : 1000.0f);
+        if (r->arg[3] > 0) acc = r->arg[3]; /* RotateAccelType whole (slice.py map_parts) */
+        const char *cn = sc->types + 32 * r->type;
+        u32 se = in->seesaw == 1 ? SE_OJ_LV_P_SHIP_HANDLE_MOVE : seesaw_se(cn);
+        float se_speed = in->seesaw == 1 ? 0.1f : 0.001f; /* mMoveSoundSpeed */
         V3 pos = v3(in->m[12], in->m[13], in->m[14]), ax = vnorm(v3(in->m[8], in->m[9], in->m[10]));
         V3 x = vnorm(v3(in->m[0], in->m[1], in->m[2])), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
         V3 g = vmul(up_at(pos, v3(0, 1, 0)), -1.0f), off = vsub(mario->pos, pos);
-        float dist = 0.001f * fabsf(vdot(x, off)), sgn = vdot(vcross(off, g), ax) < 0 ? -1.0f : 1.0f;
         int on = mario_ground == i;
+        float old[16];
+        memcpy(old, in->m, 64);
+        if (o->hip < 0) { /* start() */
+            o->hip = 0;
+            if (in->seesaw == 4) o->vel = 0.01f; /* sAngularSpeedMin */
+            float a = seesaw_angle(up, vmul(g, -1.0f));
+            if (in->seesaw != 3 && limit > 0 && limit < a) { /* placed past its limit: turned back over it */
+                o->q = q_norm(q_mul(o->q, q_axis(ax, 1.05f * 0.0174533f * (a - limit))));
+                seesaw_matrix(in);
+                continue;
+            }
+        }
+        if (in->seesaw == 3) { /* MapPartsSeesaw2AxisRotator */
+            if (hip_hit && hip_inst == i) { o->hip = 1; if (o->nrv != SS_HIPDROP) { o->nrv = SS_HIPDROP; o->step = -1; } } /* receiveMsg */
+            if (o->nrv == SS_STAY) { if (on) o->nrv = SS_MOVE; continue; } /* exeStay */
+            int rot = on; /* exeMove */
+            if (o->nrv == SS_HIPDROP) { /* exeHipDrop */
+                rot = o->hip; o->hip = 0;
+                if (!rot) { o->nrv = SS_MOVE; continue; }
+            }
+            V3 bup;
+            Quat qb = seesaw_base(r, &bup);
+            if (rot) { /* rotate() */
+                V3 bx, bz, d = vsub(mario->pos, pos);
+                q_axes(qb, &bx, NULL, &bz);
+                V3 l = v3(vdot(d, bx), vdot(d, bup), vdot(d, bz)); /* mBaseMtxInv x his place */
+                float in2 = (acc > 0 ? (float)acc : 500.0f) * (o->nrv == SS_HIPDROP ? 0.1f : 1.0f); /* getInertiaConst */
+                float sp = 0.001f * vlen(l) / in2;
+                sp = sp < 0 ? 0 : sp > 1 ? 1 : sp;
+                Quat qt = q_mul(qb, q_axis(vcross(bup, l), limit * 0.0174533f)); /* mBaseMtx x the tilt */
+                o->vel = sp - o->vel; /* mRotateSpeed */
+                if (se && fabsf(o->vel) > se_speed) in->lv[0] = se_level(se, &in->m[12], in->lv[0]);
+                o->q = q_lerp(o->q, qt, sp);
+            }
+            if (o->nrv == SS_MOVE) { /* restoreMove */
+                float sp = 0.0001f * stop;
+                o->q = q_lerp(o->q, qb, sp > 1 ? 1 : sp);
+            }
+            seesaw_matrix(in);
+            if (on) carry(old, in);
+            continue;
+        }
+        float inertia = 0.1f * (acc > 0 ? (float)acc : 1000.0f);
+        float dist = 0.001f * fabsf(vdot(x, off)), sgn = seesaw_sign(vdot(vcross(off, g), ax));
         if (hip_hit && hip_inst == i) { o->nrv = SS_HIPDROP; o->step = -1; o->hip = 1; } /* tryHipDrop */
         int st = ++o->step;
+        if (in->seesaw == 4) { /* LavaHomeSeesawRotator */
+            int snd = o->nrv != SS_HIPDROP;
+            if (o->nrv == SS_STAY && on) { o->nrv = SS_MOVESTART; o->step = -1; continue; } /* exeStay */
+            if (o->nrv == SS_MOVESTART) {
+                if (st == 0) { camera_shake(SHAKE_WEAK); se_start(SE_OJ_LAVA_FLOATER_ON_METAL, &in->m[12]); }
+                if (st == 8) { o->nrv = SS_MOVE; o->step = -1; continue; } /* sGroundOnReboundTime */
+            }
+            if (o->nrv == SS_HIPDROP && st == 0) o->vel += sgn * 40.0f * dist / inertia; /* addForceHipDrop */
+            /* updateRotateMtx: updateVelocity */
+            V3 up0;
+            seesaw_base(r, &up0); /* mInitialUp */
+            float force = vdot(vcross(up, up0), ax);
+            if (on) o->vel += sgn * dist / inertia;
+            if (o->nrv != SS_MOVESTART && st > 2) {
+                o->vel += seesaw_sign(force) * 0.01f * stop / inertia; /* updateRestoreForce */
+                if (o->nrv != SS_STAY) o->vel *= 0.99f;
+            }
+            o->vel = o->vel < -vmax ? -vmax : o->vel > vmax ? vmax : o->vel;
+            if (o->nrv != SS_STAY && o->nrv != SS_MOVESTART && fabsf(o->vel) < 0.01f && fabsf(force) < 0.001f) {
+                o->nrv = SS_STAY; o->step = -1; /* tryStay */
+            } else {
+                V3 nu = vadd(vmul(up, cosf(o->vel * 0.0174533f)), vmul(vcross(ax, up), sinf(o->vel * 0.0174533f)));
+                if (limit > 0 && seesaw_angle(nu, vmul(g, -1.0f)) >= limit) o->vel *= -0.5f; /* tryRebound */
+                else {
+                    float d = o->vel;
+                    if (o->nrv == SS_MOVESTART) d = 0.7f * (st <= 5 ? 1.0f : -1.0f) * seesaw_sign(o->vel); /* its dip under his landing: sGroundOnDownTime */
+                    o->q = q_norm(q_mul(q_axis(ax, d * 0.0174533f), o->q));
+                    seesaw_matrix(in);
+                    if (on) carry(old, in);
+                }
+            }
+            if (!snd) { if (!o->hip) { o->nrv = SS_MOVE; o->step = -1; } o->hip = 0; } /* exeHipDrop's end */
+            else if (snd && fabsf(o->vel) > 0.1f) in->lv[0] = se_level(SE_OJ_LV_LAVA_SEESAW_MOVE, &in->m[12], in->lv[0]); /* soundMoveSE */
+            continue;
+        }
         if (o->nrv == SS_STAY) {
             if (on) { o->nrv = SS_MOVESTART; o->step = -1; }
             continue;
@@ -37933,27 +38082,28 @@ static void update_seesaws(void)
         /* rotate: updateVelocity */
         if (on) o->vel += sgn * dist / inertia;
         if (o->nrv != SS_MOVESTART && st > 2) {
-            V3 up0 = up_at(pos, v3(0, 1, 0)); /* ponytail: its first up taken as against gravity (placements are upright) */
+            V3 up0;
+            seesaw_base(r, &up0); /* mInitialUp */
             float force = vdot(vcross(up, up0), ax);
-            if (fabsf(force) < 1e-6f && fabsf(o->vel) <= 0.1f) o->vel = 0;
-            else o->vel += (force < 0 ? -1.0f : 1.0f) * 0.01f * stop / inertia;
+            if (fabsf(force) < 0.001f && fabsf(o->vel) <= 0.1f) o->vel = 0;
+            else o->vel += seesaw_sign(force) * 0.01f * stop / inertia;
             o->vel *= 0.99f;
         }
         o->vel = o->vel < -vmax ? -vmax : o->vel > vmax ? vmax : o->vel;
-        if ((o->nrv == SS_MOVESTART || o->nrv == SS_MOVE) && fabsf(o->vel) > 0.1f) /* exeMove: mMoveSoundSpeed 0.1 */
-            in->lv[0] = se_level(SE_OJ_LV_P_SHIP_HANDLE_MOVE, &in->m[12], in->lv[0]);
+        int moving = o->nrv != SS_HIPDROP; /* exeMove's sound, after its rotate() */
         if (o->nrv == SS_HIPDROP) { if (!o->hip) { o->nrv = SS_MOVE; o->step = -1; } o->hip = 0; }
         if (o->vel == 0) { o->nrv = SS_STAY; o->step = -1; continue; }
         if (limit > 0) { /* isGoingToReachTargetAngle */
             V3 nu = vadd(vmul(up, cosf(o->vel * 0.0174533f)), vmul(vcross(ax, up), sinf(o->vel * 0.0174533f)));
-            float c = vdot(vnorm(nu), vmul(g, -1.0f));
-            if (acosf(c > 1 ? 1 : c < -1 ? -1 : c) * 57.29578f >= limit) { o->vel *= -0.5f; continue; }
+            if (seesaw_angle(nu, vmul(g, -1.0f)) >= limit) { o->vel *= -0.5f; limit = -1; }
         }
-        float old[16];
-        memcpy(old, in->m, 64);
-        o->angle += o->vel;
-        seesaw_matrix(in);
-        if (on) carry(old, in);
+        if (limit >= 0) { /* (not bounced back) */
+            o->angle += o->vel;
+            o->q = q_norm(q_mul(q_axis(ax, o->vel * 0.0174533f), o->q)); /* the turn about its Z, before mRotateMtx */
+            seesaw_matrix(in);
+            if (on) carry(old, in);
+        }
+        if (moving && se && fabsf(o->vel) > se_speed) in->lv[0] = se_level(se, &in->m[12], in->lv[0]);
     }
 }
 
