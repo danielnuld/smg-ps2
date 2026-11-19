@@ -829,7 +829,9 @@ static struct { int inst, phase, t, drop, row, dground, dwall; V3 dir, head, vel
                                                                 * (update_jets; row / head / vel kept for a rebind); drop:
                                                                 * MarioSwim::dropJet's releaseThrowMemoSensor asked */
 static int kmj_carry(void);
-static int m_carry_jet(void) { return (jet.inst >= 0 && jet.phase == 1) || kmj_carry(); } /* MarioActor _468 / getCarrySensor */
+static int bh_held = -1;       /* the BombHei Mario carries (its mCarrySensor is his), a walker index; -1 none */
+static unsigned bh_free_at;    /* MarioActor _3AC: no take for 60 frames after a throw (releaseThrowMemoSensor) */
+static int m_carry_jet(void) { return (jet.inst >= 0 && jet.phase == 1) || kmj_carry() || bh_held >= 0; } /* MarioActor _468 / getCarrySensor */
 static struct { int inst, phase, t, spins, wtimer; V3 up, front, tup, wdir; float wdist; } flf = {.inst = -1, .wtimer = -1}; /* the Fluff Mario rides (fluff_update): mUp, mFront, mTargetUpVec, mWindDir, mWindDistance, mWindSpinTimer */
 static int nfwind = -1; /* FluffWindHolder's rails (fluff_wind_init), -1 not gathered */
 static struct { int inst, phase, t, wait; V3 vel; } coc = {.inst = -1, .wait = -1}; /* SpaceCocoon Mario hangs on (cocoon_update) */
@@ -2761,6 +2763,7 @@ void game_init(const Scene *s, const unsigned char *blob)
             npieces += star_group(NULL, &s->objs[i], blob);
         else if (s->objs[i].type == t_flow)
             npieces += star_flow(NULL, 0, &s->objs[i], blob);
+    bh_held = -1; bh_free_at = 0;
     nkuribo = count_type("Petari", 0) + count_type("Poihana", 0) + count_type("Unizo", 0) + count_type("UnizoLand", 0) + count_type("UnizoShoal", 0) + count_type("StinkBugSmall", 0) + count_type("Kuribo", 0) + count_type("TakoHei", 0) + count_type("PackunPetit", 0) + count_type("KoteBug", 0) +
               count_type("JumpSpider", 0) + count_type("Meramera", 0) + count_type("IceMeramera", 0) + count_type("Takobo", 0) +
               count_type("MechanicKoopaMini", 0) + count_type("Karikari", 0) +
@@ -32779,9 +32782,19 @@ dead:
  * lights it; a trample or hip drop lights it and presses it (Pressed 60, then Pursue); a spin (Bob-omb) lights it and
  * knocks it up (Spin, 10; Physics: rolling on the ground at 0.5, Stop under 5). A launcher (its own model and
  * collision) throws its bomb up 35 and forward 1 (Open SE), waits 120 (Stop), and once the bomb is gone counts 60
- * before the next (not while Mario stands on it; its SW_A on / off starts / stops it). ponytail: no carrying /
- * throwing by Mario (Taken / Thrown), no ball roll pose, the explosion hurts Mario only, no star pointer bind */
-enum { BH_LAUNCH, BH_STARTING, BH_WAIT, BH_WALK, BH_PURSUE, BH_PURSUEFAST, BH_SPINHIT, BH_TRAMPLE, BH_PHYSICS, BH_STOP, BH_EXPLODE, BH_GONE };
+ * before the next (not while Mario stands on it; its SW_A on / off starts / stops it).
+ * Carrying (MarioActor's attackSensor on ATYPE_BOMBHEI sends ACTMES_ITEM_GET; receiveOtherMsg): rolling or stopped
+ * (Physics / Stop), 30 frames into SpinHit or 120 into Thrown, Mario touching it takes it: Taken (Carry, its fuse lit,
+ * SE_PV_LIFT_UP + SE_EM_BOMB_LIFT, the body sensor off) held before him; his spin throws it (receiveMsgThrow: 25 along
+ * his front, 18 up; Thrown: Stop, SE_PV_THROW + SE_EM_BOMB_THROW, its gravity kept 30 frames, 0.75 a frame x 0.98, on
+ * the ground the bound sound, Bound and Physics); a damage or rush drop lets it go (drop_taking: ACTMES_DAMAGEDROP /
+ * RUSHDROP, Thrown where it is); it blows up in his hands (EnemyAttackExplosion to its carrier).
+ * ponytail: held where the port holds a JetTurtle (70 ahead, 60 up: not his hand joint and its rotation,
+ * MarioActor::updateTakingPosition), thrown along his front (getThrowVec's swim / target cases), Mario's take as the
+ * JetTurtle's port (no isActionOk, no doTrampleJump from the air onto a still one), Thrown does not rebound off
+ * enemies / NPCs (calcReflectionVector 0.8), no ball roll pose, the explosion hurts Mario only, no star pointer bind */
+enum { BH_LAUNCH, BH_STARTING, BH_WAIT, BH_WALK, BH_PURSUE, BH_PURSUEFAST, BH_SPINHIT, BH_TRAMPLE, BH_PHYSICS, BH_STOP, BH_EXPLODE, BH_GONE,
+       BH_TAKEN, BH_THROWN };
 enum { BLN_WAIT, BLN_STOP };
 static int bh_launcher(const Kuribo *k) { const char *c = walker_cls(k); return !strcmp(c, "BombHeiLauncher") ? 1 : !strcmp(c, "BombLauncher") ? 2 : 0; }
 static int bh_fuse_len(const Kuribo *k) { const Row *r = &sc->objs[k->row]; return !bh_launcher(k) && r->arg[0] > 0 ? r->arg[0] : 600; }
@@ -32828,9 +32841,23 @@ static void bomb_update(Kuribo *k)
         }
         if (k->nrv == BH_GONE) return;
     } else if (k->nrv == BH_GONE) return;
-    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
+    int me = (int)(k - kuribo);
+    if (bh_held == me && k->nrv != BH_TAKEN && k->nrv != BH_EXPLODE) bh_held = -1;
+    if (k->nrv != BH_THROWN || k->step >= 30) k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f); /* (Thrown: offCalcGravity for hThrownOffCalcGravityTime) */
     V3 up = vmul(k->grav, -1.0f);
     int st = ++k->step;
+#ifdef BH_TEST /* XF="-DBH_TEST -DPUT_TEST=BombHei" (CannonFleetGalaxy/1): the first Bob-omb near Mario spun (100 frames on),
+                * touched once it rolls, thrown 90 frames after he took it; its nerves logged */
+    {
+        static int t, took, last = -1;
+        if (!launcher && vlen(vsub(mario->pos, k->pos)) < 800.0f) {
+            if (last != k->nrv) { printf("bh test f %d: row %d nerve %d fuse %d%c", t, k->row, k->nrv, k->timer, 10); last = k->nrv; }
+            if (++t == 100 && k->nrv != BH_EXPLODE) { w_nrv(k, BH_SPINHIT); bh_light(k); st = ++k->step; }
+            if ((k->nrv == BH_PHYSICS || k->nrv == BH_STOP) && bh_held < 0 && !took) { mario->pos = k->pos; mario->hvel = v3(0, 0, 0); }
+            if (k->nrv == BH_TAKEN && ++took == 90) mario->spin_timer = SPIN_TIME - 1;
+        }
+    }
+#endif
     if (in_death(k->pos) && k->nrv != BH_EXPLODE) w_nrv(k, BH_EXPLODE), st = ++k->step; /* control: isInDeath */
     if (k->timer > 0 && k->nrv != BH_EXPLODE) { /* control: the fuse */
         k->lv2[0] = se_level(SE_EM_LV_BOMB_FUSE, &k->pos.x, k->lv2[0]);
@@ -32890,9 +32917,30 @@ static void bomb_update(Kuribo *k)
         k->vel = vadd(k->vel, k->on_ground ? vmul(k->gn, -1.0f) : k->grav);
         k->vel = vmul(k->vel, k->on_ground ? 0.8f : 0.98f);
         break;
+    case BH_TAKEN: /* exeTaken (sendMsgTaken: the body sensor off); receiveMsgThrow, ACTMES_DAMAGEDROP */
+        if (st == 0) { w_act(k, "Carry"); mario_se(SE_PV_LIFT_UP); w_se(k, SE_EM_BOMB_LIFT); k->bind_off = 1; }
+        k->grav = vmul(mario->up, -1.0f); up = mario->up; k->front = mario->face; k->vel = v3(0, 0, 0);
+        k->pos = vadd(vadd(mario->pos, vmul(mario->face, 70.0f)), vmul(up, 60.0f - 60.0f * scl));
+        if (mario->spin_timer == SPIN_TIME - 1) { /* isPlayerSwingAction: releaseThrowMemoSensor (ACTMES_THROW) */
+            k->vel = vadd(vmul(mario->face, 25.0f), vmul(up, 18.0f)); /* hThrowVelH / hThrowVelV */
+            bh_held = -1; bh_free_at = game_frame + 60;
+            w_nrv(k, BH_THROWN);
+            printf("bomb hei row %d thrown%c", k->row, 10);
+        }
+        break;
+    case BH_THROWN: { /* exeThrown */
+        if (st == 0) { w_act(k, "Stop"); mario_se(SE_PV_THROW); w_se(k, SE_EM_BOMB_THROW); k->bind_off = 0; }
+        V3 vh = vtangent(k->vel, k->grav);
+        if (vlen(vh) > 1e-3f) k->front = vnorm(vh); /* turnVecToVecRadian(hTurnLimitRadian 3) */
+        k->vel = vmul(k->vel, 0.98f);               /* hThrownDampVel */
+        if (!ground) k->vel = vadd(k->vel, vmul(k->grav, 0.75f)); /* hGravityThrown */
+        else { w_se(k, SE_EM_BOMB_BOUND); w_act(k, "Bound"); w_nrv(k, BH_PHYSICS); } /* startBoundSound */
+        break;
+    }
     case BH_EXPLODE: {
         V3 c = vadd(k->pos, vmul(up, 200.0f * scl));
         float rad = (r->arg[1] > 0 && !launcher ? (float)r->arg[1] : 500.0f) * scl * (st > 8 ? 8 : st) / 8.0f;
+        if (st == 0 && bh_held == me) { bh_held = -1; if (!mario->hurt_timer) mario_attack(ATK_EXPLOSION, c); } /* RUSHDROP, sendMsgEnemyAttackExplosion(mCarrySensor) */
         if (st == 0) {
             float m[16];
             basis_matrix(m, k->pos, up, k->front, 0);
@@ -32914,24 +32962,31 @@ static void bomb_update(Kuribo *k)
     }
     }
     k->act_t += k->act_rate;
-    if (k->nrv == BH_LAUNCH || k->nrv == BH_PHYSICS) { /* reboundVelocityFromCollision(0.1, 6, 1) */
+    if (k->nrv == BH_LAUNCH || k->nrv == BH_PHYSICS || k->nrv == BH_THROWN) { /* reboundVelocityFromCollision(0.1, 6, 1) */
         if (k->on_ground && vdot(k->vel, k->gn) < -6.0f) k->vel = vsub(k->vel, vmul(k->gn, 1.1f * vdot(k->vel, k->gn)));
         else if (k->on_ground && vdot(k->vel, k->gn) < 0) k->vel = vtangent(k->vel, k->gn);
     }
     w_bind(k, 53.0f);
     k->qy = k->up = up; k->qz = vnorm(vtangent(k->front, up)); /* calcMtxFromGravityAndZAxis */
     if (vlen(k->qz) < 1e-3f) k->qz = k->front;
-    if (k->nrv == BH_LAUNCH) return;
+    if (k->nrv == BH_LAUNCH || k->nrv == BH_TAKEN) return;
     V3 body = vadd(k->pos, vmul(up, 60.0f * scl));
     int msg = mario_offence(k, body, 60.0f * scl, k->grav);
     if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) {
-        if (k->nrv == BH_PHYSICS || k->nrv == BH_STOP || k->nrv == BH_SPINHIT) return;
+        if (k->nrv == BH_PHYSICS || k->nrv == BH_STOP || k->nrv == BH_SPINHIT || k->nrv == BH_THROWN) return;
         bh_light(k); w_nrv(k, BH_TRAMPLE);
         if (msg == MSG_TRAMPLE) mario_trample();
         return;
     }
-    if (msg == MSG_HITALL && !bomb && k->nrv != BH_SPINHIT) { m_punch(k, body, 0); w_nrv(k, BH_SPINHIT); bh_light(k); scene_stop = 3; return; }
+    if (msg == MSG_HITALL && !bomb && k->nrv != BH_SPINHIT && !(k->nrv == BH_THROWN && st < SPIN_TIME)) { /* (not the spin that threw it) */ m_punch(k, body, 0); w_nrv(k, BH_SPINHIT); bh_light(k); scene_stop = 3; return; }
     if (mario_touch(body, 60.0f * scl)) { /* sendMsgPushAndKillVelocityToTarget */
+        /* isMsgItemGet (Mario's body on it): Stop, Physics, Thrown past hThrownCanNotGotTime, SpinHit past hSpinHitCanGetTime */
+        if ((k->nrv == BH_STOP || k->nrv == BH_PHYSICS || (k->nrv == BH_THROWN && st > 120) || (k->nrv == BH_SPINHIT && st > 30)) &&
+            !m_carry_jet() && !mario->hurt_timer && game_frame >= bh_free_at) {
+            bh_held = me; w_nrv(k, BH_TAKEN); bh_light(k);
+            printf("bomb hei row %d taken%c", k->row, 10);
+            return;
+        }
         V3 d = vtangent(vsub(mario->pos, k->pos), up);
         if (vlen(d) > 1e-3f) mario->pos = vadd(mario->pos, vmul(vnorm(d), 4.0f));
         bh_light(k);
@@ -50762,6 +50817,11 @@ static void drop_taking(int damage)
         jet.drop = 0;
         if (damage) { jet.inst = -1; jet.phase = 0; jet_vanish(in); }
         else { jet.phase = 3; jet.t = 0; jet.dground = jet.dwall = 0; jet.dgrav = vmul(mario->up, -1.0f); printf("jet turtle row %d: dropped (rush)" "%c", in->row, 10); }
+    }
+    if (bh_held >= 0) { /* a BombHei: ACTMES_DAMAGEDROP / RUSHDROP (receiveOtherMsg): Thrown where it is */
+        Kuribo *k = &kuribo[bh_held];
+        bh_held = -1;
+        if (k->nrv == BH_TAKEN) { w_nrv(k, BH_THROWN); printf("bomb hei row %d dropped%c", k->row, 10); }
     }
     if (damage) m_release_bomb_teresa(mario);
 }
