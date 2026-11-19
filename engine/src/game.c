@@ -51,8 +51,9 @@ typedef struct { V3 pos; short alive, row; V3 up, at; } Pickup;  /* Coin, Purple
                                                                   * came from, -1 a drop; up: the gravity's at `at` */
 static V3 pick_up(const Pickup *cp);
 static V3 walker_up(void *k, V3 prev);
-enum { PICK_GONE, PICK_ON, PICK_POP_NEW, PICK_POP_BLINK }; /* alive: popping coins cannot be taken while new and
-                                                             * are not drawn on their blink frames */
+enum { PICK_GONE, PICK_ON, PICK_POP_NEW, PICK_POP_BLINK, PICK_WAIT }; /* alive: popping coins cannot be taken while new
+                                                             * and are not drawn on their blink frames; WAIT: a
+                                                             * CoinGroup's coin before its group appears */
 /* The HitSensor list (SensorHitChecker's groups): every host adds its valid sensors (their place, radius and kind)
  * each frame with hs_add; hs_flip at the frame's start keeps the last frame's whole list (hs_last / hs_nlast) for the
  * checks, so every host is seen once whatever the update order (Petari: SensorHitChecker::movement after the actors'
@@ -1413,7 +1414,7 @@ static void row_kill(int i)
 static int t_replica = -1;
 static int pickup_on(const Pickup *p, int take)
 {
-    if (p->alive == PICK_GONE || p->alive == (take ? PICK_POP_NEW : PICK_POP_BLINK)) return 0;
+    if (p->alive == PICK_GONE || p->alive == PICK_WAIT || p->alive == (take ? PICK_POP_NEW : PICK_POP_BLINK)) return 0;
     if (p->row >= 0 && take && sc->objs[p->row].type == t_replica && !sw_on(&sc->objs[p->row], SW_A)) /* appearNonActive; only SW_A
                                                                           * activates it (none: never) */
         return 0;
@@ -1435,10 +1436,15 @@ static int piece_colour_next(void) { int k = piece_next; piece_next = (piece_nex
 #define MAX_WRECKS 16           /* break models / broken objects left (break_inst, update_wrecks) */
 static struct { const Model *brk, *left; const char *bname; float m[16]; int t, coins, pieces, row, hide; V3 p, up; } wrecks[MAX_WRECKS]; /* hide: its left model gone at that t (0 never) */
 static int nwrecks;
-/* Coins popping out of what broke (Petari CoinHolder::appearCoinPop, Coin::exeMove): 25 against gravity plus up to 4
- * at random, gravity 1, 0.75 rebound off the ground (impacts of 2 and more), 0.9 / 0.995 damping on the ground / in
- * the air, not to be taken for 30 frames, blinking at the end, gone after 600 */
-typedef struct { int coin, t; V3 vel; } Pop;
+/* Coins popping out of what broke (Petari CoinHolder::appearCoin, Coin::appearMove / exeMove, update_pops): t its
+ * nerve step, grav its gravity, gr / wl / rf with gn / wn / rn its binder's ground, wall and roof of the last move,
+ * fire a DamageFire ground, water mIsInWater (taken at the appear) */
+typedef struct { int coin, t; V3 vel, grav, gn, wn, rn; u8 gr, wl, rf, fire, water; } Pop;
+/* CoinGroup.cpp's groups that wait for their appear switch (update_coin_groups): their coins [first, first + n) of
+ * coins / purple, limit arg1 (the time limit, -1 none) */
+#define MAX_COIN_GROUPS 48
+static struct { short row, first, n, limit; u8 purple, demo; } cgroups[MAX_COIN_GROUPS];
+static int ncgroups;
 static Pop *pops;
 static int npops, box_coins;
 static Inst *insts;
@@ -2856,7 +2862,7 @@ void game_init(const Scene *s, const unsigned char *blob)
             row_hold[i] = s->objs[i].arg[3] >= 0 ? s->objs[i].arg[3] : 5;
     scene_blob_g = blob;
     npurple = count_type("PurpleCoin", 0) + count_type("CirclePurpleCoinGroup", 1) + count_type("PurpleRailCoin", 1);
-    ngroup_wait = 0; ndone_shown = 0;
+    ngroup_wait = 0; ndone_shown = 0; ncgroups = 0;
     nfats = 0; test_feed = 0; nsambos = 0; ndrings = -1;
     sambo_heads = row_table("CocoSambo", MAX_SAMBOS, sizeof(Anim));
     for (u32 i = 0; i < s->nobjs; i++) { /* the spin drivers a TicoFat's group brings out */
@@ -3098,6 +3104,15 @@ void game_init(const Scene *s, const unsigned char *blob)
             ic += coin_group(coins + ic, r, blob);
         for (int k = c0; k < ic; k++) coins[k].row = i;
         for (int k = p0; k < ip; k++) purple[k].row = i;
+        if ((r->type == t_circle || r->type == t_rail || r->type == t_gcircle || r->type == t_grail) && r->sw[SW_APPEAR] >= 0 &&
+            ic + ip > c0 + p0 && ncgroups < MAX_COIN_GROUPS) { /* CoinGroup::init: useStageSwitchReadAppear */
+            int pu = r->type == t_circle || r->type == t_rail;
+            cgroups[ncgroups].row = (short)i; cgroups[ncgroups].purple = (u8)pu; cgroups[ncgroups].demo = 0;
+            cgroups[ncgroups].first = (short)(pu ? p0 : c0); cgroups[ncgroups].n = (short)(pu ? ip - p0 : ic - c0);
+            cgroups[ncgroups++].limit = (short)r->arg[1];
+            for (int k = c0; k < ic; k++) coins[k].alive = PICK_WAIT;
+            for (int k = p0; k < ip; k++) purple[k].alive = PICK_WAIT;
+        }
         for (int k = s0; k < is; k++) { /* placed: arg3 or random; a group's (new StarPiece, no arg3): random */
             pieces[k].row = i;
             piece_col[k] = r->type == t_piece && r->arg[3] >= 0 && r->arg[3] < PIECE_COLOURS ? r->arg[3] : rand() % PIECE_COLOURS;
@@ -25209,6 +25224,21 @@ static void hurt_mario(V3 from, float push) /* sendMsgEnemyAttack (the plain one
     mario_attack(ATK_ENEMY, from);
 }
 
+/* Coin::appearMove: a shared coin out at p with vel; its gravity against vel ((0, -1, 0) without one) unless the
+ * place has a gravity (calcGravityOrZero), mIsInWater (makeActorAppeared) */
+static void pop_add(V3 p, V3 vel)
+{
+    Pop *q = &pops[npops++];
+    float depth;
+    memset(q, 0, sizeof *q);
+    q->coin = ncoins; q->vel = vel;
+    q->grav = vlen(vel) > 0.001f ? vmul(vnorm(vel), -1.0f) : v3(0, -1.0f, 0);
+    q->grav = vmul(up_at(p, vmul(q->grav, -1.0f)), -1.0f);
+    q->water = (u8)(in_water(p, vmul(q->grav, -1.0f), &depth) != 0);
+    coins[ncoins].pos = p;
+    coins[ncoins].row = -1;
+    coins[ncoins++].alive = PICK_POP_NEW;
+}
 /* n coins popping out at p (CoinHolder::appearCoinPop): 25 against gravity, randomized by 4 when several */
 static void pop_coins(V3 p, V3 up, int n)
 {
@@ -25219,12 +25249,7 @@ static void pop_coins(V3 p, V3 up, int n)
     for (int k = 0; k < n; k++) {
         V3 rnd = n > 1 ? v3((rand() % 801 - 400) / 100.0f, (rand() % 801 - 400) / 100.0f, (rand() % 801 - 400) / 100.0f)
                        : v3(0, 0, 0);
-        pops[npops].coin = ncoins;
-        pops[npops].t = 0;
-        pops[npops++].vel = vadd(vmul(up, 25.0f), rnd);
-        coins[ncoins].pos = vadd(p, vmul(up, 50.0f));
-        coins[ncoins].row = -1;
-        coins[ncoins++].alive = PICK_POP_NEW;
+        pop_add(p, vadd(vmul(up, 25.0f), rnd));
     }
 }
 
@@ -36213,8 +36238,7 @@ static void update_wrecks(void)
 static void coin_to_velocity(V3 p, V3 vel)
 {
     se_start(SE_SY_COIN_APPEAR_S, NULL);
-    pops[npops].coin = ncoins; pops[npops].t = 0; pops[npops++].vel = vel;
-    coins[ncoins].pos = p; coins[ncoins].row = -1; coins[ncoins++].alive = PICK_POP_NEW;
+    pop_add(p, vel);
 }
 /* SpiderThread (MapObj/SpiderThread*.cpp): TombSpider's web, made by TombSpiderEnvironment (MR::initSpiderThread at the
  * boss's mPosition): 8 radial lines of 8 main points 175 apart hanging from the centre and turned 45 degrees about Z
@@ -46979,29 +47003,133 @@ static void update_items(void)
     }
 }
 
+static void pop_rebound(V3 *v, V3 n, float rv, float rh) /* MR::calcReboundVelocity(vel, normal, rateV, rateH) */
+{
+    float d = vdot(*v, n);
+    if (d < 0.0f) *v = vsub(vmul(vsub(*v, vmul(n, d)), rh), vmul(n, d * rv));
+}
+/* Coin::exeMove for the coins CoinHolder::appearCoin threw out: the nerve first (with the binder's faces of the last
+ * frame), then the move through its binder. ponytail: isPressedRoofAndGround (a press object squeezing it: offBind)
+ * is left out, m_bind has no moving parts' reaction; where the place has no gravity the last one is kept (not the
+ * ground's normal); CoinSpinBlur (exeSpinDrained) waits for the spin's ItemPull */
 static void update_pops(void)
 {
     for (int i = 0; i < npops; i++) {
         Pop *q = &pops[i];
         Pickup *c = &coins[q->coin];
-        if (c->alive == PICK_GONE || q->t >= 600) { c->alive = PICK_GONE; continue; }
-        q->t++;
-        V3 up = up_at(c->pos, mario->up), gn = up, wn;
-        int wall;
-        q->vel = vsub(q->vel, up);
-        V3 center = vadd(c->pos, q->vel);
-        int ground = collide_n(&center, up, 30.0f, &gn, &wn, &wall);
-        c->pos = center;
-        if (ground) { /* calcRebouond */
-            float into = -vdot(q->vel, gn);
+        if (c->alive == PICK_GONE) continue;
+        int st = q->t++; /* its nerve step */
+        if (st >= 600) { c->alive = PICK_GONE; continue; } /* mFlashCtrl->mIsEnded (start(_B0): 600) */
+        if (st > 30 && q->gr && q->fire) { /* past mCannotTime: isBindedGroundDamageFire */
+            float m[16];
+            basis_matrix(m, c->pos, vmul(q->grav, -1.0f), v3(0, 0, 1), 0);
+            fx_named("Coin", "LavaFall", m, NULL, NULL);
+            se_start(SE_OJ_FALL_IN_MAGMA_S, &c->pos.x);
+            c->alive = PICK_GONE;
+            continue;
+        }
+        if (in_death(c->pos)) { c->alive = PICK_GONE; continue; }
+        q->grav = vmul(up_at(c->pos, vmul(q->grav, -1.0f)), -1.0f); /* calcGravityOrZero */
+        V3 up = vmul(q->grav, -1.0f);
+        /* calcRebouond: the roof and the wall 0.6 / 0.5; the ground against -gravity, 0.75 from an impact of 2 (else
+         * 0), its horizontal part halved */
+        if (q->rf) pop_rebound(&q->vel, q->rn, 0.6f, 0.5f);
+        if (q->wl) pop_rebound(&q->vel, q->wn, 0.6f, 0.5f);
+        if (q->gr) {
+            float into = -vdot(q->vel, q->gn), rv = 0.0f;
             if (into >= 2.0f) { /* SE_OJ_COIN_BOUND, level A 100 x into / 30 (into at most 30) over 5: volume A / 100 */
                 int a = (int)(100.0f * (into > 30.0f ? 30.0f : into) / 30.0f);
                 if (a > 5) se_volpitch(se_start(SE_OJ_COIN_BOUND, &c->pos.x), a / 100.0f, 1.0f);
+                rv = 0.75f;
             }
-            if (into > 0) q->vel = vadd(q->vel, vmul(gn, into * (into >= 2.0f ? 1.75f : 1.0f)));
+            pop_rebound(&q->vel, up, rv, 0.5f);
         }
-        q->vel = vmul(q->vel, ground ? 0.9f : 0.995f);
-        c->alive = q->t < 30 ? PICK_POP_NEW : q->t > 480 && (q->t & 4) ? PICK_POP_BLINK : PICK_ON;
+        q->vel = vadd(q->vel, vmul(q->grav, q->water ? 0.3f : 1.0f));
+        /* attenuateVelocity: 0.8 in water, 0.9 on the ground (isOnGround: not leaving it), else 0.995 */
+        q->vel = vmul(q->vel, q->water ? 0.8f : q->gr && !(vdot(q->vel, q->gn) > 0.0f) ? 0.9f : 0.995f);
+        /* its binder (initBinder(55, 70, 0): a sphere of 55 at 70 along its base matrix's Y, -gravity) and the faces
+         * it kept (Binder::storeContactPlane) */
+        V3 ctr = vadd(c->pos, vmul(up, 70.0f)), to = m_bind(ctr, q->vel, 55.0f);
+        c->pos = vadd(c->pos, vsub(to, ctr));
+        float dg = -1.0f, dw = -1.0f, dr = -1.0f;
+        q->gr = q->wl = q->rf = q->fire = 0;
+        for (int k = 0; k < b_n; k++) {
+            V3 n = tri_n(&b_tri[k]);
+            float d = vdot(n, q->grav);
+            if (fabsf(d) < 0.34202015f) { if (dw < b_dep[k]) { dw = b_dep[k]; q->wl = 1; q->wn = n; } }
+            else if (d < 0.0f) { if (dg < b_dep[k]) { dg = b_dep[k]; q->gr = 1; q->gn = n; q->fire = (u8)((tri_attr(&b_tri[k]) & 0x3F) == 10); } }
+            else if (dr < b_dep[k]) { dr = b_dep[k]; q->rf = 1; q->rn = n; }
+        }
+        /* validateHitSensors at mCannotTime (30); FlashingCtrl: from 180 frames left hidden while (left / interval)
+         * is even, interval 10, 5 under 90 left; not in a demo */
+        int left = 600 - (st + 1);
+#ifdef POP_LOG /* XF=-DPOP_LOG: the first popped coins' move every 10 frames */
+        if (i < 2 && (st % 10 == 0 || st < 3)) {
+            V3 h = vsub(q->vel, vmul(up, vdot(q->vel, up)));
+            printf("pop %d f %d: at %.0f %.0f %.0f up %.2f side %.2f gr %d wl %d rf %d water %d\n", i, st, c->pos.x, c->pos.y, c->pos.z,
+                   vdot(q->vel, up), vlen(h), q->gr, q->wl, q->rf, q->water);
+        }
+#endif
+        c->alive = st < 30 ? PICK_POP_NEW
+                 : left <= 180 && !demo_on && !((left / (left < 90 ? 5 : 10)) & 1) ? PICK_POP_BLINK : PICK_ON;
+    }
+}
+
+/* CoinGroup.cpp (CircleCoinGroup, RailCoin and the purple ones) with an appear switch: Appear (the switch on: at
+ * step sAppearDelayTime 3 SE_SY_COIN_APPEAR / SE_SY_PURPLE_COIN_APPEAR and its coins out) or, with an actor camera,
+ * DemoAppear (the demo 出現: startActorCameraTargetSelf, SE_SY_COIN_APPEAR and the coins out at its first step, over
+ * after sDemoAppearTime 90). arg1 >= 0: appearCoinAllTimer (Coin::appearFixTimer(arg1, -1) / exeFixTimer: not to be
+ * taken for 30 frames, flashing as FlashingCtrl, killed after arg1). row_turn: 0 waiting, 1 Appear / DemoAppear, 2 out;
+ * row_step its step. ponytail: the demo cast's コイン出現 action is not registered (a group with a demo and no switch
+ * is out from the start); sAppearCameraTime's blend is the camera's own */
+static void update_coin_groups(void)
+{
+    for (int g = 0; g < ncgroups; g++) {
+        int row = cgroups[g].row;
+        const Row *r = &sc->objs[row];
+        Pickup *p = (cgroups[g].purple ? purple : coins) + cgroups[g].first;
+        if (row_dead[row]) continue;
+        if (row_turn[row] == 0) {
+#ifdef CGROUP_TEST /* XF=-DCGROUP_TEST: every waiting CoinGroup's appear switch on at frame 300 */
+            if (game_frame == 300) { sw_set(r, SW_APPEAR, 1); printf("coin group %d: test switch on (arg1 %d)\n", row, r->arg[1]); }
+#endif
+            if (!sw_on(r, SW_APPEAR)) continue;
+            if (row_camset[row] != -1) { /* isExistActorCamera: requestStartDemo */
+                if (!pd_try_start("出現", row)) continue;
+                V3 x, z;
+                row_axes(r, &x, &z);
+                cgroups[g].demo = (u8)(1 + (camera_actor_start(sc->types + 32 * r->type, "", (unsigned short)row_camset[row], vcross(z, x), z, row_pos(r)) != 0));
+                menu_cinema(1);
+            }
+            row_turn[row] = 1; row_step[row] = 0;
+        }
+        int st = row_step[row];
+        if (row_step[row] < 0xFFFF) row_step[row]++;
+        if (row_turn[row] == 1) {
+            if (st == (cgroups[g].demo ? 0 : 3)) {
+                se_start(cgroups[g].purple && !cgroups[g].demo ? SE_SY_PURPLE_COIN_APPEAR : SE_SY_COIN_APPEAR, NULL);
+                for (int k = 0; k < cgroups[g].n; k++) p[k].alive = cgroups[g].limit < 0 ? PICK_ON : PICK_POP_NEW;
+                printf("coin group %d: %d coins out (limit %d, demo %d)\n", row, cgroups[g].n, cgroups[g].limit, cgroups[g].demo);
+                if (!cgroups[g].demo) { row_turn[row] = 2; row_step[row] = 1; }
+                continue;
+            }
+            if (cgroups[g].demo && st > 90) { /* isGreaterStep(sDemoAppearTime): endDemo, endActorCamera */
+                pd_end("出現");
+                if (cgroups[g].demo == 2) camera_event_stop();
+                menu_cinema(0);
+                cgroups[g].demo = 0; row_turn[row] = 2; row_step[row] = (unsigned short)(st + 1);
+            }
+        }
+        if (cgroups[g].limit < 0 || row_turn[row] == 0) continue;
+        /* exeFixTimer: its coins' step is the frames since they came out (the demo's first step, or the Appear's 3) */
+        if (row_turn[row] == 1 && !cgroups[g].demo) continue;
+        int cs = st - 1, left = cgroups[g].limit - (cs + 1);
+        if (cs < 0) continue;
+        for (int k = 0; k < cgroups[g].n; k++) {
+            if (p[k].alive == PICK_GONE) continue;
+            p[k].alive = left <= 0 ? PICK_GONE : cs < 30 ? PICK_POP_NEW
+                       : left <= 180 && !demo_on && !((left / (left < 90 ? 5 : 10)) & 1) ? PICK_POP_BLINK : PICK_ON;
+        }
     }
 }
 
@@ -59088,6 +59216,7 @@ void game_update(void)
     update_launch_appear();
     LQ(65, update_switches());
     LQ(66, update_pops());
+    if (ncgroups) update_coin_groups();
     int had = got_coins;
     if (!opening_on) LQ(67, collect(coins, ncoins, 100.0f, 55.0f, &got_coins, FX_COIN_COINGET, SE_SY_COIN)); /* Coin::noticeGetCoin */
     if (got_coins > had && life < max_life) mario_sound("ライフ回復"); /* MarioActor::incLife */
