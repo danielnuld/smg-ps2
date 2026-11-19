@@ -11,6 +11,27 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- UI and flow audit, first pass (feat/ui-audit-miss-left, #640 #641 #658 #659, 2026-11-18): Petari's Screen/ classes
+  against menu.c / game.c, the table in `docs/ui-audit.md` (ok / fixed / issue / Wii-only / not re-read yet). Fixed:
+  PlayerMissLeft (menu.c pms_*: after a miss's wipe the PlayerLeft layout's CenterPlayerLeft over the black screen,
+  the lives + 1, at Wait's step 15 the lives with the rumbler and SE_SY_PLAYER_LEFT_DEC, End past 90; not in a
+  comet's scenario; game.c miss_event_update asks the stage again once it is dead); GameSequenceProgress's
+  SE_SY_TICO_WAKE_PLAYER from the garden to the Gateway (main.c scene_switch: after the load, then 120 frames);
+  OneUpBoard (menu.c oub_*: "OneUp" over Mario, game.c request_one_up = MR::requestOneUp with SE_SY_1UP: the 50
+  coins' 1-up was silent) and ScenePlayingResult::incStarPiece's 1-up every 50 star pieces; StageResultInformer's
+  ShowGalaxyComplete (System_Result009, BGM_GALAXY_COMPLETE: gamedata.c gd_just_complete_galaxy) and
+  ShowGetPictureBook (System_Result005 / 008: gd_just_book), its IconAButton and the information window's, the Coin
+  pane; game_init keeps the scene start's game data holder over a stage clear (seq_after_clear: the star is set at
+  its touch here, so the Observatory's snapshot held it and no "just" check of the result window or the map's
+  discover mode could fire); MarioLauncherLayout's Sight (menu.c sgt_*); CounterLayoutController::isPlayerMoving
+  (the spring / the Boo / swimming) and isWaitToDisappearCounter; PauseMenu's lower button SE_SY_PAUSE_OFF and its
+  failed save. tools/lyt.py COMMON gets PlayerLeft, InformationWindow (it was the ending's only: the result's
+  information windows never showed in the Observatory), OneUp, Sight: menus.bin 1031 -> 1067 KB in every scene.
+  Test modes: `miss` (log `miss left: 4 -> 3`), `result` (XF=-DRESULT_COMPLETE: the galaxy's other stars first,
+  log `result: information System_Result009`). **Repack: lyt.py** (menus.bin; the engine runs on the old one, the
+  new layouts then stay off). Not ported, issues: CometRetryButton #660, GalaxyCometScreenFilter #661,
+  BombTimerLayout / NoteCounter / SuddenDeathMeter #662, the map in the domes #663, SysInfoWindow's A button #679.
+  ponytail: the load after PlayerMissLeft and before the Tico's voice is not concurrent; no layout effects.
 - CameraRepulsiveCylinder (feat/585-camera-repulsive, #585, 2026-11-18): camera.c view_interp, after
   interpolateCameraSwitching: translateByRepulsion (`camera_repulsion` -> game.c cam_repulsion:
   CameraRepulsiveCylinder::getRepulsion, the eye's part across the cylinder's axis over (2 x its length / radius)
