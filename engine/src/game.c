@@ -1593,6 +1593,7 @@ static struct { int row; unsigned last; Anim *a; } oanim[MAX_OBJ_ANIM];
 static Anim *keep_pool;
 static int keep_n, keep_max;
 static Anim *keep_anim(void) { return keep_n < keep_max ? &keep_pool[keep_n++] : NULL; }
+#define LEAK_ICE_ANIMS 4 /* WaterLeakPipe's IceStepNoSlip clips (update_leakpipes: LEAK_ICE) */
 static Anim *shop_ga[2]; /* TicoShop's goods (shop_goods_draw) */
 static int ninsts;
 /* FOR_KIND(i, field): the instances whose `field` is set, in index order, listed once a rebind (inst_seq: game_rebind
@@ -2823,7 +2824,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     }
     keep_n = 0;
     keep_max = count_type("TicoFat", 0) + 2 * count_type("TicoGalaxy", 0) + (count_type("Creeper", 0) > 0) + (count_type("HoneyQueen", 0) > 0) +
-               2 * (count_type("TicoShop", 0) > 0);
+               2 * (count_type("TicoShop", 0) > 0) + LEAK_ICE_ANIMS * (count_type("WaterLeakPipe", 0) > 0);
     keep_pool = keep_max ? mem_alloc(MEM_PLAYER, keep_max * sizeof(Anim)) : NULL;
     shop_ga[0] = shop_ga[1] = NULL;
     for (int i = 0; i < MAX_OBJ_ANIM; i++) {
@@ -6432,6 +6433,18 @@ static void game_rebind_(void)
     }
     st_chain_rebind(s); /* statics.inc: LargeChain's parts */
     st_wt_rebind(s); /* statics.inc: WatchTowerRotateStep's lifts */
+    for (int i = 0, n = ninsts; i < n && scene_kcl(s, "IceStepNoSlip"); i++) { /* WaterLeakPipe::init: its IceStepNoSlip
+        * (initWithoutIter, makeActorDead): the step's collision, an instance at the Top joint, on while it lives
+        * (update_leakpipes) */
+        const Inst *o = &insts[i];
+        if (o->leakpipe != 1 || ninsts >= insts_cap) continue;
+        Inst *in = &insts[ninsts++];
+        memset(in, 0, sizeof *in);
+        in->md = o->md; in->row = o->row; in->zone = o->zone; in->s = o->s;
+        in->reach = o->reach + 600.0f + kcl_radius(scene_kcl(s, "IceStepNoSlip")) * o->s;
+        memcpy(in->m, o->m, sizeof in->m);
+        in->kcl = NULL; in->kmove = -1; in->kparent = -1; in->invisible = 1; in->railer = NULL; in->leakpipe = 2;
+    }
     for (int i = 0; plant_first && i < ninsts; i++)
         if (insts[i].plant) { insts[i].kcl_ready = 1; place_plants(&insts[i]); }
     memset(zone_kcl, 0, sizeof zone_kcl);
@@ -41477,16 +41490,113 @@ static void update_spmothers(void)
 }
 
 /* WaterLeakPipe.cpp after Petari: a pipe whose Top joint (0) stands arg0 (500) up from its Bottom, leaking water
- * (its Splash effect, SE_OJ_LV_WATER_LEAK). ponytail: no Ice Mario, so its water never freezes into IceStepNoSlip */
+ * (Wait: its Splash effect, SE_OJ_LV_WATER_LEAK). Ice Mario trampling or hip dropping its ice sensor (120 at the Top
+ * joint) from above, falling: Freeze. Freeze's first step with its IceStepNoSlip dead: the Splash gone, the step
+ * appears on the Top joint (Appear: its Start clip; its own collision), SE_OJ_ICE_FLOOR_FREEZE; while Ice Mario stands
+ * on the step Freeze starts again; at sLifeTime 15 the step's Break (End clip, killed at its end),
+ * SE_OJ_ICE_FLOOR_MELT, Wait. row_turn the nerve (0 Wait, 1 Freeze), row_step its step; the step is an instance after
+ * its pipe (leakpipe 2: its collision on while it lives, drawn by draw_leak_steps); leak_ice the living steps
+ * (st 1 Appear, 2 Break) and their clips. ponytail: four steps' clips at once (the fifth shown without its clip) */
+#define LEAK_ICE 4
+static struct { int row, st; Anim *a; } leak_ice[LEAK_ICE];
+static const Scene *leak_sc;
+static int leak_ice_of(int row, int make)
+{
+    if (leak_sc != sc) { leak_sc = sc; for (int k = 0; k < LEAK_ICE; k++) { leak_ice[k].row = -1; leak_ice[k].st = 0; leak_ice[k].a = NULL; } }
+    for (int k = 0; k < LEAK_ICE; k++) if (leak_ice[k].st && leak_ice[k].row == row) return k;
+    for (int k = 0; make && k < LEAK_ICE; k++) if (!leak_ice[k].st) { leak_ice[k].row = row; return k; }
+    return -1;
+}
+static void leak_top(const Inst *in, float m[16]) /* mTopMtx: the pipe's frame at its height (initPipeHeight) */
+{
+    const Row *r = &sc->objs[in->row];
+    float h = r->arg[0] != -1 ? (float)r->arg[0] : 500.0f;
+    V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+    memcpy(m, in->m, 64);
+    m[12] += up.x * h; m[13] += up.y * h; m[14] += up.z * h;
+}
+static void leak_step_clip(int k, const char *clip) /* IceStepNoSlip: startBck Start / End */
+{
+    const Model *md = scene_model(sc, "IceStepNoSlip");
+    if (!md || !md->skin) return;
+    if (!leak_ice[k].a && (leak_ice[k].a = keep_anim())) anim_bind(leak_ice[k].a, md->skin);
+    if (leak_ice[k].a) anim_play(leak_ice[k].a, clip, 1.0f, 0, 0);
+}
 static void update_leakpipes(void)
 {
     static u32 lv[4];
     int n = 0;
+#ifdef LEAK_TEST /* plain build XF=-DLEAK_TEST (IceVolcanoGalaxy/1, with IceStepNoSlip in the packs): Mario held over
+                  * the first WaterLeakPipe as Ice Mario, dropped onto its top 100 frames after it is in; he stands on the
+                  * step 200 frames, then is taken off: the step melts */
+    {
+        static int tf, t0 = -1;
+        tf++;
+        int ty = scene_type(sc, "WaterLeakPipe");
+        for (u32 q = 0; ty >= 0 && q < sc->nobjs && t0 < 0; q++)
+            if ((int)sc->objs[q].type == ty) { V3 p = row_pos(&sc->objs[q]); mario->pos = vadd(p, vmul(up_at(p, mario->up), 1500.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; break; }
+        FOR_KIND(i, leakpipe) {
+            Inst *in = &insts[i];
+            float tm[16];
+            if (in->leakpipe != 1) continue;
+            leak_top(in, tm);
+            V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), top = v3(tm[12], tm[13], tm[14]);
+            if (t0 < 0) { t0 = tf; set_player_mode(PM_ICE, 1); printf("leak test: pipe row %d in at f %d, kcl %p%c", in->row, tf, (const void *)scene_kcl(sc, "IceStepNoSlip"), 10); }
+            if (tf < t0 + 100) { mario->pos = vadd(top, vmul(up, 300.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0; }
+            if (tf == t0 + 320) { mario->pos = vadd(top, vadd(vmul(up, 300.0f), vmul(vnorm(v3(in->m[0], in->m[1], in->m[2])), 600.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; printf("leak test: off the step%c", 10); }
+            if (tf > t0 + 95 && tf % 10 == 0) printf("leak test f %d: nrv %d step %d mode %d ground %d mario %d %d %d top %d %d %d%c", tf - t0, row_turn[in->row], row_step[in->row], player_mode, mario_ground,
+                                                         (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z, (int)top.x, (int)top.y, (int)top.z, 10);
+            break;
+        }
+    }
+#endif
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), vel = vadd(mario->hvel, vmul(mario->up, mario->vup));
     FOR_KIND(i, leakpipe) {
         Inst *in = &insts[i];
-        if (!in->leakpipe || !row_shown(in->row)) continue;
-        fx_named("WaterLeakPipe", "Splash", in->m, in->anim ? (const float (*)[16])in->anim->world : NULL, in); /* exeWait */
-        if (n < 4 && vlen(vsub(v3(in->m[12], in->m[13], in->m[14]), mario->pos)) < 3000.0f) { lv[n] = se_level(SE_OJ_LV_WATER_LEAK, &in->m[12], lv[n]); n++; }
+        if (in->leakpipe != 1 || !row_shown(in->row)) continue;
+        int row = in->row, k = leak_ice_of(row, 0), si = -1;
+        float tm[16];
+        leak_top(in, tm);
+        V3 top = v3(tm[12], tm[13], tm[14]), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+        for (int j = i + 1; j < ninsts; j++) if (insts[j].leakpipe == 2 && insts[j].row == row) { si = j; break; }
+        if (row_step[row] < 0xFFFF) row_step[row]++;
+        int st = row_step[row] - 1;
+        if (player_mode == PM_ICE && row_turn[row] == 0 && !mario->grounded && vlen(vsub(c, top)) < 120.0f + HIT_BODY_R &&
+            vdot(vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14])), up) >= 0.0f && vdot(vel, up) < 0.0f) {
+            row_turn[row] = 1; row_step[row] = 1; st = 0; /* receiveMsgPlayerAttack: isMsgPlayerTrample / HipDrop */
+            printf("water leak pipe %d: freeze%c", row, 10);
+        }
+        if (row_turn[row] == 0) { /* exeWait */
+            fx_named("WaterLeakPipe", "Splash", in->m, in->anim ? (const float (*)[16])in->anim->world : NULL, in);
+            if (n < 4 && vlen(vsub(v3(in->m[12], in->m[13], in->m[14]), mario->pos)) < 3000.0f) { lv[n] = se_level(SE_OJ_LV_WATER_LEAK, &in->m[12], lv[n]); n++; }
+        } else if (st == 0 && k < 0) { /* exeFreeze: the step appears */
+            if ((k = leak_ice_of(row, 1)) >= 0) { leak_ice[k].st = 1; leak_step_clip(k, "icestepnoslip/start"); }
+            se_start(SE_OJ_ICE_FLOOR_FREEZE, &top.x);
+        } else if (si >= 0 && mario_ground == si && player_mode == PM_ICE) row_step[row] = 0; /* isOnPlayer(mIceStep): Freeze again */
+        else if (st == 15) { /* sLifeTime: the step's Break */
+            if (k >= 0) { leak_ice[k].st = 2; leak_step_clip(k, "icestepnoslip/end"); }
+            se_start(SE_OJ_ICE_FLOOR_MELT, &top.x);
+            row_turn[row] = 0; row_step[row] = 0;
+        }
+        if (k >= 0 && leak_ice[k].a) anim_update(leak_ice[k].a);
+        if (k >= 0 && leak_ice[k].st == 2 && (!leak_ice[k].a || leak_ice[k].a->done)) { leak_ice[k].st = 0; k = -1; } /* exeBreak: isBckStopped, kill */
+        if (si >= 0) { /* the step's collision on its place while it lives */
+            memcpy(insts[si].m, tm, 64);
+            insts[si].kcl = k >= 0 ? scene_kcl(sc, "IceStepNoSlip") : NULL;
+        }
+    }
+}
+static void draw_leak_steps(void)
+{
+    const Model *md = scene_model(sc, "IceStepNoSlip");
+    for (int k = 0; md && leak_sc == sc && k < LEAK_ICE; k++) {
+        if (!leak_ice[k].st) continue;
+        const Inst *in = row_inst(leak_ice[k].row);
+        float m[16];
+        if (!in || in->leakpipe != 1) continue;
+        leak_top(in, m);
+        if (leak_ice[k].a && md->skin) draw_skin(md, m, leak_ice[k].a);
+        else render_model(md, m, 0x80, 0x80, 0x80);
     }
 }
 static void leak_joints(Inst *in) /* initPipeHeight: Top at its height (model space: its scale taken off) */
@@ -43273,6 +43383,33 @@ static void update_tboxes(void)
 
 static void update_tbox_items(void) /* a chip's or an air bubble's box, opened: its item out, taken */
 {
+#ifdef TBOX_TEST /* plain build XF=-DTBOX_TEST (SandClockGalaxy/1, HeavenlyBeachGalaxy/2): Mario held over the first box
+                  * with a chip or a bubble (its zone streams in), the box opened 100 frames on, Mario on its item 50
+                  * after that */
+    {
+        static int tf, t0 = -1;
+        static V3 held;
+        tf++;
+        for (u32 q = 0; q < sc->nobjs && t0 < 0; q++) /* (before its zone is in: over its placement) */
+            if (!strncmp(sc->types + 32 * sc->objs[q].type, "TreasureBox", 11) && tbox_item(sc->types + 32 * sc->objs[q].type)) {
+                V3 p = row_pos(&sc->objs[q]);
+                held = vadd(p, vmul(up_at(p, mario->up), 600.0f));
+                mario->pos = held; mario->hvel = v3(0, 0, 0); mario->vup = 0;
+                break;
+            }
+        FOR_KIND(i, tbox) {
+            Inst *in = &insts[i];
+            int ready, item = in->tbox ? tbox_item(sc->types + 32 * sc->objs[in->row].type) : 0;
+            if (!item) continue;
+            if (t0 < 0) { t0 = tf; printf("tbox test: box row %d (%s) in at f %d%c", in->row, sc->types + 32 * sc->objs[in->row].type, tf, 10); }
+            if (tf == t0 + 100) tbox_open(in);
+            if (tf < t0 + 150) { mario->pos = held; mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+            else if (tf < t0 + 160 && !row_hold[in->row]) { mario->pos = vsub(tbox_item_pos(in, item, row_step[in->row] - 1, &ready), vmul(mario->up, HIT_BODY_H)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+            if (tf > t0 + 100 && tf < t0 + 150 && tf % 4 == 0) { V3 a = tbox_item_pos(in, item, row_step[in->row] - 1, &ready); printf("tbox test f %d: item %d at %d %d %d ready %d%c", tf - t0, item, (int)a.x, (int)a.y, (int)a.z, ready, 10); }
+            break;
+        }
+    }
+#endif
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     FOR_KIND(i, tbox) {
         Inst *in = &insts[i];
@@ -53389,7 +53526,7 @@ static void update_obj_anims(void)
             if (insts[i].pressure) { anim_pose(insts[i].anim); pr_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].fpressure) { anim_pose(insts[i].anim); fpr_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].leaves) { anim_pose(insts[i].anim); leaf_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
-            if (insts[i].leakpipe) { anim_pose(insts[i].anim); leak_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
+            if (insts[i].leakpipe == 1) { anim_pose(insts[i].anim); leak_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].bell) { anim_pose(insts[i].anim); st_bell_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].anim->done && !insts[i].anim->loop && !insts[i].vine && !obj_play(&insts[i], sc->types + 32 * sc->objs[insts[i].row].type, 1, 0))
                 obj_play(&insts[i], "wait", 1, 8); /* a one-shot clip over: back to its own clip (tryStartAllAnim), else Wait */
@@ -60295,6 +60432,7 @@ mario_model:
     draw_queen_wing();
     RESTQ(4);
     draw_tbox_items();
+    draw_leak_steps();
     if (m_bubble) for (int b = 0; b < MAX_BUBBLES; b++) { /* AirBubbleGenerator's bubbles */
         if (!bubbles[b].life || bubbles[b].nrv) continue; /* (KillWait: hidden) */
         basis_matrix(m, bubbles[b].pos, up_at(bubbles[b].pos, v3(0, 1, 0)), v3(1, 0, 0), 0);

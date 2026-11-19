@@ -261,6 +261,10 @@ KINOKO = {"Kanina": "BenefitItemOneUp", "Snakehead": "BenefitItemOneUp", "WoodBo
 # update_tbox_items / draw_tbox_items)
 for _box, _item in (("TreasureBoxBlueChip", "BlueChip"), ("TreasureBoxYellowChip", "YellowChip"), ("TreasureBoxCrackedAirBubble", "AirBubble")):
     EXTRA[_box] = EXTRA.get(_box, ()) + (_item,)
+# WaterLeakPipe::init: its IceStepNoSlip (a ModelObj on its Top joint, its own collision, Start / End clips: game.c
+# update_leakpipes)
+EXTRA["WaterLeakPipe"] = EXTRA.get("WaterLeakPipe", ()) + ("IceStepNoSlip",)
+SKINNED_OBJ += ("IceStepNoSlip",)
 
 
 def morph_arcs(o):
