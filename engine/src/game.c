@@ -374,7 +374,7 @@ typedef struct {
     int shoot;       /* ShootingStar: falls, bursts into star pieces (update_shooting) */
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
     const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
-    u8 rwork;        /* RailMoveObj _D0: its rail mover worked last frame (update_railers' StageEffect SEs) */
+    u8 stage;        /* its stage_se row + 1 (StageEffectDataTable.cpp's SEs by object name), 0 none */
     int press;       /* RailMoveObjPress (RGTowerPressGroundA, ReverseGravityRoomPressGroundA / B): ATYPE_MAP_OBJ_PRESS */
     int talkcls;     /* SignBoard 1, Tico 2, Kinopio 3, ..., TicoStarRing 7, TicoComet 8, HoneyBee 10, TicoShop 11: update_talkers */
     int clipcls;     /* its Petari clipping ported (obj_clipped): NPCActor's default 1, SuperSpinDriver 2; 0 never clipped */
@@ -797,7 +797,9 @@ static signed char *row_turn;    /* per OBJS row: its direction (+1 / -1, 0 not 
 static unsigned short *row_hold; /* frames it still holds at the end of its turn */
 static float *row_coord, *row_speed; /* per OBJS row: a rail-moving map part's distance along its rail, its speed */
 static signed char *row_rdir;    /* its direction (+1 / -1; 0 not started, 2 stopped) */
-static unsigned char *row_mp_a;  /* per OBJS row: its SW_A came on once (MapObjActor::exeWait started its parts) */
+static unsigned char *row_mp_a;  /* per OBJS row: 1 its SW_A came on once (MapObjActor::exeWait started its parts), 2 its
+                                  * rail mover worked last frame (RailMoveObj _D0), 4 its rotator turned last frame
+                                  * (RotateMoveObj in Move): the StageEffect edges, kept over a rebind */
 static unsigned short *row_rhold; /* frames it still waits at a rail point */
 static const unsigned char *scene_blob_g; /* the scene blob (PATH) for rebinds */
 static int hip_hit, hip_inst;   /* Mario landed a hip drop this frame, on instance hip_inst (-1 none) */
@@ -5403,6 +5405,12 @@ static const ClassInfo *class_of(int t, const char *name)
     if (e->seq != class_seq + 1 || e->t != t) { e->seq = class_seq + 1; e->t = t; class_make(&e->ci, name); }
     return &e->ci;
 }
+#include "stage_se.inc" /* stage_se[]: StageEffectDataTable.cpp's SE and pad tables (tools/stage_se.py) */
+static int stage_se_of(const char *name) /* getStageEffectSeParam: its row, -1 none */
+{
+    for (int k = 0; k < (int)(sizeof stage_se / sizeof *stage_se); k++) if (!strcmp(stage_se[k].name, name)) return k;
+    return -1;
+}
 static void class_apply(Inst *in, const ClassInfo *ci)
 {
     in->hazard = ci->hazard;
@@ -5652,6 +5660,7 @@ static void game_rebind_(void)
         in->plant = strcmp(name, "FlowerGroup") == 0 || strcmp(name, "FlowerBlueGroup") == 0 || strcmp(name, "CutBushGroup") == 0 ||
                     stone_row(r);
         in->rotor = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->arg[4] != -1 && r->arg[4] != 0; /* -1: not a map part */
+        in->stage = (u8)(stage_se_of(name) + 1);
         in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
                     strcmp(name, "ReverseGravityRoomPressGroundB") == 0 || in->dossun || in->onimasu ||
                     !strcmp(name, "TsukidashikunBig") || !strncmp(name, "DesertMovingLand", 16) ||
@@ -8021,13 +8030,31 @@ int game_test_rotor(int rail)
 {
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
+#ifdef STAGE_ANM /* (with STAGE_TEST: an AnmModelObj instead) */
+        if (!in->anmmodel) continue;
+#else
         if (rail ? !in->railer : !in->rotor) continue;
+#endif
+#ifdef STAGE_TEST /* XF=-DSTAGE_TEST=n: the n-th one with a StageEffect SE row */
+        static int skip = STAGE_TEST;
+        if (!in->stage || skip-- > 0) continue;
+        printf("stage test: %s row %d kind %c\n", stage_se[in->stage - 1].name, in->row, stage_se[in->stage - 1].kind ? stage_se[in->stage - 1].kind : '0');
+#endif
         V3 p = v3(in->m[12], in->m[13], in->m[14]);
         mario->up = up_at(p, mario->up);
         mario->pos = vadd(p, vmul(mario->up, in->reach * 0.5f + 100.0f));
         mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
         return in->row;
     }
+#ifdef STAGE_ANM /* none bound yet: Mario over the first such row (its zone streams in), tried again */
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        int k = stage_se_of(sc->types + 32 * sc->objs[i].type);
+        if (k < 0 || stage_se[k].kind != 'A' || row_dead[i]) continue;
+        mario->pos = vadd(row_pos(&sc->objs[i]), vmul(mario->up, 300.0f));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
+        break;
+    }
+#endif
     return -1;
 }
 
@@ -36777,8 +36804,10 @@ static void update_elevator(Inst *in, int i, int st)
 /* UFOKinoko.cpp after Petari: a MapObjActor whose rotator runs from init (the generic rotor) and whose rail mover
  * waits: Wait until its SW_B comes on (listenStageSwitchOnB) or its demo's ＵＦＯキノコ登場 action (dx_cast_hook):
  * startMove -> Move (UFO_KINOKO_MOVE_ST, LV_UFO_KINOKO_MOVE, its rail mover started) -> Stop (MOVE_ED) once the rail
- * mover stops. gi: 1 SW_B seen on. ponytail: no StageEffect (none for UFOKinoko in the port's table) */
+ * mover stops; control's tryStageEffectMoving (SE_OJ_LV_UFO_KINOKO_ROTATE) in every nerve, tryStageEffectStart /
+ * Stop with Move's / Stop's first step. gi: 1 SW_B seen on */
 enum { UK_WAIT = 1, UK_MOVE, UK_STOP };
+static void stage_edge(Inst *in, int stop, int plain);
 static void ufok_start(int row) /* UFOKinoko::startMove */
 {
     const Inst *in = row_inst(row);
@@ -36788,13 +36817,14 @@ static void update_ufokinoko(Inst *in, int st)
 {
     GapSt *g = gap_st(in->row);
     const Row *r = &sc->objs[in->row];
+    if (in->stage && stage_se[in->stage - 1].mv) in->lv[1] = se_level(stage_se[in->stage - 1].mv, &in->m[12], in->lv[1]); /* control */
     if (!gap_st(in->row)->n) { gap_nrv(in, UK_WAIT); return; }
     if (r->sw[SW_B] >= 0 && sw_on(r, SW_B) && !(g->i & 1)) { g->i |= 1; ufok_start(in->row); }
     if (gap_st(in->row)->n == UK_MOVE) {
-        if (st == 0) se_start(SE_OJ_UFO_KINOKO_MOVE_ST, &in->m[12]);
+        if (st == 0) { stage_edge(in, 0, 0); se_start(SE_OJ_UFO_KINOKO_MOVE_ST, &in->m[12]); }
         in->lv[0] = se_level(SE_OJ_LV_UFO_KINOKO_MOVE, &in->m[12], in->lv[0]);
         if (st > 0 && in->railer && row_rdir[in->row] == 2) gap_nrv(in, UK_STOP); /* !isRailMoverWorking */
-    } else if (gap_st(in->row)->n == UK_STOP && st == 0) se_start(SE_OJ_UFO_KINOKO_MOVE_ED, &in->m[12]);
+    } else if (gap_st(in->row)->n == UK_STOP && st == 0) { se_start(SE_OJ_UFO_KINOKO_MOVE_ED, &in->m[12]); stage_edge(in, 1, 0); }
 }
 /* CoinBox.cpp after Petari: an invisible coin at its place (a 5 sensor): Mario's spin storm range (his spin within
  * mSensorRadiusSpinStorm 600 of it, the first 15 frames; a tornado's) -> Hit: the CoinGet effect, at step 15 its coin
@@ -36951,9 +36981,9 @@ static int astro_rotator_dead(const char *cls);
 static int mp_running(const Row *r, int row)
 {
     if (astro_rotator_dead(sc->types + 32 * r->type)) return 0; /* AstroMapObj::setStateDead: endMapPartsFunctions */
-    if (r->sw[SW_A] >= 0 && !row_mp_a[row]) {
+    if (r->sw[SW_A] >= 0 && !(row_mp_a[row] & 1)) {
         if (!sw_on(r, SW_A)) return 0;
-        row_mp_a[row] = 1;
+        row_mp_a[row] |= 1;
     }
     return r->sw[SW_B] < 0 || sw_on(r, SW_B);
 }
@@ -37202,20 +37232,20 @@ static void update_airs(void)
     }
 }
 
-static void update_rotors(void)
+static void stage_edge(Inst *in, int stop, int plain);
+static void stage_moving(Inst *in);
+static int rotor_step(Inst *in, int i) /* 1: its rotator turned (MapPartsRotator::isMoving) */
 {
-    FOR_KIND(i, rotor) {
-        Inst *in = &insts[i];
-        if (!in->rotor || !dx_row_moves(in->row)) continue;
+    {
         const Row *r = &sc->objs[in->row];
         int row = in->row, packed = r->arg[7], type = packed & 15, cond = packed >> 8 & 15, hold = packed >> 12 & 0x3FFF;
-        if (!mp_running(r, row)) continue;
+        if (!mp_running(r, row)) return 0;
         if (!row_turn[row]) {
-            if (cond && mario_ground != i) continue;
+            if (cond && mario_ground != i) return 0;
             row_turn[row] = 1;
         }
-        if (row_turn[row] == 2) continue; /* RotateType 0: stopped at its end */
-        if (row_hold[row]) { row_hold[row]--; continue; }
+        if (row_turn[row] == 2) return 0; /* RotateType 0: stopped at its end */
+        if (row_hold[row]) { row_hold[row]--; return 0; }
         float speed = r->arg[4] * 0.01f, range = r->arg[5] > 0 ? (float)r->arg[5] : 0, sg = speed > 0 ? 1.0f : -1.0f;
         int dir = row_turn[row];
         float old[16], prev = row_angle[row], a = prev + fabsf(speed) * sg * dir;
@@ -37233,26 +37263,36 @@ static void update_rotors(void)
         if (in->railer) railer_place(in);
         if (mario_ground == i) carry(old, in);
     }
+    return 1;
+}
+/* RotateMoveObj (stage_se kind O) exeMove / exeStop: tryStageEffectStart at Move's first step, tryStageEffectMoving
+ * while its rotator turns, Stop as it does not (a hold, its end, SW_B off: tryStageEffectStop at the first step), Move
+ * again as it turns. ponytail: OceanRingRuinsGearBig / Small's moving SE only at a rotate speed other than 0 (the
+ * port's rotators have no acceleration: never 0 while turning) */
+static void update_rotors(void)
+{
+    FOR_KIND(i, rotor) {
+        Inst *in = &insts[i];
+        if (!in->rotor || !dx_row_moves(in->row)) continue;
+        int mv = rotor_step(in, i);
+        if (!in->stage || stage_se[in->stage - 1].kind != 'O') continue;
+        int was = row_mp_a[in->row] & 4;
+        if (mv && !was) stage_edge(in, 0, 0);
+        if (mv) stage_moving(in);
+        else if (was) stage_edge(in, 1, 0);
+        row_mp_a[in->row] = (unsigned char)((row_mp_a[in->row] & ~4) | (mv ? 4 : 0));
+    }
 }
 
 /* MapPartsRailMover.cpp: a map part on a rail moves along it at the speed of the last point that set one (point_arg0),
  * waits point_arg5 frames at a point, and at an end MoveStopType (path_arg1, default 1): 0 stops, 1 turns back, 2
  * starts over, 3 vanishes; MoveConditionType other than 0 waits for Mario on it. It carries Mario like a rotating
  * part. ponytail: no acceleration (point_arg1), no time-based speed (point_arg7), no rail posture */
-/* StageEffectDataTable.cpp's start / moving / stop SEs of the rail movers: RailMoveObj::exeMove plays the start one as
- * its rail mover starts working (startMoveInner), the moving one while it works, the stop one at an end
- * (doAtEndPoint); SideSpikeMoveStep::exeWait the moving / stop ones. ponytail: MapObjActor::appear's start SE (at
- * the scene's start) not played */
-static const struct { const char *name; u32 st, mv, ed; } rail_se[] = {
-    {"SeaBottomBigDoorA", SE_OJ_SEABTM_B_DOOR_START, SE_OJ_LV_SEABTM_B_DOOR_MOVE, SE_OJ_SEABTM_B_DOOR_STOP},
-    {"SeaBottomBigDoorB", SE_OJ_SEABTM_B_DOOR_START, SE_OJ_LV_SEABTM_B_DOOR_MOVE, SE_OJ_SEABTM_B_DOOR_STOP},
-    {"DeathPromenadeMovePartsSpuareA", SE_OJ_DP_MOVE_STEP_START, SE_OJ_LV_DP_MOVE_STEP_MOVE, SE_OJ_DP_MOVE_STEP_START},
-    {"SideSpikeMoveStepA", 0, SE_OJ_LV_SIDE_SPIKE_STEP_MV, SE_OJ_SIDE_SPIKE_STEP_ED},
-    {"UFOStrongA", 0, SE_OJ_LV_UFO_MOVE, 0}, /* UFOBase::control: LV_UFO_MOVE while its rail mover works (its end SE at isDone) */
-    {"BroadBeanMoveStepA", SE_OJ_STONE_FLOOR_S_START, SE_OJ_LV_STONE_FLOOR_S_MOVE, SE_OJ_STONE_FLOOR_S_END},
-    {"BroadBeanMoveStepB", SE_OJ_STONE_FLOOR_S_START, SE_OJ_LV_STONE_FLOOR_S_MOVE, SE_OJ_STONE_FLOOR_S_END},
-    {"RGTowerPressGroundA", SE_OJ_STONE_FLOOR_S_START, SE_OJ_LV_STONE_FLOOR_S_MOVE, SE_OJ_STONE_FLOOR_S_END},
-};
+/* StageEffectDataTable.cpp's start / moving / stop SEs of the rail movers (stage_se kinds R, D, K):
+ * RailMoveObj::exeMove's tryStageEffectStart as its rail mover starts working (startMoveInner), tryStageEffectMoving
+ * while it works, tryStageEffectStop at an end (doAtEndPoint); RailDemoMoveObj the three SEs alone;
+ * SideSpikeMoveStep::exeWait the moving / stop ones. ponytail: MapObjActor::appear's start SE (at the scene's start)
+ * not played */
 /* StageEffectDataTable.cpp sStageEffectCameraDataTable: start / stop shake (0 none, 1 Strong .. 5 VeryWeak), the
  * moving infinity shake (intensity, speed; 0 none) and the distance to Mario under which the start / stop ones play
  * (-1: Mario on it, isDistanceValidShake) */
@@ -37287,6 +37327,34 @@ static void stage_shake(int c, int type, int inst) /* shakeStartCamera / shakeSt
     float d = vlen(vsub(mario->pos, v3(p[0], p[1], p[2])));
     if (stage_cam[c].dist == -1.0f ? mario_ground == inst : d > 0.0f && d < stage_cam[c].dist) camera_shake(power[type]);
 }
+/* StageEffect::tryStageEffectStart (stop 0) / tryStageEffectStop (1) by the object's name: its Start / Stop effect,
+ * its SE and the riddle chime (type 1 at the start, 2 at the stop), the rumble and the camera shake (near enough:
+ * isDistanceValidShake); plain: the SE alone (getStartSe / getStopSe) */
+static void stage_edge(Inst *in, int stop, int plain)
+{
+    const char *cls = sc->types + 32 * sc->objs[in->row].type;
+    int k = in->stage - 1, c = plain ? -1 : stage_cam_of(cls);
+#ifdef SE_LOG
+    printf("stage %s: %s %d\n", stop ? "stop" : "start", cls, in->row);
+#endif
+    if (k >= 0 && (stop ? stage_se[k].ed : stage_se[k].st)) se_start(stop ? stage_se[k].ed : stage_se[k].st, &in->m[12]);
+    if (plain || (k < 0 && c < 0)) return;
+    fx_named(cls, stop ? "Stop" : "Start", in->m, NULL, NULL);
+    if (k >= 0 && stage_se[k].type == 1 + stop) se_start(SE_SY_READ_RIDDLE_S, NULL);
+    if (c < 0) return;
+    float d = vlen(vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14])));
+    if (k >= 0 && stage_se[k].pad[2 * stop] >= 0 &&
+        (stage_cam[c].dist == -1.0f ? mario_ground == (int)(in - insts) : d > 0.0f && d < stage_cam[c].dist))
+        pad_rumble(stage_se[k].pad[2 * stop]); /* rumblePadStart / rumblePadStop */
+    stage_shake(c, stop ? stage_cam[c].ed : stage_cam[c].st, (int)(in - insts));
+}
+static void stage_moving(Inst *in) /* tryStageEffectMoving: the moving SE, rumblePadMoving */
+{
+    int k = in->stage - 1;
+    if (k < 0) return;
+    if (stage_se[k].mv) in->lv[0] = se_level(stage_se[k].mv, &in->m[12], in->lv[0]);
+    if (stage_se[k].pad[1] >= 0) pad_rumble(stage_se[k].pad[1]);
+}
 static void update_railers(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -37294,8 +37362,8 @@ static void update_railers(void)
         if (!in->railer || !dx_row_moves(in->row)) continue;
         const Row *r = &sc->objs[in->row];
         const unsigned char *e = in->railer;
-        int was = in->rwork; /* RailMoveObj _D0 */
-        in->rwork = 0;
+        int was = row_mp_a[in->row] & 2; /* RailMoveObj _D0 */
+        row_mp_a[in->row] &= ~2;
         int row = in->row, cond = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) ? r->arg[7] >> 8 & 15 : 0, stop = *(const int *)(e + 16); /* (an objinfo row: MoveConditionType unset, 0) */
         if (in->eyebeamer ? !eb_patrol(row) : st_turtle_moving(row) >= 0 ? !st_turtle_moving(row) : !mp_running(r, row)) continue;
         if (in->gap == GAP_ELEVATOR && gap_st(row)->n != EV_MOVE) continue; /* BattleShipElevator::control: not in Wait */
@@ -37310,18 +37378,22 @@ static void update_railers(void)
         }
         if (row_rdir[row] == 2) continue;
         if (row_rhold[row]) { row_rhold[row]--; continue; }
-        int se = -1; /* isRailMoverWorking: its SEs by name */
-        for (int k = 0; k < (int)(sizeof rail_se / sizeof *rail_se); k++) if (!strcmp(rail_se[k].name, sc->types + 32 * r->type)) se = k;
+        int se = in->stage ? stage_se[in->stage - 1].kind : 0; /* isRailMoverWorking: its SEs by name */
+        if (se == 'I') { /* IceVolcanoUpDownPlane::move: a RailMoveObj whose moving SE needs tryCalcNearestPosToPlayer
+                          * (Mario not 380 under its plane). ponytail: the sound at its place, not at its point nearest
+                          * to him (getSoundCalcPos) */
+            V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+            se = vdot(vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14])), up) <= -380.0f ? 'r' : 'R';
+        }
+        if (se != 'R' && se != 'r' && se != 'D' && se != 'K') se = 0;
         int cam = stage_cam_of(sc->types + 32 * r->type);
-        if (!was && cam >= 0) { /* startMoveInner: tryStageEffectStart's shakeStartCamera, shakeCameraMoving */
-            stage_shake(cam, stage_cam[cam].st, i);
-            if (stage_cam[cam].in > 0.0f) camera_shake_infinity(in, stage_cam[cam].in, stage_cam[cam].sp);
-        }
-        in->rwork = 1;
-        if (se >= 0) {
-            if (!was && rail_se[se].st) se_start(rail_se[se].st, &in->m[12]); /* startMoveInner: tryStageEffectStart */
-            in->lv[0] = se_level(rail_se[se].mv, &in->m[12], in->lv[0]);   /* move: tryStageEffectMoving */
-        }
+        if (!was && (se == 'R' || se == 'r' || se == 'D')) stage_edge(in, 0, se == 'D'); /* startMoveInner: tryStageEffectStart */
+        if (!was && cam >= 0 && stage_cam[cam].in > 0.0f) camera_shake_infinity(in, stage_cam[cam].in, stage_cam[cam].sp); /* shakeCameraMoving */
+        row_mp_a[row] |= 2;
+        if (se == 'R') stage_moving(in); /* move: tryStageEffectMoving */
+        else if (se == 'D' || se == 'K') in->lv[0] = se_level(stage_se[in->stage - 1].mv, &in->m[12], in->lv[0]); /* getMovingSe */
+        else if (!strcmp(sc->types + 32 * r->type, "UFOStrongA")) /* UFOBase::control: while its rail mover works (its end SE at isDone) */
+            in->lv[0] = se_level(SE_OJ_LV_UFO_MOVE, &in->m[12], in->lv[0]);
         float c = row_coord[row];
         int dir = row_rdir[row];
         for (u32 k = 0; k < nr; k++) /* the speed of the last point behind it that sets one */
@@ -37335,11 +37407,8 @@ static void update_railers(void)
             if (hold > 0 && ((c < pc && n >= pc) || (c > pc && n <= pc))) { n = pc; row_rhold[row] = hold; break; }
         }
         if (n >= len || n <= 0) { /* an end */
-            if (se >= 0) se_start(rail_se[se].ed, &in->m[12]); /* doAtEndPoint: tryStageEffectStop */
-            if (cam >= 0) { /* its shakeStopCamera, stopShakingCameraMoving */
-                stage_shake(cam, stage_cam[cam].ed, i);
-                if (stage_cam[cam].in > 0.0f) camera_shake_stop(in);
-            }
+            if (se) stage_edge(in, 1, se == 'D' || se == 'K'); /* doAtEndPoint: tryStageEffectStop */
+            if (cam >= 0 && stage_cam[cam].in > 0.0f) camera_shake_stop(in); /* stopShakingCameraMoving */
             int type = stop >= 0 ? stop : 1;
             n = n >= len ? len : 0;
             int hold = *(const int *)(pa + 12 * (n > 0 ? nr - 1 : 0) + 8);
@@ -40549,8 +40618,12 @@ static void update_arrows(void)
  * end), AnmModelBindMove (4: never here, no rush binding), AnmModelSwitchMoveEventCamera (5: as 1). Wait until its
  * trigger, Move (its Move clip as its BCK says) until the clip is over (isBckOneTimeAndStopped), then gone / Wait
  * again (BindMove) / Done (its EndLoop effect). Its collision follows its Move joint (MapObjActor: initCollisionParts
- * on cFollowJointName; kcl_query, Inst.kmove). row_turn 0 Wait / 1 Move / 2 Done, row_step its step. ponytail: no
- * stage effect SEs, rumble or camera shakes, no event camera */
+ * on cFollowJointName; kcl_query, Inst.kmove). row_turn 0 Wait / 1 Move / 2 Done, row_step its step. Its stage
+ * effects (exeMove): tryStageEffectStart and shakeCameraMoving at the first step, the moving SE (under the stop SE's
+ * step where it has one), the stop SE and a type 2's riddle chime at that step, rumblePadMoving; at isDone
+ * rumblePadStop, shakeStopCamera, stopShakingCameraMoving; HeavenlyBeachUnderRock's moving SE on in Done.
+ * A SimpleMapObj with a moving SE (stage_se kind S) plays it always (MapObjActor::control: no rail mover, rotator or
+ * rail rotator). ponytail: no event camera */
 static int obj_start(const Inst *in, const char *clip) /* tryStartAllAnim: the clip, looping as its BCK says */
 {
     if (!in->anim) return 0;
@@ -40574,10 +40647,12 @@ static void update_anmmodels(void)
 {
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
+        if (in->stage && stage_se[in->stage - 1].kind == 'S' && row_shown(in->row)) stage_moving(in);
         if (!in->anmmodel || !row_shown(in->row)) continue;
         const Row *r = &sc->objs[in->row];
         signed char *n = &row_turn[in->row];
         unsigned short *st = &row_step[in->row];
+        int k = in->stage - 1, cam = stage_cam_of(sc->types + 32 * r->type);
         if (*st < 0xFFFF) ++*st;
         if (*n == 0) {
             int go = in->anmmodel == 3 ? mario_ground == i : in->anmmodel == 4 ? 0 : r->sw[SW_A] < 0 || sw_on(r, SW_A); /* isOnStartAnmTrigger */
@@ -40588,13 +40663,37 @@ static void update_anmmodels(void)
                 if (in->anmmodel == 3 && r->sw[SW_B] >= 0) sw_set((Row *)r, SW_B, 1); /* AnmModelGroundOnMove::control */
             }
         } else if (*n == 1) {
+            if (*st == 1) { /* the first step */
+                stage_edge(in, 0, 0);
+                if (cam >= 0 && stage_cam[cam].in > 0.0f) camera_shake_infinity(in, stage_cam[cam].in, stage_cam[cam].sp);
+            }
+            if (k >= 0) {
+                int steps = stage_se[k].steps, step = *st - 1;
+                if (stage_se[k].mv && (steps <= 0 || step < steps)) in->lv[0] = se_level(stage_se[k].mv, &in->m[12], in->lv[0]);
+                if (stage_se[k].ed && steps >= 0 && step == steps) {
+                    se_start(stage_se[k].ed, &in->m[12]);
+                    if (stage_se[k].type == 2) se_start(SE_SY_READ_RIDDLE_S, NULL); /* isRiddleSeTypeStop */
+                }
+                if (stage_se[k].pad[1] >= 0) pad_rumble(stage_se[k].pad[1]); /* rumblePadMoving */
+            }
             if (!in->anim || (in->anim->done && !in->anim->loop)) { /* isDone */
+                if (cam >= 0) { /* rumblePadStop, shakeStopCamera, stopShakingCameraMoving */
+                    float d = vlen(vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14])));
+                    if (k >= 0 && stage_se[k].pad[2] >= 0 &&
+                        (stage_cam[cam].dist == -1.0f ? mario_ground == i : d > 0.0f && d < stage_cam[cam].dist))
+                        pad_rumble(stage_se[k].pad[2]);
+                    stage_shake(cam, stage_cam[cam].ed, i);
+                    if (stage_cam[cam].in > 0.0f) camera_shake_stop(in);
+                }
                 if (in->anmmodel == 2 || in->anmmodel == 3) { row_kill(in->row); game_rebind(); return; } /* isKilledAtMoveDone */
                 if (in->anmmodel == 4) { *n = 0; *st = 1; continue; }                                  /* isRepeat */
                 *n = 2; *st = 0;
                 fx_named(sc->types + 32 * r->type, "EndLoop", in->m, in->anim ? (const float (*)[16])in->anim->world : NULL, in);
             }
-        } else if (in->anim) { in->anim->speed = 0.0f; } /* Done: the last frame held */
+        } else {
+            if (in->anim) in->anim->speed = 0.0f; /* Done: the last frame held */
+            if (k >= 0 && !strcmp(stage_se[k].name, "HeavenlyBeachUnderRock")) in->lv[0] = se_level(stage_se[k].mv, &in->m[12], in->lv[0]);
+        }
     }
 }
 
@@ -49925,9 +50024,6 @@ static void update_obj_anims(void)
              * rest within 8000 of the camera */
             if (insts[i].clipcls ? obj_clipped(&insts[i]) : !near) continue;
             if (!dx_row_moves(insts[i].row)) continue; /* the scene stopped by a demo: its casts alone animate (movement off: no calcAnim) */
-            if (!strncmp(sc->types + 32 * sc->objs[insts[i].row].type, "PhantomShipPropeller", 20)) /* AnmModelObj::exeMove: its moving SE */
-                insts[i].lv[0] = se_level(sc->types[32 * sc->objs[insts[i].row].type + 20] == 'B' ? SE_OJ_LV_P_SHIP_PROPELLER_L : SE_OJ_LV_P_SHIP_PROPELLER_S,
-                                          &insts[i].m[12], insts[i].lv[0]);
             if (insts[i].punch) { anim_pose(insts[i].anim); punch_ball(&insts[i], insts[i].anim); anim_skin(insts[i].anim); continue; }
             if (insts[i].sbeamer) { anim_pose(insts[i].anim); sbm_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].pressure) { anim_pose(insts[i].anim); pr_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
