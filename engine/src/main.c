@@ -1921,9 +1921,16 @@ int main(void)
         if (frame == 330) printf("shoot2 test: stomp it row %d\n", game_test_enemy(6, 0, 0));
         if (frame == 360) printf("shoot2 test: %d Takobo alive\n", game_kind_alive(6));
 #endif
-#ifdef ASC_KIND /* XF="-DASC_KIND=<walker kind>": Mario held 600 before its first, two star pieces at it (wa_start's log) */
-        if (frame >= 120 && frame < 300) game_test_enemy(ASC_KIND, 0, 9);
-        if (frame == 300 || frame == 420) printf("asc test f %u: shot at row %d\n", frame, game_test_shoot(ASC_KIND));
+#ifdef ASC_KIND /* XF="-DASC_KIND=<walker kind>": Mario held 600 before its first, two star pieces at it (wa_start's log);
+                 * with -DASC_HOW=<n> game_test_enemy's way n each frame of 300-420 instead; walkers unclipped */
+        if (frame == 120) game_test_unclip();
+        static int asc_shots; /* held until the first shot goes (the flight in and the welcome first: -2) */
+        if (frame >= 120 && !asc_shots) game_test_enemy(ASC_KIND, 0, 9);
+#ifdef ASC_HOW
+        if (frame >= 300 && frame < 420 && game_test_enemy(ASC_KIND, 0, ASC_HOW) >= 0 && frame % 30 == 0) printf("asc test f %u: way %d\n", frame, ASC_HOW);
+#else
+        if (frame >= 300 && frame % 60 == 0 && asc_shots < 2) { int r = game_test_shoot(ASC_KIND); if (r >= 0) asc_shots++; printf("asc test f %u: shot at row %d\n", frame, r); }
+#endif
 #endif
 #ifdef TSPOT_TEST
         if (frame >= 120 && frame < 300) game_test_tspot_near(); /* the camera settles */
