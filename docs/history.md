@@ -11,6 +11,13 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Banekiti (feat/701-banekiti, #701, 2026-11-18): MapObj/Banekiti.cpp in `engine/src/banekiti.inc`
+  (update_banekiti): TeresaMario2DGalaxy's four spring bumpers on their rails. Wait (its Wait clip,
+  SE_OJ_LV_BANEKITI_MOVE); Boo Mario touching one of its three sensors (80, 100 apart along its X) is reflected and
+  it goes to Repel (a weak rumble and shake, Repel, SE_OJ_BANEKITI_REPEL), Wait at the clip's end. Its nerve in
+  row_turn / row_step. `tools/slice.py` SKINNED_OBJ Banekiti (its clips). Test: plain `XF=-DBANEKITI_TEST`,
+  TeresaMario2DGalaxy/1: its Wait path runs with its clips in the overlay pack, but **the Repel was not seen in PCSX2** (the test's Mario falls out of that scenario's start and its placement by the bumper did not take). ponytail: no DPDSwoon (the 2P pointer), no star piece hit reaction (AnimScaleController).
+  Cost: about 1.0 KB of the ELF (nm update_banekiti), no state of its own; memcheck on a plain build of main with the six classes of this batch: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB; route test with them: star got. **Release: slice_all.py TeresaMario2DGalaxy + sound.py --pack TeresaMario2DGalaxy.**
 - LavaProminenceTriple / LavaProminenceEnvironment (feat/705-lava-prominence-triple, #705, 2026-11-18):
   MapObj/LavaProminenceTriple.cpp in `engine/src/lava_prominence_triple.inc` (lpt_*): HellPoolAZone's three wheels
   of fire and HellProminenceGalaxy's seven Environment ones. The appear time (arg1), the turn arg0 / 100 degrees a
