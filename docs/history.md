@@ -79,6 +79,35 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   shown by its SW_APPEAR (needs each name's class), the rotators' start SE at a reverse (isOnReverse), the Start /
   Stop effects of classes not in jpa.py NAMED. **Release: sound.py --pack for every galaxy** (the table's names are
   in game.c's sources now: simplest with the full repack).
+- #590 GameAudio's directors (2026-11-18, agent bgm): AudBgmConductor::movement's water states (bgm_conductor_tick:
+  while STM_GALAXY_03 / 04 play, the BGM's state 1, 5 with the camera in water, 4 with the shell's jet, 6 with both;
+  the mixes were in mbgm_tab already), AudCameraWatcher (water_obj at the camera: SE_AT_LV_UNDER_WATER, state bit 2;
+  MarioSwim's jet sets bit 4), AudioEffectArea + AudEffectDirector (update_audio_effect: the area Mario, or for types
+  3 / 4 the camera, is in by its priority; type 3 the BGM's volume to 0 over 90 and SE_AT_LV_WATERFALL_CAVE, type 4
+  SE_AT_LV_PHNCV_TERESA_ROOM; 23 areas, 20 of them type 1 = reverb only). ponytail: no AudEffector (reverb send,
+  cutoff, special effects), no setFarCamera. Tests: `swim` (HeavenlyBeachGalaxy/1, XF=-DAUDIOFX_TEST: from frame 1500
+  Mario put in each AudioEffect area). Repack: slice.py LOGIC AudioEffectCube / Sphere / Cylinder (every galaxy
+  with one), tools/sound.py scenario_keep (the sound.bin of every scenario with water: SE_AT_LV_UNDER_WATER; with those areas: theirs).
+- #587 BGM calls nothing made (2026-11-18, agent bgm; docs/sound-gaps.md's list of Petari's BGM calls gone through by
+  file): the title's STM_TITLE (TitleSequenceProduct: at the logo, stopped over 75 at A + B) and the file select's
+  MBGM_FILE_SELECT (FileSelector::exeTitleEnd; its state 5 far / 6 near by the camera: updateBgm; stopped over 90 at
+  the start demo): FileSelect played the default galaxy stream before (game_bgm_first leaves it alone now). The
+  result window's sub BGMs (StageResultInformer: BGM_ASTRO_RETURN, BGM_HIGH_SCORE, BGM_NEW_GALAXY at its information
+  window; the staff roll's too), TicoFat::exeInfo's BGM_APPEAR_PLANET, TicoDemoGetPower's BGM_STAR_POW_GET (step 10 of
+  the spin demo's part 4), ScenarioSelectLayout (BGM_SENARIO_SEL_2 unless BGM_SENARIO_SEL plays, stopped over 30 at
+  the fade out and at once at the cancel), GameStageClearSequence's grand star fanfare (BGM_GRAND_STAR_GET / _2 at step
+  53 instead of BGM_CLEAR), MiniatureGalaxy's open of a grand star galaxy (stop over 30, BGM_KOOPA_APPEAR, then
+  MBGM_ASTRO_DOME_2), SphereSelectorHandle's states of the dome's BGM (appear 2, turning 4 / 3, confirm 6 / 5, disappear
+  1) and SE_AT_LV_ASTRO_DOME_WIND_2, TalkBalloonEvent (the BGM at half volume over 30 while a balloon is open, back
+  over 60; the volume is whole again at each scene's start), GalaxyNamePlate's SE_SY_ASTRO_GALAXY_NEW_EFF,
+  SE_SY_THANK_YOU_LUIGI. EarthenPipe::processBgmPlayerIn / Out (pipe_bgm: the partner pipe's arg4 a BGM number of
+  the stage's, arg5 a state number; 39 pipes: Good Egg's, Honeyhive's, the beach's...): going in stops another BGM
+  over 60, coming out starts the partner's. DesertMovingLand::exeMoveSign in the sand UFO's demo (stop over 60,
+  then MBGM_GALAXY_02_HURRY as it goes down). game.h: game_bgm_sub / game_bgm_is / game_bgm_state.
+  Left: Kinopio's star mode (MBGM_KINOPIO_TANKEN_B: its TakeOutStar is not ported), PowerStar's grand star demo
+  (BGM_KOOPA_GRAND_STAR_1 / 3, MBGM_STAR_EXIST_2: #548), BGM_GALAXY_COMPLETE (no galaxy complete window), PlayerMissLeft
+  (SE_SY_PLAYER_LEFT_DEC: the layout is not in the packs), SE_SY_TICO_WAKE_PLAYER (GameSequenceProgress holds the move
+  to HeavensDoorGalaxy 300 frames: our scene switch does not run frames), PowerStarList's capture (no capture).
 - Carried drops (fix/491-drop-carried, 2026-11-07): game.c drop_taking after MarioActorTakeMsg.cpp
   damageDropThrowMemoSensor / rushDropThrowMemoSensor: the held JetTurtle's DAMAGEDROP (resetPositionAndVanish: Vanish /
   VanishRed / VanishGold, Restart or killed when _E0 is off) and RUSHDROP (its Drop nerve: up 10, ahead 10, boundDrop,
