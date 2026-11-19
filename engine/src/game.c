@@ -45650,6 +45650,78 @@ static void update_msteam(void)
         if (hit && mario_attack(ATK_STRONG, p)) printf("submarine steam %u hits\n", i);
     }
 }
+/* SandUpDownEffectObj.cpp after Petari (SandUpDownColumnAEffect, SandUpDownKGBaseEffect, SandUpDownTowerTopEffect,
+ * UFOSandObstacleA / B / CEffect: no model, its effect group the object's name). Its gravity is its rotation's -Y.
+ * Wait (deleteEffectAll). Its SW_A coming on (listenStageSwitchOnA: startMoveDown): FallingRock (the FallingRock
+ * effect; with SW_A on and SW_B off back to Wait; checkSandHit: FallingRockAndSmoke); FallingRockAndSmoke (the
+ * BurySmoke effect too; no sand hit: FallingRock; SW_A on and SW_B off: Wait). Its SW_B coming on (startMoveUp):
+ * BurySmokePrepare (checkSandHit: BurySmoke); BurySmoke (the effect; no sand hit: BuryEnd; isUfoTop: Wait); BuryEnd
+ * (isUfoTop: Wait). isUfoTop: SW_B on, and SW_A off where it has one. checkSandHit: the first NoStampSand face (floor
+ * code 30: the filter passes no other) on the line from sLineCheckParamTable's _4 up its place, _8 long down its
+ * gravity; the BurySmoke effect sits there (setEffectHostMtx _A0). Clipped (a sphere of _8 / 2 + 100 about the
+ * line's middle) nothing moves. row_turn the nerve, row_step its step (0: its first), row_hold the switches as last
+ * seen (1 SW_A, 2 SW_B, 4 seen once). ponytail: the line is spheres of 20 stepped 40 along it */
+enum { SX_WAIT, SX_FALLINGROCK, SX_ROCKANDSMOKE, SX_BURYPREPARE, SX_BURYSMOKE, SX_BURYEND };
+static const struct { const char *name; float up, len; } sandfx_par[6] = {
+    {"SandUpDownColumnAEffect", 800.0f, 1600.0f}, {"SandUpDownKGBaseEffect", 5000.0f, 2000.0f}, {"SandUpDownTowerTopEffect", 3500.0f, 3550.0f},
+    {"UFOSandObstacleAEffect", 400.0f, 800.0f},   {"UFOSandObstacleBEffect", 200.0f, 400.0f},   {"UFOSandObstacleCEffect", 400.0f, 800.0f},
+};
+static int sandfx_class(const char *n)
+{
+    for (int k = 0; k < 6; k++) if (!strcmp(n, sandfx_par[k].name)) return k;
+    return -1;
+}
+static int sandfx_hit(V3 from, V3 g, float len, V3 *at) /* checkSandHit */
+{
+    Hit h[4];
+    for (float d = 0.0f; d <= len; d += 40.0f) {
+        V3 q = vadd(from, vmul(g, d));
+        int n = kcl_query(q, 20.0f, h, 4);
+        for (int k = 0; k < n; k++) if ((h[k].attr & 0x3F) == 30) { *at = vadd(q, vmul(g, 20.0f)); return 1; }
+    }
+    return 0;
+}
+static void update_sandfx(void)
+{
+    static const Scene *seen;
+    static signed char cls[1024];
+    static int any;
+    if (seen != sc) {
+        seen = sc; any = 0;
+        for (u32 t = 0; t < sc->ntypes && t < 1024; t++) { cls[t] = (signed char)sandfx_class(sc->types + 32 * t); any |= cls[t] >= 0; }
+    }
+    for (u32 i = 0; any && i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        int k = r->type < 1024 ? cls[r->type] : -1;
+        if (k < 0 || row_dead[i] || !row_shown((int)i)) continue;
+        float m[16], one[3] = {1, 1, 1};
+        mat_translate_rot_scale(m, r->pos, r->rot, one);
+        V3 p = row_pos(r), up = vnorm(v3(m[4], m[5], m[6])), g = vmul(up, -1.0f), at = p;
+        int a = r->sw[SW_A] >= 0 && sw_on(r, SW_A), b = r->sw[SW_B] >= 0 && sw_on(r, SW_B), was = row_hold[i];
+        row_hold[i] = (unsigned short)(a | b << 1 | 4);
+        if (!(was & 4)) was = a | b << 1; /* (the listeners hear changes only) */
+        if (a && !(was & 1)) { row_turn[i] = SX_FALLINGROCK; row_step[i] = 0; }   /* startMoveDown */
+        if (b && !(was & 2)) { row_turn[i] = SX_BURYPREPARE; row_step[i] = 0; }   /* startMoveUp (listened after SW_A's) */
+        V3 mid = vadd(p, vmul(up, sandfx_par[k].up - sandfx_par[k].len * 0.5f)); /* _94 */
+        float c[3] = {mid.x, mid.y, mid.z};
+        if (row_turn[i] == SX_WAIT || !render_visible(c, sandfx_par[k].len * 0.5f + 100.0f)) continue; /* (clipped: no movement, its effects off) */
+        int a_only = a && !b, top = r->sw[SW_A] >= 0 ? !a && b : b; /* isUfoTop */
+        int hit = sandfx_hit(vadd(p, vmul(up, sandfx_par[k].up)), g, sandfx_par[k].len, &at);
+        int n = row_turn[i], nx = n;
+        m[12] = at.x; m[13] = at.y; m[14] = at.z; /* _A0 */
+        float pm[16];
+        mat_translate_rot_scale(pm, r->pos, r->rot, one);
+        if (n == SX_FALLINGROCK) nx = a_only ? SX_WAIT : hit ? SX_ROCKANDSMOKE : n;
+        else if (n == SX_ROCKANDSMOKE) nx = !hit ? SX_FALLINGROCK : a_only ? SX_WAIT : n;
+        else if (n == SX_BURYPREPARE) nx = hit ? SX_BURYSMOKE : n;
+        else if (n == SX_BURYSMOKE) nx = !hit ? SX_BURYEND : top ? SX_WAIT : n;
+        else if (n == SX_BURYEND) nx = top ? SX_WAIT : n;
+        if (n == SX_FALLINGROCK || n == SX_ROCKANDSMOKE) fx_named(sandfx_par[k].name, "FallingRock", pm, NULL, &row_turn[i]);
+        if ((n == SX_ROCKANDSMOKE || n == SX_BURYSMOKE) && hit) fx_named(sandfx_par[k].name, "BurySmoke", m, NULL, &row_step[i]);
+        if (nx != n) { row_turn[i] = (signed char)nx; row_step[i] = 0; printf("sand effect %u (%s): nerve %d%c", i, sandfx_par[k].name, nx, 10); }
+        else if (row_step[i] < 0xFFFF) row_step[i]++;
+    }
+}
 /* LavaSteam.cpp: Wait 120 frames (its Sign effect the first 90), Steam 90 (burns: a 330 cylinder up its y, a sphere
  * of 70 at 400), SteamEnd 90, again; with SW_A it waits for the switch, then steams and cycles. row_turn: 0 wait, 1
  * steam, 2 end, 3 waiting for SW_A; row_step its frames; SE_OJ_LV_LAVA_STEAM_OUT through Steam. ponytail: a burn is
@@ -51029,7 +51101,7 @@ static void ambient_types(void)
     amb_stale = 0; amb_nlv = 0;
     for (u32 t = 0; t < sc->ntypes && t < 1024; t++) {
         const char *name = sc->types + 32 * t;
-        amb_fx[t] = (short)ambient_fx(name);
+        amb_fx[t] = (short)(sandfx_class(name) >= 0 ? -1 : ambient_fx(name)); /* (SandUpDownEffectObj: its effects by its nerves, update_sandfx) */
         amb_once[t] = 0;
         amb_se[t] = !strcmp(name, "DrainPipeBubbleA") ? SE_OJ_LV_PIPE_BUBBLE_A : !strcmp(name, "DrainPipeBubbleB") ? SE_OJ_LV_PIPE_BUBBLE_B :
                     !strcmp(name, "Steam") ? SE_OJ_LV_HD_STEAM : !strcmp(name, "IcicleRockLight") ? SE_OJ_LV_ICICLE_ROCK_LIGHT :
@@ -59399,6 +59471,7 @@ void game_update(void)
     LQ(28, update_steam());
     if (dx_cls_moves("FallingSmallRock")) update_fsrock();
     if (dx_cls_moves("SubmarineSteam") || dx_cls_moves("SubmarineVolcano")) update_msteam();
+    update_sandfx();
     LQ(29, update_geyser());
     LQ(30, update_assembly());
     LQ(31, update_jumpstands());
