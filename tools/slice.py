@@ -327,6 +327,7 @@ LOGIC = ("SoundEmitterCube", "SoundEmitterSphere", "QuakeEffectAreaCube", "Playe
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "CameraRepulsiveCylinder", "CameraRepulsiveSphere", "DeathCube", "DeathSphere",
          "DeathCylinder", "AreaMoveSphere", "RestartCube", "StarPieceSpot", "WaterCube", "WaterSphere", "WaterCylinder",
          "ChangeBgmCube", "BgmProhibitArea", "AudioEffectCube", "AudioEffectSphere", "AudioEffectCylinder", "AstroChangeStageCube", "MovieStarter", "RunawayRabbitCollect", "PhantomTorch", "PhantomBonfire", "Hanachan",
+         "PlaneCollisionCube", "BeeWallShortDistAreaCube", "GlaringLightAreaCylinder", "DarkMatterCylinder",
          # Mario's areas (MR::getAreaObj: game.c area_obj / foo_sphere)
          "CelestrialSphere", "TowerModeCylinder", "NonSleepCube", "EffectCylinder", "SmokeEffectColorAreaCube",
          "MessageAreaCube", "MessageAreaCylinder", "PullBackCylinder", "PlaneModeCube", "PlaneCircularModeCube",

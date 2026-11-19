@@ -520,6 +520,8 @@ static unsigned *row_larea_t;
 static struct { int area, from, t, n; RenderLight cur; } plight; /* the player's ActorLightCtrl (area -1: none yet) */
 static int area_inside(const Row *r, V3 p);
 static int area_obj(const char *cls, V3 p);
+static int in_glaring_light(V3 p);
+static int in_dark_matter(V3 p);
 static void mario_set_raster(int t, int x, int y); /* MR::setRasterScroll (race.inc) */
 /* clip_area.inc */
 static void snow_init(const Scene *s), snow_update(void), snow_draw(V3 eye); /* snow_floor.inc */
@@ -15904,7 +15906,7 @@ static int m_check_squat(Player *m, int a1) /* MarioModule::checkSquat: Z (R1) *
  * slowed by mStickHeavyMinRatio up to mStickHeavyMaxAngle and his walk speed with it), mDrawStates._3 in a
  * ForbidTriangleJumpCube (the wall jump not turned to the way he came), _1C._7 in a ForbidJumpCube (no jump out of
  * the water with the shell) */
-static int m_heavy, m_no_tri_jump, m_forbid_jump;
+static int m_heavy, m_no_tri_jump, m_forbid_jump, m_plane_col;
 static void m_stick_margin(float *px, float *py)
 {
     float x = *px, y = *py;
@@ -16868,7 +16870,7 @@ static void bee_entry_wall_walk(Player *m, V3 pos, V3 n)
 }
 /* MarioActor::updateBeeModeGravity (checkBeeCeilStick / WallStick / FloorStick, updateBeeStickMode): a Fur face (wall
  * code) under, beside or over him takes his gravity (blended 0.1, then 0.3 a frame); off it, past mBeeWallWalkCancelRadius
- * (1000; BeeWallShortDistArea's 300: placed nowhere) over the ground, a Normal wall touched in the air or the ground left,
+ * (1000; in a BeeWallShortDistArea mBeeWallWalkCancelRadiusShort, 300) over the ground, a Normal wall touched in the air or the ground left,
  * 5 frames count it down; at 0 he jumps off (_408 mBeeGravityPowerTime, his air time inhibit - 5, 100 pushed from it,
  * the old gravity's part of the jump cut) and 60 frames pass before it sticks again */
 static void bee_mode_gravity(Player *m, V3 up0)
@@ -16903,15 +16905,16 @@ static void bee_mode_gravity(Player *m, V3 up0)
     }
     if (!stuck && m->bee_wall) { /* updateBeeStickMode */
         int detach = 0, fur = m->grounded && KCL_WALL(ground_attr) == WALL_FUR;
+        float cancel = area_obj("BeeWallShortDistAreaCube", m->pos) >= 0 ? MC.mBeeWallWalkCancelRadiusShort : MC.mBeeWallWalkCancelRadius;
         if (fur && !m->s9F2) {
-            if (m->height > MC.mBeeWallWalkCancelRadius) detach = 1;
+            if (m->height > cancel) detach = 1;
             else if (m->jumping && m->wall && KCL_WALL(wall_attr) == WALL_NORMAL) detach = 1;
             else m->bee_wall = 5;
             if (m->jumping && swing_perm && pad_pressed(PAD_SQUARE)) m->bee_wall = 0; /* isRequestRush */
         } else if (m->jumping) {
             if (m->height < 100.0f) m->bee_wall--;
             if (m->wall && KCL_WALL(wall_attr) == WALL_NORMAL) detach = 1;
-            if (m->height > MC.mBeeWallWalkCancelRadius) detach = 1;
+            if (m->height > cancel) detach = 1;
         } else {
             if (m->hip) m->hip = 0;
             detach = 1;
@@ -23457,6 +23460,10 @@ static void update_mario_(void)
         if (area_obj("DashChargeCylinder", m->pos) >= 0) m_item_dash = MC.mItemDashTimer; /* _434 */
         m_forbid_jump = area_obj("ForbidJumpCube", m->pos) >= 0;
         if (!dark.on && area_obj("DarkMatterCube", m->pos) >= 0) dark_start(m); /* forceKill(4): doDarkDamage */
+        m_plane_col = area_obj("PlaneCollisionCube", m->pos) >= 0; /* _10._6 */
+        /* MarioCollision.cpp:2269: Teresa Mario in a GlaringLightArea turns back (isInShadeFromTheSun: no stage
+         * places a SunLightArea, he is always in the shade) */
+        if (player_mode == PM_TERESA && in_glaring_light(m->pos)) set_player_mode(PM_NORMAL, 1);
     }
     if (dark.on) { /* MarioDarkDamage's update (actionMain): his velocity is not cleared in it (updateCubeCode) */
         dark_update(m);
@@ -30932,7 +30939,7 @@ static void metbo_update(Kuribo *k)
     k->act_t += k->act_rate;
     /* control() */
     float dep;
-    if (in_death(k->pos) || in_water(k->pos, k->qy, &dep)) { mb_kill(k); return; }
+    if (in_death(k->pos) || in_dark_matter(k->pos) || in_water(k->pos, k->qy, &dep)) { mb_kill(k); return; }
     if (k->nrv != MB_SWOONSTART && !mb_down(k) && vlen(k->vel) > 30.0f) k->vel = vmul(vnorm(k->vel), 30.0f); /* restrictVelocity */
     k->qy = vmul(k->grav, -1.0f); k->qz = vnorm(vtangent(k->front, k->qy)); /* calcMtxFromGravityAndZAxis (no blend) */
     if (vlen(k->qz) < 1e-3f) k->qz = k->front;
@@ -34500,7 +34507,7 @@ static int w_zone_ground(const Kuribo *k)
  * HitReaction (10 back, 20 up, AttackHit, ATK_SUCCESS); else it pushes him. A trample: StepBroken (invincible: Down and
  * three star pieces), a hip drop: StepBroken, a spin or a shell: Broken (SpinBreak); both 300 frames on the ground,
  * then Recover (Recovery) and Wait. A star piece: StarPieceHit (StarPiece), a fire ball: the same with a hit reaction
- * (AnimScaleController's defaults). A death area, water: kill; a SinkDeath floor: SinkDown (its clip, the sink level
+ * (AnimScaleController's defaults). A death area, water, dark matter (isInDarkMatter): kill; a SinkDeath floor: SinkDown (its clip, the sink level
  * SEs, no shadow) then kill. kill: Death, EXPLODE_S, SW_DEAD (walker_inhale).
  * ponytail: no star pointer bind (WalkerStateBindStarPointer: the 2P pointer), no move limit
  * collision, no velocity areas / rail-moving ground, no danger floor codes in the fall check */
@@ -34570,7 +34577,7 @@ static void karon_update(Kuribo *k, V3 to, float d)
     /* control */
     asc_update(k, kr_asc);
     float depth;
-    if (in_death(k->pos) || in_water(k->pos, vmul(k->grav, -1.0f), &depth)) { walker_inhale(k); return; }
+    if (in_death(k->pos) || in_water(k->pos, vmul(k->grav, -1.0f), &depth) || in_dark_matter(k->pos)) { walker_inhale(k); return; }
     if (!kr_broken(k) && k->nrv != KR_SINKDOWN && k->on_ground) {
         Tri t; /* isBindedGroundSinkDeath (CollisionFloorCode_SinkDeath 25) */
         if (map_poly(vadd(k->pos, vmul(k->gn, 20.0f)), vmul(k->gn, -60.0f), NULL, &t) && (tri_attr(&t) & 0x3F) == 25) w_nrv(k, KR_SINKDOWN);
@@ -43042,16 +43049,22 @@ static int area_inside(const Row *r, V3 p)
 }
 /* AreaObjMgr::getAreaObj(<manager>, p): the first area of class cls (one of its manager's) that is valid (row_shown:
  * its SW_APPEAR) and holds p; its row, -1 none */
-static int area_obj(const char *cls, V3 p)
+static int area_obj_x(const char *cls, V3 p, int sw_a);
+static int area_obj(const char *cls, V3 p) { return area_obj_x(cls, p, 0); }
+/* GlaringLightArea.cpp: with a SW_A the area is valid only while it is on (movement: mIsValid) */
+static int in_glaring_light(V3 p) { return area_obj_x("GlaringLightAreaCylinder", p, 1) >= 0; }
+/* MR::isInDarkMatter (ObjUtil.cpp:89) */
+static int in_dark_matter(V3 p) { return area_obj("DarkMatterCube", p) >= 0 || area_obj("DarkMatterCylinder", p) >= 0; }
+static int area_obj_x(const char *cls, V3 p, int sw_a)
 {
     /* each class's rows listed once (in order: the first one inside still wins), not a walk over every row a call */
-    static struct { const Scene *at; const char *cls; int t, first, n; } c[40];
+    static struct { const Scene *at; const char *cls; int t, first, n; } c[48];
     static short pool[1024];
     static int npool;
     static const Scene *pool_at;
     int k = 0;
-    while (k < 40 && c[k].cls && c[k].cls != cls) k++;
-    if (k == 40) k = 0;
+    while (k < 48 && c[k].cls && c[k].cls != cls) k++;
+    if (k == 48) k = 0;
     if (c[k].cls != cls || c[k].at != sc) {
         c[k].cls = cls; c[k].at = sc; c[k].t = scene_type(sc, cls);
         if (pool_at != sc) { pool_at = sc; npool = 0; }
@@ -43066,12 +43079,15 @@ static int area_obj(const char *cls, V3 p)
     if (c[k].n >= 0) {
         for (int j = 0; j < c[k].n; j++) {
             int i = pool[c[k].first + j];
+            if (sw_a && sc->objs[i].sw[SW_A] >= 0 && !sw_on(&sc->objs[i], SW_A)) continue;
             if (row_shown(i) && area_inside(&sc->objs[i], p)) return i;
         }
         return -1;
     }
     for (u32 i = 0; c[k].t >= 0 && i < sc->nobjs; i++)
-        if (sc->objs[i].type == c[k].t && row_shown(i) && area_inside(&sc->objs[i], p)) return (int)i;
+        if (sc->objs[i].type == c[k].t && !(sw_a && sc->objs[i].sw[SW_A] >= 0 && !sw_on(&sc->objs[i], SW_A)) && row_shown(i) &&
+            area_inside(&sc->objs[i], p))
+            return (int)i;
     return -1;
 }
 
@@ -47211,6 +47227,8 @@ static void put_test(void)
         printf("put test f %d: row %d at %d %d %d, mario %d %d %d" "\n", t, row, in ? (int)in->m[12] : 0, in ? (int)in->m[13] : 0,
                in ? (int)in->m[14] : 0, (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z);
         printf("put test cube code: heavy %d no tri jump %d forbid jump %d item dash %d" "\n", m_heavy, m_no_tri_jump, m_forbid_jump, m_item_dash);
+        printf("put test areas: plane col %d bee short %d glaring %d dark matter %d coins %d" "\n", m_plane_col,
+               area_obj("BeeWallShortDistAreaCube", mario->pos) >= 0, in_glaring_light(mario->pos), in_dark_matter(mario->pos), got_coins);
     }
 }
 #endif
@@ -48694,14 +48712,30 @@ int game_scenario_stars(int n)
 }
 void game_set_cursor(float x, float y) { cur_x = x; cur_y = y; }
 
-static void collect(Pickup *p, int n, float reach, int *counter, int fx, u32 se)
+/* MarioActor::attackOrPushSensor (MarioActorOffensiveMsg.cpp:154): in a PlaneCollisionCube (_10._6) a sensor of radius
+ * r out of his reach is still got (tryGetItem) when, its offset from his centre flattened along the camera's Z, it
+ * is within 250 of his depth and on his cylinder (width 20 + 35, + 15 at walk speed index 5 and up; height 60, 70
+ * jumping) */
+static int plane_get(V3 c, float r)
+{
+    if (!m_plane_col) return 0;
+    V3 e, w, u;
+    float f;
+    camera_pose(&e, &w, &u, &f);
+    V3 z = vnorm(vsub(e, w)), off = vsub(c, mw.c);
+    float depth = vdot(off, z);
+    if (depth >= 250.0f || depth <= -250.0f) return 0;
+    return m_cylinder(vsub(c, vmul(z, depth)), r, 55.0f + (mario->tsi >= 5 ? 15.0f : 0.0f), mario->grounded ? 60.0f : 70.0f);
+}
+/* r: the item's sensor radius (Coin.cpp:45 55, StarPiece.cpp:109 30) */
+static void collect(Pickup *p, int n, float reach, float r, int *counter, int fx, u32 se)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS));
     if (bgb_reach() > reach) { reach = bgb_reach(); c = bgbs[bgb_ride].pos; } /* in a BigBubble: its ride sensor gets them */
     if (tmk_reach() > reach) { reach = tmk_reach(); c = tmk_body(); } /* on a Tamakoro: its Body sensor's tryGetItem */
     if (sr_reach() > reach) { reach = sr_reach(); c = sr_body(); } /* on a SurfRay: its ride sensor's tryGetItem */
     for (int i = 0; i < n; i++)
-        if (pickup_on(&p[i], 1) && vlen(vsub(p[i].pos, c)) < reach) {
+        if (pickup_on(&p[i], 1) && (vlen(vsub(p[i].pos, c)) < reach || plane_get(p[i].pos, r))) {
             p[i].alive = PICK_GONE;
             (*counter)++;
             fx_at(fx, p[i].pos, up_at(p[i].pos, mario->up));
@@ -48802,6 +48836,27 @@ static void ambient_effects(void)
 static struct { short row; unsigned char kind; u32 h; } snd_em[48];
 static int n_snd_em = -1;
 static const Scene *snd_em_sc;
+/* GlaringLightArea::movement (the areas with a SW_A): SE_OJ_RAY_START at its place when the switch comes on after
+ * having been off (mIsValid starts true: none for a light on from the start) */
+static void update_glaring_lights(void)
+{
+    static const Scene *at;
+    static short rows[8];
+    static unsigned char valid[8];
+    static int n;
+    if (at != sc) {
+        int t = scene_type(sc, "GlaringLightAreaCylinder");
+        at = sc; n = 0;
+        for (u32 i = 0; t >= 0 && i < sc->nobjs && n < 8; i++)
+            if ((int)sc->objs[i].type == t && sc->objs[i].sw[SW_A] >= 0) { rows[n] = (short)i; valid[n++] = 1; }
+    }
+    for (int k = 0; k < n; k++) {
+        const Row *r = &sc->objs[rows[k]];
+        int on = sw_on(r, SW_A);
+        if (on && !valid[k]) { V3 c = row_pos(r); float pos[3] = {c.x, c.y, c.z}; se_start(SE_OJ_RAY_START, pos); }
+        valid[k] = (unsigned char)on;
+    }
+}
 static void update_sound_emitters(void)
 {
     static const u32 cube_se[4] = {SE_AT_LV_GRAVE, SE_AT_LV_KOOPA_WIND, SE_AT_LV_WIND_DESERT, SE_AT_LV_WIND_ICE_MT_TOP};
@@ -48886,6 +48941,7 @@ static void keep_effects(void)
 {
     ambient_effects();
     update_sound_emitters();
+    update_glaring_lights();
     update_quake();
     float m[16];
     for (int i = 0; i < npieces; i++)
@@ -56718,15 +56774,15 @@ void game_update(void)
     LQ(65, update_switches());
     LQ(66, update_pops());
     int had = got_coins;
-    if (!opening_on) LQ(67, collect(coins, ncoins, 100.0f, &got_coins, FX_COIN_COINGET, SE_SY_COIN)); /* Coin::noticeGetCoin */
+    if (!opening_on) LQ(67, collect(coins, ncoins, 100.0f, 55.0f, &got_coins, FX_COIN_COINGET, SE_SY_COIN)); /* Coin::noticeGetCoin */
     if (got_coins > had && life < max_life) mario_sound("ライフ回復"); /* MarioActor::incLife */
     life += got_coins - had;
     if (life > max_life) life = max_life;
     if (got_coins > had && player_mode == PM_BEE)
         for (int q = 0; q < MC.mAirWalkTime / 8; q++) m_inc_air_walk(mario);
     if (got_coins / 50 > had / 50) lives++; /* every 50 coins a 1-up */
-    if (!opening_on) LQ(68, collect(purple, npurple, 100.0f, &got_purple, FX_PURPLECOIN_COINGET, SE_SY_PURPLE_COIN));
-    if (!opening_on) LQ(69, collect(pieces, npieces, 120.0f, &got_pieces, FX_STARPIECE_STARPIECEGET, SE_SY_STAR_PIECE_GET)); /* gotByPlayer */
+    if (!opening_on) LQ(68, collect(purple, npurple, 100.0f, 55.0f, &got_purple, FX_PURPLECOIN_COINGET, SE_SY_PURPLE_COIN));
+    if (!opening_on) LQ(69, collect(pieces, npieces, 120.0f, 30.0f, &got_pieces, FX_STARPIECE_STARPIECEGET, SE_SY_STAR_PIECE_GET)); /* gotByPlayer */
     LQ(70, update_cursor());
     coin_rot = fmodf(coin_rot + 8.0f * 0.0174533f, 6.2831853f);
     qcoin_rot = fmodf(qcoin_rot + 4.0f * 0.0174533f, 6.2831853f);
