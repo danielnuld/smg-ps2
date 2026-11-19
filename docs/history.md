@@ -11,6 +11,22 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- The seesaws (feat/614-seesaws, #614, 2026-11-18): SimpleSeesawObj (SimpleMapObj.cpp: KoopaShipSeesawStep,
+  IceVolcanoBalanceStepA / B, IceMountainSeesawSlipA-D / NoSlipA; 16 placed, they turned as plain MapPartsRotators)
+  and LavaHomeSeesaw in update_seesaws beside PhantomShipHandle (Inst.seesaw 1-4): MapPartsSeesaw1AxisRotator for
+  RotateAxis 0, MapPartsSeesaw2AxisRotator else (Stay / Move / HipDrop: blended towards its base tilted RotateAngle
+  about up x Mario's place by 0.001 x his distance / inertia, back by 0.0001 x RotateStopTime),
+  LavaHomeSeesawRotator (starts at 0.01, the 0.7 dip under his landing with the weak shake and
+  SE_OJ_LAVA_FLOATER_ON_METAL, SE_OJ_LV_LAVA_SEESAW_MOVE over 0.1); the move sounds of sSeDataTable over 0.001. The
+  rotator's matrix is a quaternion now (start()'s turn back over the limit, the first up from the placement, not
+  gravity; MR::sign's 0; isNearZero 0.001). RotateAccelType is a seesaw's inertia (100-2000) and the pack kept four
+  bits (PhantomShipHandle's 100 read as 4): slice.py map_parts writes it whole to arg 3 for the seesaw classes; an
+  older pack's row keeps the four bits. Petari as it is: IceMountain's seesaws never leave MoveStart (their top speed
+  0.07-0.1 is not over 0.1), so they get neither the restoring force nor the friction. Test: `build.sh seesaw`
+  (`XF=-DSEESAW_N=k` the k-th seesaw row, `-DSEESAW_AXIS2` the first on two axes). ponytail: no SW_B start / end
+  (none placed has one), LavaHomeSeesaw's projection map offset. **Release: slice_all.py** IceVolcanoGalaxy,
+  StarDustGalaxy, HellProminenceGalaxy, EggStarGalaxy (arg 3) **+ sound.py --pack** for them (the seesaws'
+  SE names are new in game.c: `se?` until then).
 - Mario carried on AreaMove / RailMove floors (feat/581-power-area-rail-move, #581, 2026-11-18): game.c m_power_moves
   (MarioEnforce.cpp powerAreaMove / powerRailMove): on a floor of code 28 in an AreaMoveSphere round it (arg0 or 10 a
   frame), on one of code 27 along his ground's rail at the point nearest him (10 a frame; the rail's own speed,
