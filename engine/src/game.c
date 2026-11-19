@@ -1608,6 +1608,9 @@ static void miss(void);
 static int miss_running(void);
 static int miss_sink; /* the next miss is MarioActor::exeGameOverSink's (forceGameOverSink: m_update_on_sand) */
 static int miss_abyss; /* the next miss is MarioActor::exeGameOverAbyss's (a DeathArea: forceKillPlayerByAbyss) */
+static int miss_nonstop; /* the next miss is MarioActor::exeGameOverNonStop's (forceGameOverNonStop) */
+static int miss_held(void);
+static int miss_in_abyss(void);
 static int miss_ghost; /* the next miss is forceKillPlayerByGhostRace's (EventGhostRaceDown) */
 static int miss_race; /* the next miss is forceKillPlayerByGroundRace's (EventRaceDown) */
 static void rm_reset(void), update_race(void); /* RaceManager and its racers (race.inc) */
@@ -18736,7 +18739,8 @@ static int dm_enable_add(void) /* Mario::isEnableAddDamage */
     return !talk_active() && !dm_damaging() && player_mode != PM_INVINCIBLE && dm_after() == 0;
 }
 static void dm_dec_life(void) { if (life > 0) life--; } /* MarioActor::decLife(0) (decLifeLarge / Middle / Small) */
-static void dm_game_over(void) { if (life <= 0) miss(); } /* forceGameOver / NonStop (its down event) */
+static void dm_game_over(void) { if (life <= 0) miss(); } /* forceGameOver (its down event) */
+static void dm_game_over_nonstop(int nonstop) { if (life <= 0) { miss_nonstop = nonstop; miss(); } } /* forceGameOverNonStop */
 static void dm_close(Player *m);
 static void dm_start(Player *m);
 static void hang_end_by(Player *m, int faint);
@@ -18885,6 +18889,7 @@ static int m_fire_dance_damage(Player *m, int needle) /* doFireDanceWithInitialD
 {
     if (!m_fire_dance(m, needle)) return 0;
     dm_dec_life();
+    dm_game_over_nonstop(1); /* !mHealth: forceGameOverNonStop */
     return 1;
 }
 static int m_blown(Player *m, V3 v) /* Mario::blown */
@@ -19234,8 +19239,7 @@ static int dm_update(Player *m) /* the status's update: 0 gives the frame back (
             if (m->floor != 0x81 && m->floor != 10 && m->floor != 24) {
                 if (dmg.fd28 == 1) {
                     if (lives <= 0 && life <= 0) { miss(); return 1; } /* changeGameOverAnimation */
-                    if (life > 0) { dm_change(m, DMS_FIRERUN); m->jumping = 0; dmg.fr12 = 1; dmg.started = 1; return 1; } /* connectToFireRun */
-                    return 0;
+                    dm_change(m, DMS_FIRERUN); m->jumping = 0; dmg.fr12 = 1; dmg.started = 1; return 1; /* connectToFireRun */
                 }
                 dmg.fd28++;
                 dmg.fd20 = -MC.mFireDanceSecondJump;
@@ -19246,6 +19250,7 @@ static int dm_update(Player *m) /* the status's update: 0 gives the frame back (
                 m_anim("ファイアダンス");
             } else {
                 dm_dec_life(); /* decLifeLarge / decLifeMiddle */
+                dm_game_over_nonstop(1);
                 dmg.fd20 = -MC.mFireDanceFirstJump;
                 dm_fd_impact(m);
                 dm_fd_effect();
@@ -19325,7 +19330,7 @@ static int dm_update(Player *m) /* the status's update: 0 gives the frame back (
             dmg.p12 = 1;
             dmg.p_timer = m->grounded ? 30 : 10;
             if (m->grounded) { m_anim("電気ダメージ終了"); mario_sound("声電気ダメージ終了"); }
-            if (life <= 0) dm_game_over();
+            dm_game_over_nonstop(!m->grounded); /* !_1: forceGameOverNonStop, else forceGameOver (changeGameOverAnimation: miss()) */
         }
         return 1;
     case DMS_FREEZE: /* MarioFreeze::update */
@@ -19346,7 +19351,7 @@ static int dm_update(Player *m) /* the status's update: 0 gives the frame back (
             else {
                 dmg.z18 = 1;
                 dmg.z_timer = m->grounded ? 20 : 10;
-                if (life <= 0) dm_game_over();
+                if (life <= 0) dm_game_over_nonstop(!m->grounded);
                 else if (m->grounded) { m_anim("氷結解除"); mario_sound("氷ダメージ終了"); dm_freeze_model(0); dmg.z_frozen = 0; }
             }
         }
@@ -19439,7 +19444,7 @@ static void dm_close(Player *m)
         dmg.blue = 0;
         break;
     case DMS_PARALYZE:
-        if (life <= 0) dm_game_over();
+        dm_game_over_nonstop(!m->grounded);
         m_stop_anim("電気ダメージ", NULL);
         fx_electric = 0;
         dmg.p16 = 120;
@@ -23728,7 +23733,18 @@ static void m_gravity_turn(Player *m, V3 up0, int zero)
 static void update_mario_(void)
 {
     if (bh.on) { bh_update(mario); if (mario_anim) anim_update(mario_anim); return; } /* MarioActorNrvGameOverBlackHole */
-    if (miss_running()) { if (mario_anim) anim_update(mario_anim); return; } /* the down / game over demo holds him */
+    if (miss_held()) { /* the down / game over demo holds him */
+        if (miss_in_abyss()) { /* exeGameOverAbyss */
+            V3 e, w, u;
+            float fv;
+            camera_pose(&e, &w, &u, &fv);
+            V3 v = vadd(vmul(mario->last_move, 0.99f), vmul(vnorm(vsub(w, e)), 35.0f * 0.01f)); /* getLastMove x 0.99 + mCamDirZ x 35 x 0.01 (getCamZdir: into the screen) */
+            mario->pos = vadd(mario->pos, v);
+            mario->last_move = v;
+        }
+        if (mario_anim) anim_update(mario_anim);
+        return;
+    }
     Player *m = mario;
     V3 up0 = m->up;
     /* updateGravityVec with no gravity at him (_24C zero: MysteryGravityRoomPlanet, whose cube gravity is its shadows'
@@ -24423,18 +24439,35 @@ static void update_mario_(void)
  * out; 160 WipeGameOver; 420 the title, resetSystemAndGameStatus: lives back to 4). Release builds (CATCHUP) and the
  * miss test; the other tests keep the instant reset. Their sounds: init stopStageBGM(10) / stopSubBGM(10) and Mario's
  * 声最終ダメージ / 最後の一撃 (EventAbyss: 声落下死亡), at 30 (EventGameOver 90) startSubBGM BGM_MISS / BGM_GAMEOVER.
- * ponytail: EventAbyss's own timeline (its wipe after the miss layout) not split out, setSoundVolumeSetting not
- * made (no SE volume settings); no CometRetryButton, the game over
- * save not made (SaveAfterGameOver), no darkening round Mario (drawPreWipe) */
+ * EventAbyss (a DeathArea, a black hole: MarioActorNrvGameOverAbyss) and EventFireDown (MarioActorNrvGameOverNonStop:
+ * the last life gone at a fire dance's or a needle's start, on a fire floor, frozen or paralysed in the air) open the
+ * MissLayout at once, take the HUD out at 25 / 100 and close the wipe once the layout's Appear is over (after 15).
+ * In the NonStop nerve Mario goes on (isEnableMoveMario): the fire dance runs under the layout and the wipe. In the
+ * Abyss nerve he drifts on: his last move x 0.99 + the camera's z x 0.35 a frame.
+ * MarioAccess::startDownWipe (EventDown / FireDown / RaceDown's init; not sinking, not frozen) turns drawPreWipe on:
+ * a black box over the world, its alpha _A6C x 1.75 (224 past 128) of 255, _A6C counted each frame, and Mario drawn
+ * again over it (game_draw).
+ * ponytail: the death cameras (startGlobalEventCameraNoTarget 昇天カメラ / 奈落カメラ) are not started: the game camera
+ * follows him; setSoundVolumeSetting not made (no SE volume settings); no CometRetryButton; startDownWipe's _390 test
+ * and EventSequence::setSpot (an empty function in the decompilation) not kept */
 #if defined(CATCHUP) || defined(MISS_TEST)
 #define MISS_EVENTS 1
 #endif
-static struct { int on, f, phase, pf, wipe_f, over, ghost, sink; } mev; /* ghost: EventGhostRaceDown (no MissLayout, its wipe 92-200); sink: exeGameOverSink */
+static struct { int on, f, phase, pf, wipe_f, over, ghost, sink, abyss, nonstop, dark, dark_f; } mev; /* ghost: EventGhostRaceDown (no MissLayout, its wipe 92-200); sink: exeGameOverSink; abyss / nonstop: those nerves; dark: _A61, dark_f: _A6C */
 static int miss_running(void) { return mev.on; }
+static int miss_held(void) { return mev.on && !mev.nonstop; } /* (NonStop: isEnableMoveMario) */
+static int miss_in_abyss(void) { return mev.abyss; }
 static void miss_event_update(void)
 {
     if (!mev.on) return;
     int f = mev.f, next = 0;
+    if (mev.dark) mev.dark_f++; /* MarioActor::controlMain */
+#ifdef DOWN_TEST
+    if (f % 10 == 0 || mev.wipe_f == 1)
+        printf("down f %d: phase %d wipe %d dark %d layout end %d grounded %d clip %s dmg %d pos %.0f %.0f %.0f\n", f, mev.phase, mev.wipe_f, mev.dark_f,
+               menu_miss_anim_end(), mario->grounded, mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-", dmg.st,
+               mario->pos.x, mario->pos.y, mario->pos.z);
+#endif
     if (mev.sink) { /* MarioActor::exeGameOverSink: the swamp's (SinkDeathMud 31, SinkPoison 18) or the sand's sounds.
                      * ponytail: its 砂埋まり体 / 手, 泥埋まり体 / 手 effects not ported */
         int swamp = mario->floor == 31 || mario->floor == 18;
@@ -24451,9 +24484,18 @@ static void miss_event_update(void)
             menu_save_start(1, 1, 1);
         }
         if (f > 420 && !menu_saving()) { seq_galaxy_move(SEQ_TITLE, NULL, 1, -1, 0); mev.on = 0; } /* requestChangeSceneAfterGameOver */
+    } else if (!mev.ghost && (mev.abyss || mev.nonstop)) { /* EventAbyss / EventFireDown (their MissLayout: miss()) */
+        if (f == (mev.abyss ? 25 : 100)) dome_layout_off = 1;
+        if (f == 30) bgm_sub("BGM_MISS");
+        if (f > 15 && menu_miss_anim_end()) { /* isMissLayoutClosed: doCloseWipe */
+            if (mev.wipe_f++ == 0) menu_wipe_koopa(-1);
+            else if (menu_wipe_koopa_closed()) mev.phase = 2;
+        }
+        if (f == 120) { lives--; gd_add_miss_point(1); printf("miss %d, lives %d" "\n", ++misses, lives); }
+        if (mev.phase == 2 && mev.pf++ == 30) seq_galaxy_move(SEQ_MISS, NULL, -1, -1, 0);
     } else {
         if (f == 30) dome_layout_off = 1;
-        if (f == 30) bgm_sub("BGM_MISS"); /* sound (EventAbyss's too) */
+        if (f == 30) bgm_sub("BGM_MISS"); /* sound */
         if (f == 45 && !mev.ghost) { menu_miss_start(); next = 1; }
         if (mev.ghost ? f >= 92 && f <= 200 : f >= 100 && f <= 600) { /* doCloseWipe */
             if (mev.wipe_f++ == 0) menu_wipe_koopa(-1);
@@ -24498,19 +24540,23 @@ static void miss(void)
     mev.over = lives <= 0; /* MarioActor::exeGameOver: getPlayerLeft() == 0 */
     mev.ghost = miss_ghost && !mev.over;
     mev.sink = miss_sink; miss_sink = 0;
-    mario->hvel = v3(0, 0, 0); mario->vup = 0;
+    mev.abyss = miss_abyss; mev.nonstop = miss_nonstop && !miss_abyss;
+    if (!mev.nonstop) { mario->hvel = v3(0, 0, 0); mario->vup = 0; }
     if (mario_anim && (mev.ghost || (miss_race && !mev.over))) m_anim(sy_miss_anim() ? "水中レース負け" : "レース負け"); /* EventGhostRaceDown / EventRaceDown::init (forceKill 1: changeGameOverAnimation 10) */
-    else if (mario_anim && !bh.on) m_game_over_anim(mario);
+    else if (mario_anim && mev.abyss && !bh.on) m_anim("奈落ダウン"); /* exeGameOverAbyss: changeAnimationNonStop */
+    else if (mario_anim && !bh.on && !(mev.nonstop && mev.over)) m_game_over_anim(mario); /* (exeGameOverNonStop's ゲームオーバー: none) */
+    if (!mev.over && !mev.ghost && (mev.abyss || mev.nonstop)) menu_miss_start(); /* EventAbyss / EventFireDown::init: startMissLayout */
+    if (!mev.over && !mev.ghost && !mev.abyss && !mev.sink && dmg.st != DMS_FREEZE && !m_anim_on("氷結")) mev.dark = 1; /* startPlayerDownWipe */
     cube_bgm_invalid = 1; bgm_queue_clear(); /* setCubeBgmChangeInvalid, clearBgmQueue (every PlayerEvent's init,
                                                * MarioActor's exeGameOver*) */
     bgm_stop(10); bgm_sub_stop(10);
     if (miss_abyss && !mev.over) mario_sound("声落下死亡"); /* EventAbyss::init */
     else { mario_sound("声最終ダメージ"); mario_sound("最後の一撃"); } /* EventDown / EventGameOver::init */
-    miss_abyss = miss_ghost = miss_race = 0;
-    printf("%s" "\n", mev.over ? "game over" : "mario down");
+    miss_abyss = miss_ghost = miss_race = miss_nonstop = 0;
+    printf("%s%s" "\n", mev.over ? "game over" : "mario down", mev.abyss ? " (abyss)" : mev.nonstop ? " (non stop)" : "");
     return;
 #endif
-    miss_ghost = miss_race = 0;
+    miss_ghost = miss_race = miss_nonstop = 0;
     time_on = 0; /* the comet's time starts over with the scenario */
     mario->pos = start_pos; mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->hurt_timer = 0; mario->hip = 0;
     safe_reset(start_pos);
@@ -51513,6 +51559,21 @@ static void dome_draw(void) /* AstroDomeOrbit's rings (additive), the pointed ga
 }
 
 void game_test_miss(int over) { if (over) lives = 0; miss(); } /* tests: a miss (over: with no lives left) */
+/* tests (a plain build, XF=-DDOWN_TEST=<kind>): 1 his last life at a needle's prick (doNeedleWithInitialDamage: the
+ * NonStop nerve, EventFireDown), 2 a plain miss (EventDown: drawPreWipe's dark box), 3 the Abyss nerve's (EventAbyss); 0: one of the
+ * three by the lives left, so each try of the stage shows another; 120 frames after he is free and on the ground */
+int game_test_down(int kind)
+{
+    static int n, done;
+    if (done || demo_on || !mario->grounded || mario->launch >= 0 || starter >= 0 || ++n < 120) return -1;
+    if (!kind) kind = lives % 3 + 1;
+    done = 1;
+    printf("down test: kind %d\n", kind);
+    if (kind == 1) { life = 1; return m_fire_dance_damage(mario, 1); }
+    miss_abyss = kind == 3;
+    miss();
+    return 0;
+}
 int game_test_dome(int what, int on) /* test builds: the cursor on the dome's blue star (0, R2 held while on) or on its
                                      * Good Egg's galaxy (what 1); its state, -1 none */
 {
@@ -59488,6 +59549,8 @@ void game_draw(void)
         basis_matrix(tm, mario->pos, vlen(m_v54C) > 0.5f ? m_v54C : mario->up, mario->face, 0);
         draw_skin(m_tornado, tm, tor.a);
     }
+    static int prewipe; /* MarioActor::drawPreWipe's pass: his model once more, over the dark box (below) */
+mario_model:
     if (m_mario_skin && !(mario->hurt_timer & 4) && !mario_hidden && !m_hide481 && !bh.hidden && !(fp_on && !fp_delay) && !teresa_hides_mario() && !tornado_hides_mario()) { /* the eye inside his head in the view */
         const Model *md = disp_model >= 1 && m_morph[disp_model] ? m_morph[disp_model] : m_mario_skin;
         static unsigned inv_from; /* MR::startBrk(_9C8, "InvincibleMario") at its change: its C0 from frame 0 */
@@ -59617,6 +59680,7 @@ void game_draw(void)
             render_skinned(hm, hw, (const float (*)[16])a->drw);
         }
     }
+    if (prewipe) goto prewipe_done;
     if (m_marioball) for (int b = 0; b < MAX_FIREBALLS; b++) { /* Fire Mario's balls, rolling */
         if (!fireballs[b].t) continue;
         float ry[16], one[3] = {1, 1, 1}, rot[3] = {0, fireballs[b].ry * 57.29578f, 0}, at[3] = {fireballs[b].pos.x, fireballs[b].pos.y, fireballs[b].pos.z};
@@ -59811,6 +59875,17 @@ void game_draw(void)
     lens_flare_draw(ce, cw, cu, fovy);
 #endif
     PROF(6);
+    if (mev.dark && !prewipe) { /* MarioActor::drawPreWipe (DrawType_CometScreenFilter): the box, then drawMarioModel.
+                                 * ponytail: the blended instances (render_world_done) come after it, not darkened */
+        int a = mev.dark_f > 128 ? 224 : mev.dark_f + (mev.dark_f >> 1) + (mev.dark_f >> 2);
+        Quad q = {0, 0, 640, 448, 0, 0, 0, 0, (u32)(a * 0x80 / 255) << 24, NO_TEX, 0, 0, 0};
+        render_quads(&q, 1);
+        render_quads_flush();
+        prewipe = 1;
+        goto mario_model;
+    }
+prewipe_done:
+    prewipe = 0;
     render_world_done(); /* the blended instances (an Air's sky) under the HUD and talks */
     mario_draw_raster(); /* MarioActor::drawRasterScroll (its draw: the 3D done) */
     haze_draw(); /* HeatHazeEffect (DrawBufferType_IndirectMapObj) */

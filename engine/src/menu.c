@@ -4621,6 +4621,7 @@ void menu_miss_start(void) /* MissLayout::start: Appear (its TooBad effect not s
     mlay.tb_on = 1;
     lyt_start(mlay.toobad, "Appear", 0);
 }
+int menu_miss_anim_end(void) { return !mlay.toobad || !mlay.tb_on || lyt_stopped(mlay.toobad, 0); } /* isMissAnimEnd: not Active */
 void menu_wipe_koopa(int frames) /* WipeKoopa::wipe: "out" over `frames` (sAnimFrame 90) */
 {
     if (!mlay.koopa) return;
