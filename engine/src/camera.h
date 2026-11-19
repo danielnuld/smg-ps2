@@ -29,7 +29,8 @@ typedef struct {
 
 enum { CAM_XZ_PARA, CAM_TOWER, CAM_FOLLOW, CAM_WONDER_PLANET, CAM_EYEPOS_FIX, CAM_POINT_FIX, CAM_EYEPOS_FIX_THERE,
        CAM_CHARMED_FIX, CAM_TOWER_POS, CAM_FRONT_AND_BACK, CAM_TRUNDLE, CAM_CUBE_PLANET, CAM_OBJ_PARALLEL,
-       CAM_RAIL_FOLLOW, CAM_INWARD_SPHERE };  /* tools/camera.py TYPES */
+       CAM_RAIL_FOLLOW, CAM_INWARD_SPHERE,    /* tools/camera.py TYPES */
+       CAM_DEAD = 200 };                      /* declared in code only (camera_event_death) */
 
 /* What the camera follows (Mario): position, facing, up (against gravity), airborne (CameraTargetPlayer::isJumping). */
 typedef struct { V3 pos, front, up; int jumping; int flying; V3 fly_dir; /* flying: a launch star's flight, fly_dir
@@ -76,6 +77,8 @@ int camera_event_index(void);                         /* the set's camera runnin
 void camera_event_next(void);                         /* MultiEventCamera::nextForce */
 void camera_event_target(V3 dir, V3 pos);
 void camera_event_end(void);
+/* MarioActor's global event cameras, started with no target: 昇天カメラ (CAM_TYPE_DEAD), abyss: 奈落カメラ */
+void camera_event_death(int abyss);
 int camera_event_named(const char *name, int zone); /* "e:<name>" of that zone, the player its target (NoTarget) */
 void camera_event_end_now(int frame); /* endEventCamera: at once, back over its chunk's end frames (frame, else 60) */
 /* an actor's camera (ActorCameraUtil startMultiActorCameraTargetOther): "<class>固有|共通<event><CameraSetId>" (camera.py
