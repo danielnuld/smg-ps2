@@ -304,6 +304,9 @@ int game_test_rpb(int put); /* library test: RosettaPictureBook's nerve (-1 none
 int game_test_demo(int k);   /* tests: demo k's appear switch on (-1: the running demo's step, -1 none; -2: its anim camera's frame; -3: Mario's clip * 1000 + frame) */
 void game_bgm(const char *id); /* MR::startStageBGM by its sound id (MBGM_ / BGM_ / STM_ ...) */
 void game_bgm_stop(int frames); /* MR::stopStageBGM */
+void game_bgm_sub(const char *id); /* MR::startSubBGM */
+int game_bgm_is(const char *id);  /* MR::isPlayingStageBgmName */
+void game_bgm_state(int state, int frames); /* MR::setStageBGMState */
 void game_bgm_stage(void);   /* MR::startCurrentStageBGM: the scenario's music stream (music_tab.h) */
 void game_bgm_first(void);   /* GameScene::startStagePlayFirst's: the stage BGM unless the opening / starter start it */
 void game_bgm_tick(void);    /* per frame before audio_update: a sub BGM over, the stage BGM back */

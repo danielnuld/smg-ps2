@@ -1487,6 +1487,7 @@ static int dino_demo_on, ota_demo_on; /* whose demo camera runs */
 static const char *boss_demo_cls(void);
 static int demo_dino_damage; /* tryStartDemoMarioPuppetable "ディノパックンダメージ": Mario waits from Pulled to its damage's end */
 static int star_demo;      /* PowerStar::exeStageClearDemo: frames since a star was taken + 1, 0 none */
+static int star_demo_grand; /* the star taken is a GrandStar (PowerStar::mIsGrandStar) */
 static float star_demo_m[16]; /* its camera's frame: at the star, facing the way Mario looked */
 static int obj_play(const Inst *in, const char *clip, int loop, int interp);
 static int lg_cls(const char *name);              /* LuigiNPC 1, LuigiEvent 2 (the LuigiNPC section) */
@@ -1558,7 +1559,10 @@ static const char *bgm_comet(void);
 static int cube_bgm_invalid; /* MR::setCubeBgmChangeInvalid (AudSceneMgr::_1D): the ChangeBgmCubes and the RestartCubes'
                               * BGM changes do nothing more in this scene (update_bgm_cubes, stage_bgm_change) */
 static void bgm_queue_clear(void); /* MR::clearBgmQueue */
+static void bgm_sub(const char *id);
+static int bgm_playing_id(const char *id);
 static void restart_cube_bgm(const Row *r, unsigned short *done);
+static void pipe_bgm(const Row *r, int out);
 static int opening_cam_on;   /* isStageStateScenarioOpeningCamera: the scenario's opening camera runs */
 static void mario_sound(const char *key);
 static int mario_kick(V3 c, float r); /* sendBodyAttack ACTMES_KICK */
@@ -2492,6 +2496,8 @@ void game_init(const Scene *s, const unsigned char *blob)
     area_types_reset();
     scene_seq++;
     cube_bgm_invalid = 0; /* AudSceneMgr::startScene */
+    audio_move_volume(1.0f, 0); /* (the BGM's volume as a scene starts: a talk balloon, a star's appear demo or a note
+                                 * fairy cut by the scene's change would leave it down) */
     gd_scene_start(); /* GameDataFunction's scene start holder (the isOnJust checks) */
     mc_table = &MC_TABLES[gd_player_luigi() ? 1 : 0]; /* MarioActor::init2: mConst->changeTable(1) when isPlayerLuigi */
     fx_init(s);
@@ -12377,6 +12383,7 @@ static void tk_balloon_close(TkBalloon *b)
     if (b->kind != BK_SHORT) {
         tk_abtn_term();
         if (!tk_select(&talkers[b->talker])) se_start(SE_SY_TALK_OK, NULL); /* TalkBalloonEvent::close */
+        audio_move_volume(1.0f, 60); /* moveVolumeStageBGM / SubBGM(1, 60). ponytail: no recoverSoundVolumeSetting */
     }
 }
 static int tk_appeared(const TkBalloon *b) { return tk_alpha_end(&b->ac) && (b->kind == BK_SHORT || b->nrv == BL_TALK); }
@@ -12413,7 +12420,10 @@ static void tk_balloon_update(TkBalloon *b)
 {
     if (b->nrv == BL_DEAD) return;
     b->step++;
-    if (b->kind != BK_SHORT && b->nrv == BL_OPEN && b->step == 1) se_start(SE_SM_TALKBLN_OPEN, NULL); /* exeOpen */
+    if (b->kind != BK_SHORT && b->nrv == BL_OPEN && b->step == 1) { /* exeOpen */
+        se_start(SE_SM_TALKBLN_OPEN, NULL);
+        if (!bgm_playing_id("STM_KINOPIO_TANKEN_B")) audio_move_volume(0.5f, 30); /* moveVolumeStageBGM / SubBGM(0.5, 30) */
+    }
     if (b->kind == BK_EVENT && (b->nrv == BL_OPEN || b->nrv == BL_TALK)) {
         if (b->nrv == BL_OPEN && b->step == 1) { /* updateBeak: shown while the talker is on screen, below y 120 */
             Talker *t = &talkers[b->talker];
@@ -14310,6 +14320,7 @@ static void update_ticofat(void)
             if (f->t >= 60 && !wipe_active()) fat_set(k, TF_INFO);
             break;
         case TF_INFO: /* exeInfo: InformationPlanet until A */
+            if (f->t == 1) bgm_sub("BGM_APPEAR_PLANET");
             info_label = f->gal ? "InformationGalaxy" : "InformationPlanet"; /* appearInformation */
             if (f->gal) { char gl[48]; snprintf(gl, sizeof gl, "GalaxyNameShort_%s", f->gal); info_sarg = msg_get(gl); } /* setInformationMessageReplaceString */
             if (f->t > 1 && pad_pressed(PAD_CROSS)) { pad_eat(PAD_CROSS); se_start(SE_SY_TALK_OK, NULL); info_label = NULL; fat_set(k, TF_AFTER); }
@@ -40410,6 +40421,8 @@ static void dl_place(Inst *in)
     if (k < 0 || !dls[k].init) return;
     in->m[12] = dls[k].pos.x; in->m[13] = dls[k].pos.y; in->m[14] = dls[k].pos.z;
 }
+/* MR::isDemoActive("砂ＵＦＯ下降"): the sand UFO's descent demo runs (DesertMovingLand::exeMoveSign's BGM) */
+static int dl_ufo_demo(void) { return dx.on && !strcmp(demos[dx.cur].h->name, "砂ＵＦＯ下降"); }
 static void update_dlands(void)
 {
     FOR_KIND(i, dland) {
@@ -40438,8 +40451,15 @@ static void update_dlands(void)
             if (r->sw[SW_B] >= 0 && sw_on(r, SW_B)) dl_set(k, DL_SIGNUP);
             break;
         case DL_SIGNDOWN: case DL_SIGNUP:
-            if (st == 0) { obj_play(in, "Vibration", 0, 0); camera_shake_infinity(o, 0.15f, 1.2f); } /* exeMoveSign */
-            if ((in->anim ? in->anim->done && st > 0 : st >= 60)) dl_set(k, o->nrv == DL_SIGNUP ? DL_UP : DL_DOWN); /* isBckStopped */
+            if (st == 0) { /* exeMoveSign */
+                obj_play(in, "Vibration", 0, 0);
+                if (dl_ufo_demo()) bgm_stop(60);
+                camera_shake_infinity(o, 0.15f, 1.2f);
+            }
+            if ((in->anim ? in->anim->done && st > 0 : st >= 60)) { /* isBckStopped */
+                if (o->nrv == DL_SIGNDOWN && dl_ufo_demo()) bgm_start("MBGM_GALAXY_02_HURRY"); /* startEventBGM(EventBgmID_Hurry) */
+                dl_set(k, o->nrv == DL_SIGNUP ? DL_UP : DL_DOWN);
+            }
             break;
         case DL_DOWN: case DL_UP: {
             int n = o->nrv == DL_DOWN ? tdown : tup;
@@ -41952,6 +41972,7 @@ static void movie_starter(int row, const Row *r)
     if (r->arg[0] < 2) gd_story_follow(r->arg[0] == 0 ? "クッパ襲来後" : "ピーチ城浮上後");
     printf("movie starter row %d: movie %d\n", row, r->arg[0]);
     mv_row = row; mv_t = 0;
+    bgm_sub_stop(60); bgm_stop(60); /* MoviePlayingSequence::exePlayWait */
     menu_fade_hold(1);
 }
 
@@ -42275,7 +42296,7 @@ static int pipe_bind(Player *m)
         m->face = vnorm(vtangent(vadd(vmul(pipe_f0, 1.0f - u), vmul(cf, u)), m->up));
         if (!mario_anim || (mario_anim->done && pipe_t > 1)) { pipe_seq = 2; pipe_t = 0; if (mario_anim) mario_play("earthenpipein", 1.0f, 0); }
     } else if (pipe_seq == 2) {
-        if (pipe_t == 1) se_start(SE_DM_DOKAN_WARP, NULL); /* exePlayerIn first step */
+        if (pipe_t == 1) { se_start(SE_DM_DOKAN_WARP, NULL); pipe_bgm(&sc->objs[o->row], 0); } /* exePlayerIn first step */
         if (!mario_anim || (mario_anim->done && pipe_t > 1)) {
             pipe_zone = o->zone;
             if (row_camset[o->row] != -1) /* tryShowUp: startMultiActorCameraTargetSelf 出現 (the partner) */
@@ -42296,7 +42317,7 @@ static int pipe_bind(Player *m)
         if (pipe_t >= 21) lv = se_level(SE_OJ_LV_PIPE_APPEAR_MAGMA, &o->top.x, lv); /* its isLessStep 30 */
         if (pipe_t >= 50) { pipe_seq = 4; pipe_t = 0; }
     } else if (pipe_seq == 4) { /* exePlayerOut: at the partner's base matrix */
-        if (pipe_t == 1) se_start(SE_DM_DOKAN_WARP, NULL); /* exePlayerOut first step */
+        if (pipe_t == 1) { se_start(SE_DM_DOKAN_WARP, NULL); pipe_bgm(&sc->objs[o->row], 1); } /* exePlayerOut first step */
         if (pipe_t == 1 && mario_anim) mario_play("earthenpipeout", 1.0f, 0);
         m->pos = o->top; m->up = o->up;
         if (vlen(vtangent(o->front, o->up)) > 1e-3f) m->face = vnorm(vtangent(o->front, o->up));
@@ -44154,6 +44175,7 @@ static void update_items(void)
             }
             se_start(SE_SY_STAR_GET, NULL); /* PowerStar::receiveOtherMsg */
             star_demo = 1; /* requestPowerStarGetDemo: the PowerStarGet camera and Mario's clip */
+            star_demo_grand = !strcmp(sc->types + 32 * sc->objs[in->row].type, "GrandStar"); /* mIsGrandStar */
             /* PowerStar::exeStageClearDemo step 1: mBaseMtx = its posture _B8 (initPosture: up against the gravity at
              * the star, front its placed Z) at its position, and setPlayerBaseMtx puts Mario there; its
              * startAnimCameraTargetSelf camera runs in that frame. ponytail: arg4 (_127, the PowerStarAppearPoint's
@@ -44778,6 +44800,8 @@ static void bgm_start(const char *id) /* startStageBGM(name, false) */
 }
 void game_bgm(const char *id) { bgm_start(id); }
 void game_bgm_stop(int frames) { bgm_stop(frames); }
+void game_bgm_sub(const char *id) { bgm_sub(id); }
+void game_bgm_state(int state, int frames) { bgm_state(state, frames); }
 /* GameScene::isValidScenarioOpeningCamera: the stage's StartScenario<n>.canm, its frames (0 none; test builds start
  * in play) */
 static int opening_frames(void)
@@ -44793,7 +44817,8 @@ static int opening_frames(void)
 void game_bgm_first(void) /* GameScene::startStagePlayFirst: the stage BGM, unless the opening camera (BGM_START_DEMO)
                            * or the ScenarioStarter starts it */
 {
-    if (!opening_frames() && starter < 0) game_bgm_stage();
+    /* (FileSelect is not in AudStageBgmWrap's table: TitleSequenceProduct and FileSelector start its music) */
+    if (!opening_frames() && starter < 0 && !on_stage("FileSelect")) game_bgm_stage();
     /* its wipe: startStagePlayRetry openWipeCircle; startStagePlayFirst without the opening camera nor the
      * ScenarioStarter: openWipeCircle, but HeavensDoor's openWipeFade(180) (the prologue's), FileSelect's (30) and the
      * epilogue's none (menu.c / the prologue) */
@@ -44876,15 +44901,19 @@ static int stage_bgm_state(int no) /* getBgmState */
         if (on_stage(stage_bgm_set[i].stage)) return no >= 0 && no < 8 ? stage_bgm_set[i].st[no] : -1;
     return 0;
 }
-static int bgm_playing_id(const char *id) /* MR::isPlayingStageBgmID: the stage BGM is that one and is not stopping
-                                           * (under a sub BGM: the stage's that comes back) */
+static int bgm_cur_is(const char *id) /* AudBgmMgr::mCurrentBGM[0] == id: the stage BGM last started, playing or not */
 {
     const char *q = !strncmp(id, "MBGM_", 5) ? id + 5 : !strncmp(id, "BGM_", 4) || !strncmp(id, "STM_", 4) ? id + 4 : id;
-    if (!(bsub.on ? bsub.had : audio_playing())) return 0;
     for (u32 i = 0; i < sizeof bgm_tab / sizeof bgm_tab[0]; i++)
         if (!strcmp(bgm_tab[i].bgm, q)) return !strcmp(bgm_cur, bgm_tab[i].track);
     return 0;
 }
+static int bgm_playing_id(const char *id) /* MR::isPlayingStageBgmID: the stage BGM is that one and is not stopping
+                                           * (under a sub BGM: the stage's that comes back) */
+{
+    return (bsub.on ? bsub.had : audio_playing()) && bgm_cur_is(id);
+}
+int game_bgm_is(const char *id) { return bgm_playing_id(id); }
 static void bgm_queue_clear(void) { bgm_last[0] = bgm_next[0] = 0; } /* clearLastBGM, clearNextBGM */
 /* ChangeBgmCube::movement's case 0 and RestartCube::changeBgm: the stage's BGM number no unless it already plays
  * (then nothing; three boss BGMs lock the cubes: setCubeBgmChangeInvalid), then its mute state number state_no at once.
@@ -48080,7 +48109,7 @@ static struct {
     /* SphereSelector */
     Dn sel; int cand, pointing, selected, invalid; u32 cand_d; int prev_a;
     /* SphereSelectorHandle */
-    Dn hd; V3 hpos, c0, dc, e8; float rot_y, speed, prev_y, xs, prev_x, vh[3][2], last_cx, last_cy; int idle; Mx base;
+    Dn hd; V3 hpos, c0, dc, e8; float rot_y, speed, prev_y, xs, prev_x, vh[3][2], last_cx, last_cy; int idle, bgm_rot; Mx base;
     /* MiniatureGalaxy, AstroDomeOrbit */
     int ng;
     struct { int row, type, state, idx, zoom_out, level; float scale, rot_y, radius, angle; V3 orbit_rot, pos; Dn n;
@@ -48197,6 +48226,7 @@ static void dm_handle_appear(void)
     dm.rot_y = 0;
     dm.dc = vcross(v3(0, 1, 0), dm.c0);
     dm.e8 = vnorm(rot_deg(v3(0, 1, 0), dm.dc, 40.0f)); /* cRotateAppearX */
+    bgm_state(2, 60); /* cBgmAppearState, cBgmAppearFrames */
     dn_init(&dm.hd, HD_WAIT); dm.hd.step = -1; dm.hd.next = HD_WAIT;
 }
 static int dm_handle_selected(void)
@@ -48238,15 +48268,16 @@ static void dm_handle_update(void)
         if (fabsf(dm.speed) < 0.001f && fabsf(dm.xs) < 0.001f) dn_set(&dm.hd, HD_WAIT);
         break;
     case HD_DISAPPEAR:
-        if (FIRST(&dm.hd)) dm_handle_reset();
+        if (FIRST(&dm.hd)) { dm_handle_reset(); bgm_state(1, 90); } /* cBgmDisappearState */
         if (dm.hd.step == 90) { dn_init(&dm.hd, HD_DEAD); return; }
         break;
     case HD_CONFIRMSTART:
-        if (FIRST(&dm.hd)) dm_handle_reset();
+        if (FIRST(&dm.hd)) { dm_handle_reset(); bgm_state(6, 60); } /* setStateConfirmStartAtFirstStep: cBgmConfirmState */
         if (dm.hd.step == 45) dn_set(&dm.hd, HD_CONFIRMWAIT);
         break;
     case HD_CONFIRMWAIT: break;
     case HD_CONFIRMCANCEL:
+        if (FIRST(&dm.hd)) bgm_state(5, 60); /* cBgmNotConfirmState */
         if (dm.hd.step == 45) dn_set(&dm.hd, HD_WAIT);
         break;
     case HD_INVALID:
@@ -48267,9 +48298,13 @@ static void dm_handle_update(void)
     Mx uf = mx_up_front(dm.e8, dm.c0, v3(0, 0, 0)), ry = mx_rot_xyz(v3(0, dm.rot_y, 0));
     dm.base = mx_mul(&uf, &ry);
     dm.base.p = dm.hpos;
-    if (fabsf(dm.xs) > 0.03f || fabsf(dm.speed) > 0.03f) { /* playRotateSE */
-        static u32 lv;
+    int turning = fabsf(dm.xs) > 0.03f || fabsf(dm.speed) > 0.03f; /* cDemoRotateSpeedY */
+    if (turning != dm.bgm_rot) bgm_state(turning ? 4 : 3, turning ? 60 : 30); /* changeBgmRotateState: cBgmRotateState / NotRotate */
+    dm.bgm_rot = turning; /* _128 */
+    if (turning) { /* playRotateSE. ponytail: WIND_1's volume by the speed (100 x the larger of |x| / 2, |y| / 5) not set */
+        static u32 lv, lv2;
         lv = se_level(SE_AT_LV_ASTRO_DOME_WIND_1, NULL, lv);
+        if (fabsf(dm.speed) >= 4.0f || fabsf(dm.xs) >= 1.6f) lv2 = se_level(SE_AT_LV_ASTRO_DOME_WIND_2, NULL, lv2);
     }
 }
 
@@ -48282,6 +48317,11 @@ static V3 dm_galaxy_pos(int i) /* AstroDomeOrbit::calcGalaxyPos */
     return mx_ap(&m, p);
 }
 static void dm_galaxy_scale(int i, float s) { dm.g[i].scale = s; }
+static int dm_galaxy_grand(const char *name) /* GalaxyStatusAccessor::isExistGrandStar */
+{
+    for (int n = 1; n <= 7; n++) if (gd_is_grand_star(name, n)) return 1;
+    return 0;
+}
 static int dm_galaxy_pointed(void) { return dm.pointing >= T_GALAXY ? dm.pointing - T_GALAXY : -1; }
 
 static void dm_galaxy_appear(int i) /* MiniatureGalaxy::appear */
@@ -48400,11 +48440,15 @@ static void dm_galaxy_update(int i)
             se_start(SE_SY_NEW_GALAXY_OPEN_SIGN, NULL);
             g->zoom_out = 0; g->level = 20; dm_galaxy_scale(i, 1.0f);
             gd_flag_try_on(flag); /* onGameEventFlagGalaxyOpen */
+            if (dm_galaxy_grand(g->name)) bgm_stop(30);
         }
         if (g->n.step < 45) { static u32 lv; lv = se_level(SE_SY_LV_NEW_GALAXY_OPENING, NULL, lv); }
         if (g->n.step == 45) { se_start(SE_SY_NEW_GALAXY_OPEN, NULL); camera_shake(1); pad_rumble(RUMBLE_WEAK); }
         if (g->n.step < 75) pad_rumble(RUMBLE_VERY_WEAK); /* isLessStep(cOpenDisappearStep) */
-        if (g->n.step == 75) { g->state = 3; g->zoom_out = 1; g->level = 20; dm_galaxy_scale(i, 0.65f); }
+        if (g->n.step == 75) {
+            g->state = 3; g->zoom_out = 1; g->level = 20; dm_galaxy_scale(i, 0.65f);
+            if (dm_galaxy_grand(g->name)) { bgm_start("BGM_KOOPA_APPEAR"); snprintf(bgm_next, sizeof bgm_next, "MBGM_ASTRO_DOME_2"); } /* setNextStageBGM */
+        }
         if (g->n.step == 150) { dm.invalid = 0; dn_set(&dm.hd, HD_WAIT); dn_set(&g->n, MG_WAIT); } /* validatePointing */
         break;
     }
@@ -51284,6 +51328,7 @@ static void gw_update(void)
     }
     for (int c = 0; c < 3; c++) rt_update(c);
     ro_update();
+    if (gw.baby >= 0 && gw_step(GP_SPIN4) == 10) bgm_sub("BGM_STAR_POW_GET"); /* sFanfareFrame */
     if (gw.baby >= 0 && gw_first(GP_SPIN5)) { printf("gateway: the spin explained (explainEnableToSpin)\n"); io_entry(IO_SPIN); } /* TicoDemoGetPower::exeDemo */
 }
 
@@ -55397,7 +55442,11 @@ void game_update(void)
         }
         else star_demo++;
         if (star_demo == 2) bgm_stop(2);           /* exePowerStarGetDemo first step: stopStageBGM(2) */
-        if (star_demo == 17) bgm_sub("BGM_CLEAR"); /* sFanfareStartStepPowerStar 15 */
+        /* sFanfareStartStepPowerStar 15; a grand star (exeGrandStarGetDemo): sFanfareStartStepGrandStar 53.
+         * ponytail: the grand star's get demo itself is the power star's (PowerStar::exeStageClearDemo's
+         * DemoKoopaGrandStar, BGM_KOOPA_GRAND_STAR_1 / 3 and MBGM_STAR_EXIST_2 not ported: #548) */
+        if (!star_demo_grand && star_demo == 17) bgm_sub("BGM_CLEAR");
+        if (star_demo_grand && star_demo == 55) bgm_sub(on_stage("KoopaBattleVs3Galaxy") ? "BGM_GRAND_STAR_GET_2" : "BGM_GRAND_STAR_GET");
     }
     story_update();
     pro_update();
