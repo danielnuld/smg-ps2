@@ -1311,7 +1311,7 @@ static int breakable(const char *name, const Row *r, int *coins, int *pieces)
         return 7;
     }
     if (strcmp(name, "SpiderMapBlock") == 0) { *coins = 1; return 2; } /* SpiderMapBlock.cpp: isMsgPlayerHipDropFloor kills it */
-    if (strcmp(name, "BreakableTrash") == 0) return 5; /* BreakableCage.cpp (CAGE_TRASH): any enemy attack but fire breaks it */
+    if (strcmp(name, "BreakableTrash") == 0 || strcmp(name, "BreakableFixation") == 0) return 5; /* BreakableCage.cpp (CAGE_TRASH / CAGE_FIX): any enemy attack but fire breaks it */
     if (strcmp(name, "SpiderCoin") == 0) { *coins = 1; return 6; }     /* SpiderCoin.cpp: the pointer frees it (spider_coins; a row, no instance) */
     if (strcmp(name, "KoopaStatue") == 0) {
         if (r->arg[3] == -1) *coins = r->arg[6] > 0 ? r->arg[6] : 1;
@@ -36987,20 +36987,38 @@ static void break_inst(const Inst *in, int drops)
         printf("%s %d broken, its coin out\n", name, in->row);
         return;
     }
-    if (!strcmp(name, "BreakableTrash") && nwrecks < MAX_WRECKS) { /* BreakableCage::exeBreak (CAGE_TRASH): IRON_CAGE_BREAK,
-        * hidden, its BreakableCageBreak's Break clip, SW_DEAD at once, stopSceneAtStep(2, 6) within 1500, SW_B off at the
-        * clip's end (kill). ponytail: stopScene at once, not at step 2; the frustum test left out; SW_B left on */
+    if (!strcmp(name, "BreakableFixation")) { /* BreakableCage::exeBreak (CAGE_FIX): BREAK_FIXATION_BREAK, hidden, its Break
+        * effect, SW_DEAD at once, stopSceneAtStep(2, 6) within 1500, SW_B off and kill at the effect's end. ponytail:
+        * stopScene and SW_B at once; the frustum test left out */
+        se_start(SE_OJ_BREAK_FIXATION_BREAK, &p.x);
+        fx_named(name, "Break", in->m, NULL, NULL);
+        if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 0);
+        if (vlen(vsub(mario->pos, p)) < 1500.0f) scene_stop = 6;
+        row_kill(in->row);
+        printf("%s %d broken%c", name, in->row, 10);
+        return;
+    }
+    int bcage = !strcmp(name, "BreakableCage") || !strcmp(name, "BreakableCageRotate") || !strcmp(name, "BreakableCageL");
+    if ((!strcmp(name, "BreakableTrash") || (bcage && scene_model(sc, "BreakableCageBreak"))) && nwrecks < MAX_WRECKS) {
+        /* BreakableCage::exeBreak: IRON_CAGE_BREAK, hidden, its BreakableCageBreak's Break clip (the cages' once their
+         * packs carry it: slice.py), SW_DEAD, stopSceneAtStep(2, 16) with a power star inside (arg7 7), else (2, 6)
+         * within 1500, SW_B off at the clip's end (kill). ponytail: stopScene and SW_B at once, not at step 2 / the
+         * clip's end; the frustum test left out; SW_DEAD at once for every kind (a plain cage / L without arg2 or an
+         * item: at the clip's end); no 破壊 camera demo */
         se_start(SE_OJ_IRON_CAGE_BREAK, &p.x);
         typeof(&wrecks[0]) w = &wrecks[nwrecks++];
         memcpy(w->m, in->m, 64);
         w->bname = "BreakableCageBreak"; w->brk = scene_model(sc, w->bname); w->left = NULL; w->hide = 0;
         w->t = 0; w->row = in->row; w->p = p; w->up = up; w->coins = w->pieces = 0;
         if (r->sw[SW_DEAD] >= 0) sw_set(r, SW_DEAD, 1);
-        if (vlen(vsub(mario->pos, p)) < 1500.0f) scene_stop = 6;
+        if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 0);
+        if (bcage && r->arg[7] == 7) scene_stop = 16; /* isAppearPowerStar */
+        else if (vlen(vsub(mario->pos, p)) < 1500.0f) scene_stop = 6;
         row_kill(in->row);
         printf("%s %d broken%c", name, in->row, 10);
         return;
     }
+    if (bcage) se_start(SE_OJ_IRON_CAGE_BREAK, &p.x); /* (no break model in this pack) */
     if (!strcmp(name, "CrystalCageL") && nwrecks + 1 < MAX_WRECKS) { /* exeBreak: BVA frame 2 (the stump), mPosition at _F8
         * (the map 1000 above to 1000 below it, the cage's own collision left out), CrystalCageLBreak's Break clip at _94
         * (its place before), no Break effect (no effect keeper), no dead switch (tryOnSwitchDead): two wrecks, the clip
@@ -37055,7 +37073,7 @@ static void break_inst(const Inst *in, int drops)
         memcpy(w->m, in->m, 64);
         w->bname = box ? "WoodBoxBreak" : statue ? "KoopaStatueBreak" : "CrystalCageSBreak"; w->hide = 0;
         w->brk = scene_model(sc, w->bname);
-        w->left = statue || (box ? r->arg[1] != 0 : r->arg[0] != 1) ? scene_model(sc, v) : NULL;
+        w->left = statue || (box ? r->arg[1] != 0 : r->arg[0] == -1) ? scene_model(sc, v) : NULL; /* (the cage: mIsBreakObjVisible, arg0 as a bool: unset leaves the stump) */
         w->t = 0; w->row = in->row; w->p = p; w->up = up;
         w->coins = box ? n : 0; w->pieces = box ? sp : 0;
         if (cage) { pop_coins(p, up, n); scene_stop = 3; } /* appearCoinPop at once; stopScene(3) at step 2 */
@@ -37094,7 +37112,10 @@ static int explosion_breaks(V3 at, float rad)
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
         if (row_dead[in->row]) continue;
-        if (!woodbox_reached(in, at, rad) && (in->breaks != 5 || vlen(vsub(at, v3(in->m[12], in->m[13], in->m[14]))) > rad + in->reach)) continue;
+        /* CrystalCage::receiveMsgEnemyAttack: any enemy attack breaks an S / M cage in Wait (its body 130 x scale) */
+        int cage = in->breaks == 1 && !strncmp(sc->types + 32 * sc->objs[in->row].type, "CrystalCage", 11) && sc->types[32 * sc->objs[in->row].type + 11] != 'L' &&
+                   vlen(vsub(at, v3(in->m[12], in->m[13], in->m[14]))) < rad + 130.0f * in->s;
+        if (!cage && !woodbox_reached(in, at, rad) && (in->breaks != 5 || vlen(vsub(at, v3(in->m[12], in->m[13], in->m[14]))) > rad + in->reach)) continue;
         break_inst(in, 1);
         game_rebind();
         return 1;
@@ -37334,8 +37355,23 @@ static void break_boxes(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS));
     update_item_blocks();
-    for (int i = 0; i < ninsts; i++) /* SimpleBreakableObj::initCaseUseSwitchB: SW_B on breaks it */
+    { /* BreakableCage::exeWait (CAGE_NORMAL: BreakableCageRotate): it turns arg0 x 0.01 degrees a frame about its Y */
+        static const Scene *ts;
+        static int tr;
+        if (ts != sc) { ts = sc; tr = scene_type(sc, "BreakableCageRotate"); }
+        for (int i = 0; tr >= 0 && i < ninsts; i++) {
+            Inst *in = &insts[i];
+            const Row *r = &sc->objs[in->row];
+            if ((int)r->type != tr || row_dead[in->row] || r->arg[0] == -1 || !r->arg[0]) continue;
+            float a = r->arg[0] * 0.01f * 0.017453292f, cs = cosf(a), sn = sinf(a), old[16];
+            memcpy(old, in->m, 64);
+            for (int k = 0; k < 3; k++) { float x = old[k], z = old[8 + k]; in->m[k] = cs * x - sn * z; in->m[8 + k] = sn * x + cs * z; }
+            if (mario_ground == i) carry(old, in);
+        }
+    }
+    for (int i = 0; i < ninsts; i++) /* SimpleBreakableObj::initCaseUseSwitchB: SW_B on breaks it (not BreakableCage's kinds: they write SW_B) */
         if ((insts[i].breaks == 4 || insts[i].breaks == 5 || insts[i].breaks == 8) && !row_dead[insts[i].row] && sc->objs[insts[i].row].sw[SW_B] >= 0 &&
+            strncmp(sc->types + 32 * sc->objs[insts[i].row].type, "Breakable", 9) &&
             sw_on(&sc->objs[insts[i].row], SW_B)) {
             break_inst(&insts[i], 1);
             game_rebind();
