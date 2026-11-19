@@ -46823,6 +46823,9 @@ static void put_test(void)
             if (sc->objs[i].sw[SW_A] == PUT_SW_B_OF && sc->objs[i].sw[SW_B] >= 0) sw_set(&sc->objs[i], SW_B, 1);
 #endif
     }
+#ifdef PUT_HOLD /* -DPUT_HOLD: held where he was put (an area he would fall out of) */
+    { static V3 at; if (t == PUT_AT) at = mario->pos; else if (row >= 0 && t > PUT_AT) mario->pos = at; }
+#endif
     if (row >= 0 && t % 60 == 0) {
         const Inst *in = NULL;
         for (int i = 0; i < ninsts; i++) if (insts[i].row == row) { in = &insts[i]; break; }
@@ -48412,9 +48415,99 @@ static void ambient_effects(void)
     }
 }
 
+/* SoundEmitterCube.cpp / SoundEmitterSphere.cpp after Petari (their movement, every frame, demos too): an ambient level sound (arg0: the cube's SE_AT_LV_GRAVE / KOOPA_WIND / WIND_DESERT / WIND_ICE_MT_TOP, the
+ * sphere's MAGMA_AMBIENT / FLOATING_SAND / WIND_DESERT / MAGMA_WIND_VOLCANO / KOOPA_FLOAT_SAND / WIND_RABBIT_MAZE)
+ * played at the camera's watch point (cube 0 / 3, sphere 1 / 2 / 4 / 5) or the microphone, moved into the area: the
+ * cube's world bounding box, the sphere's surface. PlayerSeArea.cpp (placed as PlayerSeCube / Sphere / Cylinder; arg0
+ * 0): SE_PM_LV_LONG_FALL while Mario is in it and not rising in a jump. ponytail: the microphone (AudMicWrap::getMicPos) taken as the camera's eye */
+static struct { short row; unsigned char kind; u32 h; } snd_em[48];
+static int n_snd_em = -1;
+static const Scene *snd_em_sc;
+static void update_sound_emitters(void)
+{
+    static const u32 cube_se[4] = {SE_AT_LV_GRAVE, SE_AT_LV_KOOPA_WIND, SE_AT_LV_WIND_DESERT, SE_AT_LV_WIND_ICE_MT_TOP};
+    static const u32 sphere_se[6] = {SE_AT_LV_MAGMA_AMBIENT, SE_OJ_LV_FLOATING_SAND, SE_AT_LV_WIND_DESERT,
+                                     SE_AT_LV_MAGMA_WIND_VOLCANO, SE_AT_LV_KOOPA_FLOAT_SAND, SE_AT_LV_WIND_RABBIT_MAZE};
+    if (snd_em_sc != sc || n_snd_em < 0) {
+        int t[5] = {scene_type(sc, "SoundEmitterCube"), scene_type(sc, "SoundEmitterSphere"), scene_type(sc, "PlayerSeCube"),
+                    scene_type(sc, "PlayerSeSphere"), scene_type(sc, "PlayerSeCylinder")};
+        snd_em_sc = sc; n_snd_em = 0;
+        for (u32 i = 0; i < sc->nobjs && n_snd_em < 48; i++)
+            for (int k = 0; k < 5; k++)
+                if (t[k] >= 0 && (int)sc->objs[i].type == t[k]) { snd_em[n_snd_em].row = (short)i; snd_em[n_snd_em].kind = (unsigned char)k; snd_em[n_snd_em++].h = 0; }
+    }
+    if (!n_snd_em) return;
+    V3 eye, watch, cu;
+    float fovy;
+    camera_pose(&eye, &watch, &cu, &fovy);
+    for (int k = 0; k < n_snd_em; k++) {
+        const Row *r = &sc->objs[snd_em[k].row];
+        int a0 = r->arg[0];
+        V3 c = row_pos(r), q;
+        if (snd_em[k].kind == 0) { /* SoundEmitterCube (a base origin cube) */
+            if (a0 < 0 || a0 > 3) continue;
+            V3 x, z, lo, hi;
+            row_axes(r, &x, &z);
+            V3 y = vcross(z, x);
+            q = a0 == 0 || a0 == 3 ? watch : eye;
+            lo = hi = vadd(vadd(c, vmul(x, -500.0f * r->scale[0])), vmul(z, -500.0f * r->scale[2]));
+            for (int n = 1; n < 8; n++) { /* the box of its eight corners */
+                V3 v = vadd(vadd(vadd(c, vmul(x, (n & 1 ? 500.0f : -500.0f) * r->scale[0])), vmul(y, (n & 2 ? 1000.0f : 0.0f) * r->scale[1])),
+                            vmul(z, (n & 4 ? 500.0f : -500.0f) * r->scale[2]));
+                lo = v3(fminf(lo.x, v.x), fminf(lo.y, v.y), fminf(lo.z, v.z));
+                hi = v3(fmaxf(hi.x, v.x), fmaxf(hi.y, v.y), fmaxf(hi.z, v.z));
+            }
+            q = v3(fminf(fmaxf(q.x, lo.x), hi.x), fminf(fmaxf(q.y, lo.y), hi.y), fminf(fmaxf(q.z, lo.z), hi.z));
+            snd_em[k].h = se_level(cube_se[a0], &q.x, snd_em[k].h);
+        } else if (snd_em[k].kind == 1) { /* SoundEmitterSphere */
+            if (a0 < 0 || a0 > 5) continue;
+            float rad = 500.0f * r->scale[0], d;
+            q = a0 == 1 || a0 == 2 || a0 == 4 || a0 == 5 ? watch : eye;
+            d = vlen(vsub(q, c));
+            if (!(row_shown(snd_em[k].row) && d < rad) && d > 1e-6f) q = vadd(c, vmul(vsub(q, c), rad / d)); /* !isInVolume */
+            snd_em[k].h = se_level(sphere_se[a0], &q.x, snd_em[k].h);
+        } else if (a0 == 0 && row_shown(snd_em[k].row) && area_inside(r, mario->pos) && !(mario->jumping && m_rising(mario)))
+            snd_em[k].h = se_level(SE_PM_LV_LONG_FALL, &mario->pos.x, snd_em[k].h); /* PlayerSeArea::movement: startLevelSoundPlayer */
+#ifdef PUT_TEST
+        { static u32 was[48]; if (!was[k] && snd_em[k].h) printf("sound emitter: row %d kind %d arg0 %d, handle %u" "\n", snd_em[k].row, snd_em[k].kind, a0, (unsigned)snd_em[k].h); was[k] = snd_em[k].h; }
+#endif
+    }
+}
+
+/* QuakeEffectGenerator.cpp after Petari (made with the scene: SceneObjHolder): with Mario in a QuakeEffectArea
+ * (placed as QuakeEffectAreaCube) every
+ * sQuakeInterval 400 frames it quakes sCamShakeFrame 120: shakeCameraInfinity(0.05, 1.5) and SE_AT_LV_EARTHQUAKE */
+static void update_quake(void)
+{
+    static const Scene *at;
+    static int nrv, step, has; /* 0 Wait, 1 WaitInArea, 2 Quaking */
+    static u32 lv;
+    if (at != sc) { at = sc; nrv = step = 0; lv = 0; has = scene_type(sc, "QuakeEffectAreaCube") >= 0; }
+    if (!has) return;
+    int in = area_obj("QuakeEffectAreaCube", mario->pos) >= 0, next = -1;
+    switch (nrv) {
+    case 0: if (in) next = 1; break;
+    case 1:
+        if (!in) next = 0;
+        else if (step != 0 && step % 400 == 0) next = 2;
+        break;
+    case 2:
+        if (step == 0) camera_shake_infinity(&nrv, 0.05f, 1.5f);
+        lv = se_level(SE_AT_LV_EARTHQUAKE, NULL, lv); /* startAtmosphereLevelSE */
+        if (step == 120) { camera_shake_stop(&nrv); next = in ? 1 : 0; }
+        break;
+    }
+#ifdef PUT_TEST
+    if (next >= 0) printf("quake: nerve %d -> %d at step %d, SE handle %u" "\n", nrv, next, step, (unsigned)lv);
+#endif
+    if (next >= 0) { nrv = next; step = 0; } else step++;
+}
+
 static void keep_effects(void)
 {
     ambient_effects();
+    update_sound_emitters();
+    update_quake();
     float m[16];
     for (int i = 0; i < npieces; i++)
         if (pickup_shown(&pieces[i]) && vlen(vsub(pieces[i].pos, cam_pos)) < 4000.0f) {
