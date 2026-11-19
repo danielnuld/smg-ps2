@@ -1081,6 +1081,7 @@ static int tsp_test(int f);
 int bsb_shot(V3 at);
 int kj_jr_shot(V3 at);
 static void spider_thread_scene(const Scene *s);
+static void st_flag_alloc(void), sy_alloc(void); /* statics.inc, syati.inc: their tables, from game_init */
 #define MAX_OROCKS 4
 enum { OR_WAIT, OR_THROWCOCO, OR_THROWFIRE, OR_DOWN, OR_HIDE, OR_HIDEWAIT, OR_SHOW, OR_DEAD };
 static struct {
@@ -2786,6 +2787,8 @@ void game_init(const Scene *s, const unsigned char *blob)
     memset(&dino, 0, sizeof dino); dino.row = -1;
     memset(&ota, 0, sizeof ota); ota.row = -1;
     spider_thread_scene(s);
+    st_flag_alloc();
+    sy_alloc();
     memset(&bsb, 0, sizeof bsb); bsb.row = -1; bsb.ki[0] = bsb.ki[1] = bsb.ki[2] = -1;
     memset(&sbp, 0, sizeof sbp); sbp.row = sbp.ki = sbp.nrv = -1; pw.on = 0;
     for (u32 i = 0; i < s->nobjs; i++)
@@ -8799,6 +8802,7 @@ int os_point(const OSphere *o, int q, int row, int col)
     return E + eo[q] * A + row - 1;
 }
 
+static u16 (*os_keep)[3 * 6 * 1024]; /* draw_oceanspheres' kept triangles, [2]: with the spheres (os_init) */
 /* the scene's spheres, from game_init: below the zone packs' arena mark (built at the first draw, a zone swap
  * released them) */
 static void os_init(void)
@@ -8810,6 +8814,7 @@ static void os_init(void)
     nospheres = 0;
     for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++)
         if (sc->objs[i].type == ty) { ospheres[nospheres].row = i; os_build(&ospheres[nospheres]); nospheres++; }
+    os_keep = nospheres ? mem_alloc(MEM_SCENE, 2 * sizeof *os_keep) : NULL;
 }
 
 /* a drawing's angle that turns k radians a frame, within one turn: sinf / cosf of hundreds of radians (frame 2000 on)
@@ -8820,7 +8825,7 @@ static void draw_oceanspheres(V3 eye, V3 right, V3 cup)
     if (fx_ocean_tex(0) < 0) return;
     float t1 = draw_angle(-0.1f), off = 0.0008f * game_frame;
     off -= floorf(off);
-    static u16 keep[2][3 * 6 * 1024];
+    u16 (*keep)[3 * 6 * 1024] = os_keep;
     /* the wave's two terms by a point's w1 / w2 (whole numbers 0 .. n): a table a frame instead of two sines a point */
     float s1[24], s2[24];
     for (int w = 0; w < 24; w++) { s1[w] = sinf(t1 + 0.8f * w) * 10.0f; s2[w] = sinf(t1 + w) * 5.0f; }
@@ -35373,9 +35378,9 @@ static struct {
     float wtgt, wspd, wacc, sxp, syp;
     u32 lv;
     int line[STH_LINES][STH_LINE_PTS], anchor[STH_LINES], cuts[STH_CUTS], rad[STH_PARTS], circ[STH_PARTS];
-    SthPt pt[STH_PTS];
-    SthMain mp[STH_MAINS];
-    SthPart part[STH_PARTS];
+    SthPt *pt;     /* [STH_PTS] */
+    SthMain *mp;   /* [STH_MAINS] */
+    SthPart *part; /* [STH_PARTS]: the three from the arena (sth_init: only a scene with the web pays for them) */
     SthHang hang[STH_HANGS];
 } sth;
 #define STH_P(m) (&sth.pt[sth.mp[m].p])
@@ -35681,6 +35686,9 @@ static int sth_connect(int a, int b, int radial) /* connectMainPoint (connectPoi
 static void sth_init(V3 pos) /* MR::initSpiderThread: initThread, initMainThreads */
 {
     memset(&sth, 0, sizeof sth);
+    sth.pt = mem_alloc(MEM_OBJECTS, STH_PTS * sizeof *sth.pt); /* (from game_init: under main.c's base_mark) */
+    sth.mp = mem_alloc(MEM_OBJECTS, STH_MAINS * sizeof *sth.mp);
+    sth.part = mem_alloc(MEM_OBJECTS, STH_PARTS * sizeof *sth.part);
     sth.on = 1; sth.shoot = -1; sth.cancel = -1; sth.pos = pos; sth.front = v3(0, 0, 1);
     sth.wtgt = sth.wspd = 0.5f; sth.wdir = sth.wind = v3(0, 0, -1); /* SpiderThreadWindCtrl: sWindAccelBattle */
     int c = sth_main_new(pos);
