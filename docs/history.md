@@ -11,6 +11,15 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- DharmaSambo after Petari (feat/dharma-sambo, #524, 2026-11-19): engine/src/dharma.inc (ds_*), SandClockGalaxy's
+  stack of four parts (one placed, SandStormJumpZone, scenarios 2 / 4 / 7, behind SW_APPEAR): WaitUnderGround /
+  Appear / AppearImmediately / Pursue / Attack / Hide / HideAppear, SpinHitted (a part blown off), Killed by the
+  head, the escape with the head alone, TrampleDeath; slice.py DharmaSamboPartsHead / Body looks, jpa.py NAMED
+  DharmaSamboParts. ponytail: the 2P pointer's bind, the parts' BTKs, their shadows. Test
+  XF='-DDS_TEST -DTEST_SHOWN=\"DharmaSambo\"' (SandClockGalaxy/2, packs sliced again: overlay): PCSX2, the nerves
+  cycle HideAppear -> WaitUnderGround -> Appear -> Pursue -> Hide with 4 parts, no missing clip or effect; Mario's
+  spin beside it: "part blown, 3 left", "2 left", then its attack downs Mario. Not seen: the head blown or
+  trampled, the escape. Needs SandClockGalaxy and resident.bin repacked (slice_all.py).
 - Sound packs: the classes made by plain create functions (fix/sfxcut-create-functions, #698, 2026-11-18):
   tools/sfxcut.py create_classes took a placement's class from the template argument of its create function; 44 of
   the 47 placements made by a plain function (KoopaFunction::createKoopaVs1 / 2 / 3, MR::createDinoPackunVs1 / Vs2,

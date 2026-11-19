@@ -374,7 +374,7 @@ int game_test_ds(void)
         }
         if ((k->nrv == DH_PURSUE || k->nrv == DH_ATTACK) && t % 90 == 0 && d >= 0) { /* beside the stack, a spin */
             V3 f = vnorm(vtangent(vsub(mario->pos, k->pos), up));
-            mario->pos = vadd(k->pos, vmul(f, 150.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->hurt_timer = 0;
+            mario->pos = vadd(k->pos, vmul(f, 120.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->hurt_timer = 0;
             mario->spin_timer = SPIN_TIME;
         }
         if (t % 60 == 0) printf("ds test: row %d nrv %d step %d count %d%c", k->row, k->nrv, k->step, d >= 0 ? ds[d].count : -1, 10);
