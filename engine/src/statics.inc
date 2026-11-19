@@ -1277,7 +1277,7 @@ static void st_floater_u(Inst *in, StSt *g)
           for (u32 i = 0; ct >= 0 && i < sc->nobjs; i++)
               if ((int)sc->objs[i].type == ct && sc->objs[i].sw[SW_DEAD] >= 0 && !row_dead[i]) { row_kill((int)i); printf("fu test: fixation row %u broken%c", i, 10); }
       if (!seq_is_retry() && g->n == FU_DONE && ++d == 300) game_test_miss(0);
-      if (game_frame % 120 == 0) printf("fu test: floater %d nerve %d at %.0f %.0f %.0f%c", in->row, g->n, in->m[12], in->m[13], in->m[14], 10); }
+      { static int c; if (c++ % 120 == 0) printf("fu test: floater %d nerve %d at %.0f %.0f %.0f%c", in->row, g->n, in->m[12], in->m[13], in->m[14], 10); } }
 #endif
     if (!g->n) { /* init */
         g->n = in->railer ? FU_WAIT : FU_DONE; /* isConnectedWithRail: initMoveType, else Done */
@@ -1318,7 +1318,7 @@ static void st_floater_u(Inst *in, StSt *g)
         if (!g->on) { se_start(SE_SY_READ_RIDDLE_S, NULL); g->n = FU_DONE; return; }
     }
     const Demo *d = dx.on ? &demos[dx.cur] : NULL;
-    if (g->on && d && dx.part == d->h->nparts - 1 && dx.step >= d->parts[dx.part].total - 1) { /* isDemoLastStep */
+    if (g->on && (!d || (dx.part == d->h->nparts - 1 && dx.step >= d->parts[dx.part].total - 1))) { /* isDemoLastStep (or the demo over) */
         se_start(SE_SY_READ_RIDDLE_S, NULL);
         if (g->t2 >= 0) { /* endFloatUpDemo */
             seq_done_update(g->t2, 1);
