@@ -44,8 +44,11 @@ int menu_dome_confirm(void);         /* 0 choosing, 1 yes, 2 no */
 void menu_dome_plate(int i, const char *galaxy, int type, int immediate, float x, float y); /* GalaxyNamePlate */
 /* the miss / game over sequences' layouts (game.c miss_*) */
 void menu_miss_start(void);          /* MissLayout ("TooBad") */
+int menu_miss_anim_end(void);        /* its Appear over (or not started) */
 void menu_wipe_koopa(int frames);    /* WipeKoopa: closes over frames (<= 0: 90) */
 int menu_wipe_koopa_closed(void);
+void menu_miss_left_start(int left); /* PlayerMissLeft::appear (left: the lives now) */
+int menu_miss_left_dead(void);
 void menu_wipe_gameover(void);       /* WipeGameOver ("GameOver") */
 /* the demos' (game.c DemoExecutor): SceneWipeHolder's fades and CinemaFrame */
 void menu_wipe(int close, int frames, u32 rgb); /* WipeFade: closes / opens over frames (< 0: sFadeFrame 30), rgb 0xBBGGRR */
@@ -141,6 +144,9 @@ int menu_chip_demo_waiting(int type);  /* TryDemo: its demo asked for */
 void menu_chip_demo_start(int type);
 int menu_chip_demo_over(int type, int *group); /* 1 once when CompleteOut ends */
 void menu_chip_active(int on);
+void menu_sight(int on, float x, float y); /* MarioLauncherLayout: the Sight at the pointer */
+void menu_one_up(int n);                /* OneUpBoard::popup */
+void menu_one_up_pos(float x, float y); /* its calcPos: Mario's centre on the screen */
 void menu_chip_update(int short_balloon, float x, float y);
 int menu_test_chip(int type);          /* -1 none, else alive x 1000 + nerve x 10 + count */
 /* YesNoLayout: MR::appearYesNoSelector(yes, no) (talk_se: TalkDirector's setYesNoSelectorSE), isYesNoSelected */

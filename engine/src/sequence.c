@@ -25,6 +25,7 @@ static char select_after[32];
 void seq_set_select_after(const char *galaxy) { snprintf(select_after, sizeof select_after, "%s", galaxy); }
 int seq_take_select_after(char *galaxy, int n) { snprintf(galaxy, n, "%s", select_after); int r = select_after[0] != 0; select_after[0] = 0; return r; }
 int seq_take_save_prompt(void) { int r = sq.save_prompt; sq.save_prompt = 0; return r; }
+int seq_after_clear(void) { return sq.save_prompt; } /* this scene follows a stage clear (until menu_init takes the prompt) */
 void seq_set_open_wipe(int frames, unsigned rgb) { sq.open_frames = frames; sq.open_rgb = rgb; }
 int seq_take_open_wipe(unsigned *rgb) { int f = sq.open_frames; *rgb = sq.open_rgb; sq.open_frames = 0; return f; }
 

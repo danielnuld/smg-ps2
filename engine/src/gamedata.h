@@ -43,6 +43,8 @@ int gd_green_first_just(void);                   /* StageResultSequenceChecker::
 int gd_galaxy_appear_just(const char *galaxy);   /* GameDataFunction::isOnJustAppearGalaxy */
 int gd_just_tico_galaxy(void);                   /* StageResultSequenceChecker::isJustAppearTicoGalaxy */
 int gd_just_open_galaxy(void);                   /* isJustOpenGalaxyWithoutChallengeGalaxy */
+int gd_just_complete_galaxy(const char *galaxy); /* isJustCompleteGalaxy */
+int gd_just_book(void);                          /* 0 none, 1 isAddPictureBook, 2 isJustOpenLibraryRoom too */
 int gd_is_special_star(const char *galaxy, int star, const char *kind); /* GameDataConst::isPowerStarSpecial */
 int gd_question_galaxy(const char *galaxy);      /* GameDataConst::isQuestionGalaxy */
 int gd_flag_try_on(const char *name);
