@@ -17608,8 +17608,10 @@ static const struct { const char *msg, *flag, *first_bgm, *bgm; } io_attr[] = {
     {"InformationObserverIce", "アイスマリオ初変身", "BGM_FIRST_MORPH_A", "BGM_ICE_B"},
     {"InformationObserverFlying", "フライングマリオ初変身", "BGM_FIRST_MORPH_A", "BGM_FLYING_B"},
     {"InformationObserverInvincible", "無敵マリオ初変身", "BGM_FIRST_MORPH_A", "BGM_MUTEKI_B"},
-    {"InformationObserverSpin", NULL, NULL, NULL}}; /* (explainSpin: onGameEventFlagEnableToSpinAndStarPointer) */
-enum { IO_BEE, IO_TERESA, IO_HOPPER, IO_FIRE, IO_ICE, IO_FLYING, IO_INVINCIBLE, IO_SPIN };
+    {"InformationObserverSpin", NULL, NULL, NULL}, /* (explainSpin: onGameEventFlagEnableToSpinAndStarPointer) */
+    {"InformationObserverLifeUpMario", "ライフアップキノコ解説", NULL, NULL}, /* (Luigi: InformationObserverLifeUpLuigi, io_update) */
+    {"InformationObserverOneUp", "１ＵＰキノコ解説", NULL, NULL}};
+enum { IO_BEE, IO_TERESA, IO_HOPPER, IO_FIRE, IO_ICE, IO_FLYING, IO_INVINCIBLE, IO_SPIN, IO_LIFEUP, IO_ONEUP };
 static struct { int type, nrv, step, frames, keep; } io = {0, 0, 0, -1, 0}; /* nrv 0 dead, 1 wait (its demo asked), 2 disp;
                                                                            * keep: _90, a time keep demo paused */
 /* MarioActor::_EEB (MR::setPlayerSwingPermission): the spin's isRequestRush. True from the constructor (each scene),
@@ -17643,7 +17645,8 @@ static void io_update(void)
     if (io.nrv == 1 && pd_try_start("初出表示", -1)) { io.nrv = 2; io.step = -1; }
     if (io.nrv != 2) return;
     if (++io.step == 0) {
-        info_text = msg_get(io_attr[io.type].msg);
+        info_text = msg_get(io.type == IO_LIFEUP && gd_player_luigi() ? "InformationObserverLifeUpLuigi" : io_attr[io.type].msg);
+        printf("information: %s (text %d)\n", io_attr[io.type].msg, info_text != NULL);
         if (io_attr[io.type].first_bgm) { bgm_sub_stop(0); bgm_sub(io_attr[io.type].first_bgm); }
         io.frames = 30; /* sDisplayFramesMin */
     }
@@ -17698,7 +17701,10 @@ static int mode_control(Player *m)
 /* calcAnimInMovement's demo counts and calcAnim's model choice, once a frame after Mario's move */
 static void mode_movement(Player *m)
 {
-    if (super_t && --super_t == 0) { pd_end("マリオスーパー化"); if (mario_anim) mario_anim->speed = 1.0f; } /* releaseAnimFrame. (explainLifeUpIfAtFirst: Type_LifeUp) */
+    if (super_t && --super_t == 0) { /* endDemo, releaseAnimFrame, MR::explainLifeUpIfAtFirst */
+        pd_end("マリオスーパー化"); if (mario_anim) mario_anim->speed = 1.0f;
+        if (!gd_flag_is_on(io_attr[IO_LIFEUP].flag)) io_entry(IO_LIFEUP);
+    }
     if (morph_t) {
         if (player_mode == PM_TERESA && m->height < MC.mTeresaWaitHeight) m->pos = vadd(m->pos, m->up); /* -= the gravity */
         if (!mode_first_done(player_mode) && morph_item >= 0) { /* 変身初出カメラ */
@@ -28331,7 +28337,10 @@ static void update_bitems(void)
         if (mario_touch(sc_, 50.0f)) { /* ACTMES_ITEM_GET -> exeCatch */
             pad_rumble(RUMBLE_WEAK);
             if (b->life) { change_item_status(10); fx_named("BenefitItemObj", "GetLifeUp", b->base, NULL, NULL); }
-            else { fx_named("KinokoOneUp", "Get", b->base, NULL, NULL); request_one_up(); lives++; }
+            else { /* BenefitItemObj::exeCatch: requestOneUp, incPlayerLeft, explainOneUpIfAtFirst */
+                fx_named("KinokoOneUp", "Get", b->base, NULL, NULL); request_one_up(); lives++;
+                if (!gd_flag_is_on(io_attr[IO_ONEUP].flag)) io_entry(IO_ONEUP);
+            }
             b->on = 0;
             printf("kinoko %s %d: taken, lives %d\n", b->life ? "life up" : "1-up", i, lives);
         }
@@ -47701,8 +47710,9 @@ static void update_items(void)
         }
         else if (in->item == ITEM_ONEUP) { /* BenefitItemObj::exeCatch: runEfx("Get"), requestOneUp (SE_SY_1UP), incPlayerLeft */
             fx_named("KinokoOneUp", "Get", in->m, NULL, NULL);
-            se_start(SE_SY_1UP, NULL);
+            request_one_up(); /* (the OneUpBoard too) */
             printf("1-up, lives %d\n", ++lives);
+            if (!gd_flag_is_on(io_attr[IO_ONEUP].flag)) io_entry(IO_ONEUP); /* MR::explainOneUpIfAtFirst */
         }
         else if (in->item == ITEM_LIFEUP) { change_item_status(10); fx_named("BenefitItemObj", "GetLifeUp", in->m, NULL, NULL); } /* BenefitItemLifeUp::exeCatch, runEfx("Get") */
         else if (in->item == ITEM_INVINCIBLE) { se_start(SE_SY_POWER_UP_2, NULL); change_item_status(7); } /* BenefitItemInvincible::exeCatch */
