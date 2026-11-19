@@ -10345,8 +10345,6 @@ static const char *dino_clip(int *loop)
  * are bodies pulled to their links (90; the ball 120), kept bent (sKeepBendPower) and, in Find, to the clip (_18);
  * the ball takes the chain only in Wait / Rebound. Off (pure clip, the ball on its joint) before the fight and in the
  * demos (mTail->deactivate / startDemoAndReset). */
-enum { ASC_STOP, ASC_ANIM, ASC_HIT }; /* AnimScaleController's nerves (asc_core) */
-static void asc_core(int *nrv, int *t, float *y, float *v, const float p[7]);
 static const float dino_asc[7] = {0.1f, 0.91f, 0.2f, 1.8f, 0.07f, 0.12f, 0.92f}; /* DinoPackunParam: _0, _4, _8, _C, _20, _24, _28 */
 static const float dino_trad[9] = {0, 80, 70, 60, 55, 50, 45, 50, 135}; /* sJointRadius (Tail1-7), the ball's body */
 /* DinoPackun::hitScaleJoint: Spine1 pre-scaled by (_C.y, _C.z, _C.x) of its AnimScaleController, its children with
