@@ -2579,7 +2579,11 @@ int main(void)
         {
             static int row = -1;
 #ifdef RAIL_TEST
+#ifdef STAGE_ANM /* (XF=-DSTAGE_TEST=0 -DSTAGE_ANM: game.c game_test_rotor) */
+            if (frame >= 120 && frame % 120 == 0 && row < 0) printf("rail test: on row %d\n", row = game_test_rotor(1));
+#else
             if (frame == 120) printf("rail test: on row %d\n", row = game_test_rotor(1));
+#endif
 #else
             if (frame == 120) printf("rotor test: on row %d\n", row = game_test_rotor(0));
 #endif
