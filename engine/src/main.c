@@ -25,6 +25,7 @@ static void print_pace(void) { if (print_pace_on) { unsigned c0 = cycles(); whil
 #include "pad.h"
 #include "render.h"
 #include "se.h"
+#include "se_ids.h"
 #include "me.h"
 #include "vmath.h"
 
@@ -987,6 +988,8 @@ static void movies_play(void)
 static void scene_switch(void)
 {
     printf("scene: %s -> %s\n", scen, scene_next);
+    /* GameSequenceProgress::setMinFrameBeforeStartNextStage: the garden to the Gateway */
+    int tico = !strncmp(scen, "PeachCastleGardenGalaxy/", 24) && !strcmp(scene_next, "HeavensDoorGalaxy/1");
     me_reset(); /* AudSystem::preProcessToReset */
     se_silence();
     audio_stop(); /* its FILE sits above the base packs: freed before they go (the heap stays whole) */
@@ -1011,6 +1014,18 @@ static void scene_switch(void)
     pad_rumble_stop(); /* GameSystemSceneController: resetAllControllerRumble */
     if (movie_next[0]) movies_play();
     scene_load();
+    if (tico) { /* exeGalaxyMove: mMinFrame 300, SE_SY_TICO_WAKE_PLAYER at step sTimingPlayingTicoSE 180: the scene 120
+                 * frames after the voice. ponytail: the load is not concurrent here (it came first, longer than the
+                 * 180 frames): the voice once the new scene's sounds are in, then the 120 frames */
+        se_start(SE_SY_TICO_WAKE_PLAYER, NULL);
+        printf("sequence: SE_SY_TICO_WAKE_PLAYER, 120 frames\n");
+        for (int i = 0; i < 120; i++) {
+            *(volatile u64 *)0x12001000 = 8; /* GS CSR: the next vblank */
+            while (!(*(volatile u64 *)0x12001000 & 8)) audio_feed();
+            se_update(1);
+            se_flush();
+        }
+    }
 }
 #endif
 
@@ -1192,6 +1207,9 @@ int main(void)
             if (frame == 200) {
                 SeqResult r = {"EggStarGalaxy", 1, 0, 1, 50, 0, 12};
                 gd_set_star("HeavensDoorGalaxy", 1);
+#ifdef RESULT_COMPLETE /* XF=-DRESULT_COMPLETE: the galaxy's other stars first: the galaxy complete window (System_Result009) */
+                for (int k = 2; k <= gd_power_star_num("EggStarGalaxy"); k++) gd_set_star("EggStarGalaxy", k);
+#endif
                 r.prev_stars = gd_star_num();
                 gd_set_star("EggStarGalaxy", 1);
                 r.after_stars = gd_star_num();
@@ -1592,6 +1610,12 @@ int main(void)
 #ifdef PACKS
 #ifdef HOLE_TEST /* (a plain build, XF=-DHOLE_TEST: the miss events on) Mario into the first black hole */
         { static int done; if (!done && frame > 120 && game_test_free()) { done = 1; printf("hole test f %u: black hole row %d" "\n", frame, game_test_hole()); } }
+#endif
+#ifdef DOWN_TEST /* (a plain build, XF=-DDOWN_TEST=1: the last life at a needle's prick, EventFireDown; 2: EventDown; 3: EventAbyss; 0: in turn) */
+#ifdef ROUTE_TEST /* (a route build with XF="-DMISS_EVENTS=1 -DDOWN_TEST=0": the route in EggStar 1, this test in the other stages) */
+        if (!game_stage_scenario("EggStarGalaxy", 1))
+#endif
+        { extern int game_test_down(int); game_test_down(DOWN_TEST); }
 #endif
 #ifdef HAZARD_TEST
         if (frame == 120)
@@ -2137,6 +2161,9 @@ int main(void)
 #endif
 #ifdef SINK_TEST /* XF=-DSINK_TEST=<floor code 17 / 18 / 25 / 31>: Mario put on a Sink floor (#565) */
         { extern void game_test_sink_input(int, int); game_test_sink_input((int)frame, SINK_TEST); }
+#endif
+#ifdef STEP_TEST /* XF=-DSTEP_TEST=<k>: Mario walks at the k-th step found (MarioStep) */
+        { extern void game_test_step_input(int); game_test_step_input((int)frame); }
 #endif
 #ifdef SIDESTEP_TEST
         { extern void game_test_sidestep_input(int); game_test_sidestep_input((int)frame); } /* Mario leans on a wall and side steps */

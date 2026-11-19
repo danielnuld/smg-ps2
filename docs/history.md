@@ -17,6 +17,98 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   and constants (KoteBug, Poihana, Gesso, Snakehead, Mogu, Metbo: equal) and the PCSX2 runs: #693's BombHei carry
   (BH_TEST: taken, thrown, Physics) and #637's AnimScaleController kinds (way 2 starts none of them: see the table).
   Test: built plain, host tests, the route test, memcheck. No repack.
+- RainCloud (feat/692-raincloud, #692, 2026-11-18): 69 placed (OceanRingZone layers C / D, ReverseForestHomeZone),
+  generic rail parts before. update_rainclouds after RainCloud.cpp: Wait / Appear / Disappear / End / SoftTouch /
+  HardTouch (Mario falls through a cloud for 60 frames unless he is a bee; OnBee under a bee; Disappear at its rail's
+  end, End back at the start until its whole group is there, Appear with THUNDER at 140), the rain (its length from
+  the ground under it up to arg0, the Splash and Line10 / Line20 effects, SE_OJ_LV_FOREST_RAIN; the
+  RainCloudCylinder model on the Shadow joint is written (rc_draw) but off, `XF=-DRAINCLOUD_CYLINDER`: it came out an
+  opaque dark column in ReverseKingdomGalaxy 3), the drop_water sensor (a bee's form washed away). Its state
+  (RainCloud, 60 B a cloud) comes from the arena at game_init (row_table), no static table and no Inst field.
+  Its end is read from the rail mover's coord (main's MapPartsRailMover stops at the end, then starts over). slice.py: RainCloud
+  skinned (its four clips, its AutoEffectList rows), RainCloudCylinder its EXTRA model. Test:
+  `XF=-DRAINCLOUD_TEST=k` on a plain build (Mario dropped on the k-th cloud; nerve changes logged). Seen: HardTouch
+  (OceanRingGalaxy 5, ReverseKingdomGalaxy 3), the rail clouds' Disappear / End / Appear and the rain's length
+  (ReverseKingdomGalaxy 3); not seen: a bee (SoftTouch, the wash), the effects, a posed cloud's Appear. ponytail: no BPK
+  colours, no LOD model, no shadow volume, ACTMES_PUDDLE_TOUCH_GROUND not sent, the projection read every 8th frame
+  and (with the effects and the rain's sound) only in view. **Release: slice_all.py** OceanRingGalaxy and
+  ReverseKingdomGalaxy **+ sound.py --pack** for them (the four RainCloud SEs are new in game.c).
+- ViewGroupCtrlCube (feat/718-view-group, #718, 2026-11-19, agent areas2): the last placed manager of
+  AreaObjContainer's table the engine did not read (624 cubes in 97 stage archives; 9365 rows carry a ViewGroupId:
+  coins, star pieces, enemies, NPCs, map parts; no planet does). Pack format: a new chunk **VGRP** in scene.bin
+  (u32 n, n x {u16 row, s16 ViewGroupId; bit 14 a planetobjinfo row}), and the cubes' rows through slice.py LOGIC; a
+  pack without the chunk (every pack before this repack) has no groups and plays as before (vg_init). `vg_update`
+  (ViewGroupCtrl::update, keep_effects): each cube holding Mario turns its group (arg0) on: _0 in view, arg1 1 / 2 /
+  3 the LodCtrl's high / middle / low model forced, arg1 4 not in view and hidden. `vg_of(row)`: obj_clipped and
+  the walkers' ClippingJudge call take far level 0 (no far clipping) for a row whose group is in view
+  (ClippingActorInfo::isJudgedToClip); `vg_hidden`: an instance of a hidden group is not drawn when its class has
+  a LodCtrl (LodCtrl::hideAllModel): the NPCs (clipcls 1), BeeFlowerHover, planets. ponytail: the port has no
+  LodCtrl, so the forced high / middle / low models do nothing and the other LodCtrl holders (UFOBase,
+  LavaStrangeRock, MapObjActor's planet LOD...) are not hidden; far level 0 reaches only what the port clips by
+  ClippingJudge (NPCs, walkers, SuperSpinDrivers: the rest is drawn by the port's own distances). Test: route with
+  `XF="-DVG_TEST -DPACKS_OVERLAY=<overlay>"` ("view groups: n on id:flags" when the count changes): EggStarGalaxy/1 on
+  the old packs, the star at f 4281; with its scene sliced anew (163 VGRP rows) the groups go on and off along the
+  flight ("2 on 1:3 13:3" ... "0 on") and the star is at f 4281 again. Not seen: a hidden group (arg1 4: 42 cubes).
+  Memory: about 1.5 KB of code, 2 bytes a row from the scene arena with the chunk. Repack: every galaxy.
+- UI audit, SysInfoWindow and the sub meter (fix/679-sysinfo-abutton, #679 #707, 2026-11-19): menu.c si_* gets
+  SysInfoWindow's mIconAButton (an IconAButton at AButtonPosition: openWithoutMessage when a Type_Key window appears,
+  term at Disappear's first step, killed, moved and drawn with the window: the save's done / error windows had no
+  A button; Iab's type moved above SysInfo). SubMeterLayout::control places FlyMeter / AirMeter from getPlayerPos:
+  game.c gave menu_submeter_update Mario's centre (MeterLayout's point), so it sat higher. Test: `miss` (the game
+  over's save, its done window). Three more IconAButton instances a scene (arena).
+- Per-class tables out of bss, 3 (perf/tables-arena-3, #709, 2026-11-19; the rule: the note of #630 below):
+  CoconutTreeLeaf's `lfs` (52 KB; `lf_alloc`, row_table), the FishGroups' `fgs` (29 KB; `fg_alloc`: a group a
+  FishGroupA..F row), the WaterPlants' `wplants` (44 KB; game_init: arg0 or 16 plants a row, `wplants_cap`, at most
+  MAX_WPLANTS) and sth_draw's vertex / index buffers (36 KB; `sth.dpos` / `.didx`, sth_init). memcheck: about 160 KB
+  of bss gone (_end 11907328, 20224 B before the region loses a step, the region 19456 KB: three steps over the
+  11:50 baseline with #630 and #657); route EggStarGalaxy/1 f 4281. Arena at boot: HeavenlyBeachGalaxy/1 (leaves,
+  fish, water plants) 3121 KB, StarDustGalaxy/3 below. Left in bss on purpose (always in use or not a class's):
+  mem.c `arena`, fx.c `pt` / `spr` / `em` (particles), se_seq.c `tr` / `ch`, se.c `upbuf`, render.c `i8_buf` / `quads` /
+  `dcache`, gravity.c `wch` / `g_pool` / `bound_c`, mc.c `buf`, gamedata.c `files`, me.c `tpool`, audio.c `rhy`,
+  game.c `tkq` (the talk's quads), walker_push_pass's `sen`, `hs_buf`. Still per-class and worth a look when memory
+  is short again: `ggs` (20 KB), `onis` (16), `mhills` (15), ocean_ring.inc `or_pos` / `or_uv` / `or_tri` (50),
+  snow_floor.inc `ws` / `xs` / `ys` (32), `notes` (12), and the many under 8 KB.
+- Banekiti (feat/701-banekiti, #701, 2026-11-18): MapObj/Banekiti.cpp in `engine/src/banekiti.inc`
+  (update_banekiti): TeresaMario2DGalaxy's four spring bumpers on their rails. Wait (its Wait clip,
+  SE_OJ_LV_BANEKITI_MOVE); Boo Mario touching one of its three sensors (80, 100 apart along its X) is reflected and
+  it goes to Repel (a weak rumble and shake, Repel, SE_OJ_BANEKITI_REPEL), Wait at the clip's end. Its nerve in
+  row_turn / row_step. `tools/slice.py` SKINNED_OBJ Banekiti (its clips). Test: plain `XF=-DBANEKITI_TEST`,
+  TeresaMario2DGalaxy/1: its Wait path runs with its clips in the overlay pack, but **the Repel was not seen in PCSX2** (the test's Mario falls out of that scenario's start and its placement by the bumper did not take). ponytail: no DPDSwoon (the 2P pointer), no star piece hit reaction (AnimScaleController).
+  Cost: about 1.0 KB of the ELF (nm update_banekiti), no state of its own; memcheck on a plain build of main with the six classes of this batch: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB; route test with them: star got. **Release: slice_all.py TeresaMario2DGalaxy + sound.py --pack TeresaMario2DGalaxy.**
+- LavaProminenceTriple / LavaProminenceEnvironment (feat/705-lava-prominence-triple, #705, 2026-11-18):
+  MapObj/LavaProminenceTriple.cpp in `engine/src/lava_prominence_triple.inc` (lpt_*): HellPoolAZone's three wheels
+  of fire and HellProminenceGalaxy's seven Environment ones. The appear time (arg1), the turn arg0 / 100 degrees a
+  frame about its Y, SE_OJ_LV_PROMINENCE_T_MOVE, the Drop effects on its Head joints (off while out of the view),
+  the Triple's attack sensor (80 x scale y on the ring of 1900 at Mario's angle, clamped into a head's arc:
+  sNoSensorTable; sendMsgEnemyAttackFireStrong). State in MEM_OBJECTS. `tools/jpa.py` NAMED (the Drop effects).
+  Test: plain `XF=-DLPT_TEST`, HellProminenceGalaxy/3: in PCSX2 the three Triples appear on their switch, turn 0.4 degrees a frame, their Drops go on and off with the view, their sensor follows Mario's angle; **the fire hit and the look of the effects were not seen** (Mario was not on a sensor in the run); its level sound answers `se?` (a sound pack to cut again). ponytail: the Head joints' places read offline from the BDLs; no bloom model. Cost:
+  about 2.2 KB of the ELF (nm lpt_*), its state in MEM_OBJECTS; memcheck on a plain build of main with the six classes of this batch: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB; route test with them: star got. **Release: slice_all.py resident.bin + resident_luigi.bin** (the effects).
+- UI and flow audit, first pass (feat/ui-audit-miss-left, #640 #641 #658 #659, 2026-11-18): Petari's Screen/ classes
+  against menu.c / game.c, the table in `docs/ui-audit.md` (ok / fixed / issue / Wii-only / not re-read yet). Fixed:
+  PlayerMissLeft (menu.c pms_*: after a miss's wipe the PlayerLeft layout's CenterPlayerLeft over the black screen,
+  the lives + 1, at Wait's step 15 the lives with the rumbler and SE_SY_PLAYER_LEFT_DEC, End past 90; not in a
+  comet's scenario; game.c miss_event_update asks the stage again once it is dead); GameSequenceProgress's
+  SE_SY_TICO_WAKE_PLAYER from the garden to the Gateway (main.c scene_switch: after the load, then 120 frames);
+  OneUpBoard (menu.c oub_*: "OneUp" over Mario, game.c request_one_up = MR::requestOneUp with SE_SY_1UP: the 50
+  coins' 1-up was silent) and ScenePlayingResult::incStarPiece's 1-up every 50 star pieces; StageResultInformer's
+  ShowGalaxyComplete (System_Result009, BGM_GALAXY_COMPLETE: gamedata.c gd_just_complete_galaxy) and
+  ShowGetPictureBook (System_Result005 / 008: gd_just_book), its IconAButton and the information window's, the Coin
+  pane; game_init keeps the scene start's game data holder over a stage clear (seq_after_clear: the star is set at
+  its touch here, so the Observatory's snapshot held it and no "just" check of the result window or the map's
+  discover mode could fire); MarioLauncherLayout's Sight (menu.c sgt_*); CounterLayoutController::isPlayerMoving
+  (the spring / the Boo / swimming) and isWaitToDisappearCounter; PauseMenu's lower button SE_SY_PAUSE_OFF and its
+  failed save. tools/lyt.py COMMON gets PlayerLeft, InformationWindow (it was the ending's only: the result's
+  information windows never showed in the Observatory), OneUp, Sight: menus.bin 1031 -> 1067 KB in every scene.
+  Test modes: `miss` (log `miss left: 4 -> 3`), `result` (XF=-DRESULT_COMPLETE: the galaxy's other stars first,
+  log `result: information System_Result009`). **Repack: lyt.py** (menus.bin; the engine runs on the old one, the
+  new layouts then stay off). Not ported, issues: CometRetryButton #660, GalaxyCometScreenFilter #661,
+  BombTimerLayout / NoteCounter / SuddenDeathMeter #662, the map in the domes #663, SysInfoWindow's A button #679.
+  Seen in PCSX2 (menus.bin from an overlay): `miss` (the wipe, Mario's icon x 3 on the black screen, `miss left:
+  4 -> 3`, the stage again, then the game over to the title), `result` with RESULT_COMPLETE (BGM_ASTRO_RETURN,
+  BGM_GALAXY_COMPLETE + System_Result009, BGM_HIGH_SCORE, the star pieces, System_Result001 with its A button in
+  the dome, System_Result007, the save), `route` EggStar 1 (its star). Not run: the 1UP board and the star
+  pieces' 1-up, the Tico's voice (the opening), the Sight (`launcher`), the pause menu's changes.
+  ponytail: the load after PlayerMissLeft and before the Tico's voice is not concurrent; no layout effects.
 - Enemy audit, third batch (feat/708-enemy-audit-3, #708, PR #710, 2026-11-18): Dossun: update_dossuns raised its
   step before the nerve ran, so a nerve's first frame was step 1 and no `*t == 0` block ever ran: no
   SE_OJ_DOSSUN_FALL_SIGN, no SE_OJ_DOSSUN_LAND, no Land effect, no shake; the step now counts from 0 (raised after
@@ -24,6 +116,207 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   3500). BombHeiLauncher: its SW_A listened as on / off edges (onSwitchA: countdown 0, LauncherWait: the bomb at once;
   offSwitchA: Stop). Jellyfish: knockOut (jf_knock) from fire balls, shells, the rainbow attack and explosions.
   Test: built plain, host tests, the route test, memcheck; NOT run in PCSX2 (unverified-2026-11-18.md). No repack.
+- Trick rabbits (feat/632-trick-rabbits, #632, 2026-11-18): TrickRabbitFreeRun (ReverseKingdomGalaxy 1) and
+  TrickRabbit (CosmosGardenGalaxy 1) had no gameplay (a still model, the star out from the start). engine/src/trick.inc,
+  on the Gateway rabbits' kit (GwRabbit, rr_state = WalkerStateRunaway, RunawayRabbit's WalkerStateBlowDamage):
+  RabbitStateWaitStart (Wait / SmallTurn / HitReaction / Trample / Spin / Pointing / Talk and their sounds) and
+  RabbitStateCaught (the 捕まり demo: Caught, CaughtLand, CaughtEvent; Mario's Catch clips, the PStar model's
+  TrickRabbitLand / Wait) shared; TrickRabbitFreeRun's nerves (WaitStart, the 逃走 demo, RunawayStart with
+  MBGM_GALAXY_02_CHASE, Runaway at 0.7 / 1.5 by Mario's distance, BlowDamage from a star piece, Caught,
+  PowerStarDemo, GiveUp); TrickRabbit's (its rail graph: slice.py rgph_chunk bakes the rail and its Path_ID links
+  as nodes and edges with their point args, chunk RGPH; DemoRunaway / DemoJump along the arg7 -2 edges, Wait,
+  Runaway with selectEdgeRunnaway and the route level, BrakeTurn, JumpStart / Jump on a ParabolicPath, Tumble /
+  FallDown / ComebackRoute, Caught with SE_SY_TOTAL_COMPLETE, WaitPowerStarDemo, GiveUp). Both declare their star
+  (slice.py declare_stars; trk_star_out lets it out 200 over the rabbit) and wait for their zone's collision
+  (w_zone_ground: active from the scene's start they fell through their planet while its zone was loaded low).
+  Left: MultiEventCamera (TrickRabbit's demo camera), SpotMarkLight, foot prints, the ThicketJump effect,
+  isBindedGroundBrake, the blow from other actors; TrickRabbitFreeRunCollect (SnowCapsuleGalaxy: TrickRabbitSnow /
+  TrickRabbitSnowCollect, its clip names are cut at 31 characters by slice.name32) is not ported. Test: plain with
+  XF="-DTRICK_TEST -DPACKS_OVERLAY=<overlay>" on ReverseKingdomGalaxy/1 or CosmosGardenGalaxy/1 (Mario put before
+  the rabbit, A through its talk, a star piece / a drop onto it, then the catch). Seen in PCSX2: TrickRabbitFreeRun end to end (its talk, the demo and the chase BGM, the star piece's BlowDamage, the catch, the power star appear demo with it as declarer, GiveUp); TrickRabbit only to
+  its WaitStart (97 nodes, 109 edges read, it stands on its ground; the test's Mario, put 170 before it, fell off its
+  platform, so its talk and what follows were not run). Until they are, slice.py makes TrickRabbit's RGPH, declarer
+  and PStar only with SMG_RGPH set in the environment: the release packs leave it as it was. Next: fix the test's
+  Mario placement in trk_test, slice CosmosGardenGalaxy with SMG_RGPH=1 into an overlay, run it, then drop the
+  switch. **Release: slice_all.py ReverseKingdomGalaxy** (TrickRabbitFreeRun's declarer and PStar).
+  the rabbit, A through its talk, a star piece / a drop onto it, then the catch). Seen in PCSX2: TrickRabbitFreeRun end to end (its talk, the demo and the chase BGM, the star piece's BlowDamage, the catch, the power star appear demo with it as declarer, GiveUp). **Release: slice_all.py
+  ReverseKingdomGalaxy, CosmosGardenGalaxy** (the declarers, PStar, RGPH).
+- Mario's miss events (feat/674-miss-events, #674, 2026-11-18): EventAbyss and EventFireDown have their own timelines
+  now (PlayerEventAbyss.cpp / PlayerEventFireDown.cpp: the MissLayout at init, the HUD out at 25 / 100, the wipe once
+  the layout's Appear is over and 15 frames in, a life at 120), EventDown keeps its own. MarioActorNrvGameOverNonStop
+  (forceGameOverNonStop: the last life at a fire dance's or a needle's start, on a fire floor in the dance, frozen or
+  paralysed off the ground) no longer holds Mario: the dance goes on under the layout and the wipe, and joins the fire
+  run whatever his life (connectToFireRun). MarioActorNrvGameOverAbyss: 奈落ダウン and he drifts on, his last move x
+  0.99 + the camera's z x 0.35 a frame. MarioActor::drawPreWipe (startPlayerDownWipe: EventDown / FireDown / RaceDown,
+  not sinking, not frozen): a black box over the world, alpha _A6C x 1.75 (224 past 128) of 255, and Mario's model
+  once more over it (game_draw: his draw block run again after the effects). menu_miss_anim_end (isMissAnimEnd).
+  Test: a plain build XF=-DDOWN_TEST=<k> (1 his last life at a needle's prick, 2 a plain miss, 3 the Abyss nerve, 0 one
+  of them by the lives left on each try of the stage); in a route build (XF="-DMISS_EVENTS=1 -DDOWN_TEST=0") off the
+  route's stage. PCSX2 (a plain build, DOWN_TEST 0, EggStarGalaxy 1, three
+  tries): EventDown: the layout at 45, the wipe at 100, a life at 120, the stage again at 220; the world darkens round
+  him (pictures: Mario bright behind the TooBad text). NonStop (doNeedleWithInitialDamage with one life): `mario down
+  (non stop)`, the layout at once, he is thrown 660 up by the dance while the world darkens, the wipe at 61 (the
+  layout's Appear over), a life at 120, the stage again at 182. Abyss: the layout at once, no darkening, the wipe at
+  61, he drifts into the screen (900 in 100 frames). A black hole's miss ran the same timeline.
+  ponytail: the death cameras (昇天カメラ / 奈落カメラ) are not started, the game camera follows him through the
+  Abyss drift; the blended instances are drawn after the box (not darkened); the freeze model and the water column step
+  twice in the pass; setSoundVolumeSetting, startDownWipe's _390 test; doLanding's forced jump with no life left
+  (MarioJump.cpp:2294) is not a NonStop game over.
+- Class audit B, first pass (feat/654-rail-mover, #654 / #664 / #671 / #680, 2026-11-18): `docs/class-audit-b.md` is the
+  table (MapObj N to Z, Map, Ride, Gravity: 174 classes with behaviour, 142 static ones), with what was read line by
+  line and what was only checked by its names. **The rail mover** (game.c update_railers, MapPartsRailMover.cpp): its
+  speed is worked out when Move starts (the start, a point passed, an end left) from its current point, the one it
+  passed last going either way (railer_point: BezierRail::getCurrentCtrlPointIndex), point_arg0 kept where a point
+  sets none (a part came back at the speed of the point ahead); point_arg1 eases to it over that many frames
+  (updateAccel: 54 placements); point_arg7 1 makes point_arg0 the frames to the next point (calcMoveSpeedTime:
+  KoopaVS2's 2D steps); a stop lasts both StopAtPoint nerves (2 x point_arg5 + 2 frames, where it passed the point,
+  not on it); closed rails go round (45 placements rode to the last point and back: QuestionBoxMoveStepB,
+  AsteroidMoveA, KoopaVS2's square steps); restartAtEnd after the end's stop (MoveStopType 2 jumped first, 3 killed
+  first); MoveConditionType 1 waits at each end for Mario to step off and on again (reachedEndPlayerOn);
+  SignMotionType 1: MoveStart's 50 frames of shake; RailInitPosType: the rail's place nearest to the placement
+  (railer_init; the port started every part at its rail's start). Two arena arrays more a scene (row_rstep,
+  row_racc: 6 B a row). slice.py: point_arg7 and path_arg4 folded into the points' arg5 word (rail_arg5),
+  SignMotionType in the map part's packed word (bits 26-28): older packs read as before (no sign, no time, the
+  nearest place). XF=-DRAILER_LOG prints a part's coordinate, speed and nerve bits every 20 frames. Left: the rail
+  rotator (MapPartsRailRotator), the collision shaking with the model in MoveStart, GeneralMapParts' own sign
+  motions. **SpaceMine** turns a degree a frame, rides its rail (22 placements stood still), is blown up by a star
+  piece shot, by invincible Mario and (arg1 set) by the ground, and pushes Mario when he does not take its attack;
+  **NeedlePlant** shaken by a shot, killed by invincible Mario; **PomponPlant** swung by a shot;
+  **QuarterRollGravityRoomArrow** (statics.inc st_qrarrow) was drawn still: its RollGravityA / B (Reverse) clips on
+  SW_A / SW_B (slice.py SKINNED_OBJ); **StarPieceFlow** rides its closed rail's last part (all 28 are closed: the
+  pieces jumped from the last point to the first); **SpiderCoin**'s Touch (it turns), rub and TouchAndApart (the
+  pointer back on it within 30 frames) free the coin, not only A; a hip drop that lands on a **PunchBox** breaks it
+  (_8C is set by Mario's ACTMES_FLOOR_TOUCH: the port said never); **SimpleBreakableObj**: nothing while its SW_A is
+  off (SandUpDownTowerBreakableWallB), IcicleRock and the walls not broken by a hip drop. Run in PCSX2
+  (XF=-DRAILER_LOG): PhantomGalaxy 1 (three AsteroidMoveA apart on their closed rail), IceVolcanoGalaxy 1 (the
+  IceLavaIsland steps: stops of 62 frames, the ends), BattleShipGalaxy 1 (UFOStrongA's ease 0 to 1, a closed rail).
+  Not run in PCSX2: the mines' rails and shots, the arrow, the flows, SpiderCoin, the hip drop on a PunchBox, the
+  packs' new bits (D:/smg-ps2-wt/unverified-2026-11-18.md). Issues written: #665 SandUpDownEffectObj, #666 SnowMan, #667
+  SandCapsulePressGround, #668 Tsukidashikun's clips, #669 effects never spelled, #672 StarPieceGroup's time limit and
+  switches, #677 CoinGroup's time limit, #680 PunchBox's other attacks, #681 WaterLeakPipe's Freeze, #683 the chip
+  treasure boxes, #684 the Ride classes' marks.
+- CollisionArea (feat/638-areas-named-nowhere, #656, 2026-11-18, agent areas2): 163 placed in 29 stage archives (20
+  galaxies), its rows were not in the packs. `update_collision_areas` (CollisionArea::movement, keep_effects) and
+  `col_area_hit` (hitCheck): Mario's centre against the centre origin box by a radius (arg2: 50 in 20 of them, else
+  his hit radius 60, 100 as Teresa); hit, MR::pushPlayerFromArea (Mario::push, `s350`): from inside along the nearest
+  face by the radius and his depth (_40), from outside to the radius off the face's or edge's point when that goes
+  along the normal. A vanished Teresa Mario passes (arg1 -1: _58, 5 more of radius until he is out). The corner
+  region measures from the corner without the box's centre, as Petari does (it hits only by the world's origin).
+  col_areas: the rows in MEM_SCENE (2 bytes an area). ponytail: AreaPolygon (arg3 not 0, 118 of them: the nearest
+  face's two triangles, 10 out, as a DynamicCollisionObj: a wall for his binder, the camera and the other actors) is
+  not ported, the push alone holds him; addVelocityFromArea's _EA4 and rush hosts but a launch star and the Tamakoro
+  not checked. None follows an object (Obj_ID -1 in all). The put test takes its class from host:put.txt
+  (-DPUT_FILE: one ELF, a class a run; Mario put PUT_UP along the row's own up).
+  Tests of the four notes (#638, #639, #655, #656; one PR), plain with `XF="-DPACKS_OVERLAY=<overlay> -DPUT_TEST=HazeCube
+  -DPUT_FILE -DPUT_UP=100 -DPUT_NOCAM -DPUT_HOLD"` and the class in out/put.txt: KoopaBattleVs2Galaxy/1
+  DarkMatterCylinder "dark matter 1" (he lives: only the cube kills him) and PlaneCollisionCube "plane col 1";
+  HoneyBeeKingdomGalaxy/1 BeeWallShortDistAreaCube "bee short 1", and there "wall shade: row 114 cyl 1 ... dist 201"
+  (the ExtraWallCheckCylinder's face found, _208 eased to it); PhantomGalaxy/1 GlaringLightAreaCylinder "glaring 1";
+  HellProminenceGalaxy/1 HazeCube "haze: on" at 60 fps, CollisionArea "collision area: row 56 count 0 push 227 349
+  242" then count 1 at its face; EggStarGalaxy/2 CollisionArea (a plate of MysteryGravityRoomZone, 0.01 x 0.5 x 0.5:
+  the rails of its corner bridges) "count 0 push 50 0 0". With the overlay's CollisionArea rows: the route test
+  (EggStarGalaxy/1) still gets its star at f 4281, and XF=-DGROOM_TEST=1 (EggStarGalaxy/2, #557) still walks the
+  corner bridge onto the wall (`groom ... ok`, no push on the way). Not seen: SandClockGalaxy/1's ExtraWallCheckArea
+  (the area found, "no face within 1000" from the place Mario was put: the cubes there are 6000 wide), the shade's
+  fan in a picture (a quarter dark at its centre: not told apart in the still), the haze's wobble (a still), the
+  items got through plane_get, Teresa Mario turned back, SE_OJ_RAY_START, Karon / Metbo in the cylinder (no pad, no
+  such enemy there in the test). Memory: _end +7936 B (memcheck against the same tree without them). Repack:
+  slice_all.py (slice.py LOGIC) for AstroDome, BattleShipGalaxy, CannonFleetGalaxy, EggStarGalaxy, FactoryGalaxy,
+  FloaterOtakingGalaxy, HeavenlyBeachGalaxy, HeavensDoorGalaxy, HellProminenceGalaxy, HoneyBeeExGalaxy,
+  HoneyBeeKingdomGalaxy, IceVolcanoGalaxy, KoopaBattleVs1Galaxy, KoopaBattleVs2Galaxy, KoopaBattleVs3Galaxy,
+  KoopaJrShipLV1Galaxy, OceanFloaterLandGalaxy, OceanPhantomCaveGalaxy, OceanRingGalaxy, PhantomGalaxy,
+  ReverseKingdomGalaxy, SandClockGalaxy, TeresaMario2DGalaxy, TransformationExGalaxy; sound.py --pack for
+  OceanPhantomCaveGalaxy and PhantomGalaxy (SE_OJ_RAY_START once GlaringLightAreaCylinder is in their TYPE).
+- HazeCube's heat haze (feat/638-areas-named-nowhere, #655, 2026-11-18, agent areas2): `haze_update` (HeatHazeDirector::movement,
+  Screen/HeatHazeEffect.cpp): with Mario in a HazeCube (9 placed: HellProminenceGalaxy and its zones,
+  FloaterOtakingGalaxy, IceVolcanoGalaxy's IceRingB / VolcanoPlanet, KoopaBattleVs3D) the effect appears, its
+  ShimmerBoard's BTK from 0; out of it it is killed. ponytail (`haze_draw`): the ShimmerBoard (1600 x 900 at 1000
+  before the camera: the whole view) bends the frame behind it by an indirect texture, which the GS has not;
+  render_raster_scroll (#492) shifts the frame's rows instead, with the board's numbers: amplitude 1.625 (the map's
+  swing 84..136 times the indirect matrix's 0.5 x 2^-3 texels), period 120 (the BTK scrolls the map once down),
+  wavelength 216 rows (the map's tile, 400 at 1000, at fovy 45). The cube's distance arg0 (what stands nearer than
+  the board is not bent) unused. Such a scene reserves the target blocks (render_target_reserve: less texture
+  cache).
+- Mario's wall shade (feat/638-areas-named-nowhere, #639, 2026-11-18, agent areas2): ExtraWallCheckArea (8: SandTowerZone,
+  WallClimbEX A / B / C) and ExtraWallCheckCylinder (1: HoneyQueenZone), all arg0 1000. `wall_shade_calc`
+  (MarioActor::calcViewWallShadowModel, each frame in keep_effects): from his centre along the cube's Z, or towards
+  the cylinder's axis (calcCylinderToCenter), arg0 far, the first face of the map (map_line); _208 follows its
+  distance (0.9 / 0.1), out of the area it grows 10 a frame to 1000 along the last area's line;
+  updateRandomTexture(_208): the two 8 x 8 masks in turn, a texel up 4 with the chance 1 - _208 / 1000, else down 1.
+  `wall_shade_draw` (drawWallShade, after his shadow): a fan of radius 100 on that face, black, alpha 128 at the
+  centre to 1 at the rim, times the mask. Not on a bee's wall. ponytail: the mask as its mean (no grain), drawn 3
+  before the face with the usual depth test (GX: 5 behind it, GX_GREATER); the silhouette of his simple model
+  flattened on the wall (viewCalcRef(3)) not drawn; _A08 & 2 (the glass floors' reflection) not in the port.
+- Four areas named nowhere (feat/638-areas-named-nowhere, #638, 2026-11-18, agent areas2): PlaneCollisionCube (14 placed;
+  Mario::updateCubeCode's _10._6 `m_plane_col`: MarioActor::attackOrPushSensor's else branch, `plane_get` in
+  `collect`: a coin / purple coin / star piece out of his reach is got when, flattened along the camera's Z, it is
+  within 250 of his depth and on his cylinder), BeeWallShortDistAreaCube (4; updateBeeStickMode's cancel radius
+  mBeeWallWalkCancelRadiusShort 300 inside: the comment said it was placed nowhere), GlaringLightAreaCylinder (24;
+  `in_glaring_light`: valid by its SW_A, as teresa.inc's ascension asked already of rows that were not in the packs;
+  Teresa Mario turned back inside, MarioCollision.cpp:2269; `update_glaring_lights`: SE_OJ_RAY_START when the SW_A
+  comes on), DarkMatterCylinder (2, KoopaBattleVs2Galaxy; MR::isInDarkMatter `in_dark_matter`, the cube or the
+  cylinder, kills Karon and Metbo: Mario asks only for the cube). area_obj_x(cls, p, sw_a); area_obj's class cache
+  40 -> 48. Placed in no stage (every info file of every archive read), nothing ported: ShadeCube, RaceJudgeCube,
+  CameraRepulsiveSphere / Cylinder, SunLightArea, PipeModeCube, NinForceWindCube, NinAbyssCube, BigBubbleGoalArea,
+  WarpCube, BindEndCube, OnimasuCube. Still unnamed of AreaObjContainer's table: ViewGroupCtrlCube (624 placed:
+  ViewGroupCtrl's far clip level 0 and forced LOD for the actors of its ViewGroupId, which the packs' rows do not
+  carry) and the guidance cubes (Wii controls).
+- LavaJamboSunPlanet (feat/704-lava-jambo-sun, #704, 2026-11-18): MapObj/LavaJamboSunPlanet.cpp in
+  `engine/src/lava_jambo_sun.inc` (ljs_*): HellShellZone's sun on its rail (HellProminenceGalaxy). Wait (SW_A on:
+  Move), Pause (SW_B on: Move), Move (the current rail point's arg0 x 0.1 a frame, SE_AT_LV_JUMBO_SUN_MOVE; the
+  point's arg1 1: Pause; the goal: Wait). Test: plain `XF=-DLJS_TEST`, HellProminenceGalaxy/1 (its SW_A on at frame 1000): in PCSX2 it leaves Wait and moves down its rail at its points' 0.6 .. 0.8 a frame (the Pause at a point's arg1 and its sound's log line were not seen in the run). ponytail: no bloom model, no LodCtrl. Cost:
+  about 0.9 KB of the ELF (nm ljs_*, one 56 B state); memcheck on a plain build of main with the six classes of this batch: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB. **Release: sound.py --pack HellProminenceGalaxy** (SE_AT_LV_JUMBO_SUN_MOVE was cut).
+- Sound packs: the classes made by plain create functions (fix/sfxcut-create-functions, #698, 2026-11-18):
+  tools/sfxcut.py create_classes took a placement's class from the template argument of its create function; 44 of
+  the 47 placements made by a plain function (KoopaFunction::createKoopaVs1 / 2 / 3, MR::createDinoPackunVs1 / Vs2,
+  createBossKameck1 / 2, createTripodBoss / createTripod2Boss, createExterminationPowerStar / KeySwitch, the
+  SuperSpinDrivers, the coins, TamakoroWithTutorial, the Kameck beams, BigBubbleGenerator...) got no class, so
+  sound.py's scenario_keep dropped every SE only their class names where the placed name starts no file's name:
+  the whole Koopa fight in KoopaBattleVs1 / Vs2 / Vs3Galaxy (31 SE ids answered `se?` in a KP_TEST run of Vs3:
+  SE_BM_KOOPA_*, SE_BV_KOOPA_*, SE_OJ_KOOPA_FIRE_EXPLODE...), DinoPackunVs2's battle files, BossKameck2, Tripod2Boss.
+  code_index now reads each plain function's body (the class of its `return new X`) and create_classes maps the
+  placement to it (selftest: KoopaVs3 -> Koopa, DinoPackunVs2 -> DinoPackun, Tripod2Boss -> TripodBoss, BossKameck2
+  -> BossKameck). tools/sndgaps.py: SE_OJ_TSPIDER_COCOON_BOUND is never played (TombSpiderActionCocoon plays it for
+  a sender that is no ATYPE_SPRING_ATTACKER; SlingShooter's attack sensor, that type, is the only sender);
+  docs/sound-gaps.md regenerated (727 placement names with sound calls, 1482 SE names, 99 not in the port; none of a
+  class under src/Game/Boss; new rows outside the bosses: Coin / PurpleCoin). With the rule every boss scenario of
+  out/packs keeps all the SE names of its boss's files. PCSX2: KoopaBattleVs3Galaxy/1 with its sound.bin packed by
+  this rule into an overlay (XF="-DKP_TEST -DSE_LOG -DPACKS_OVERLAY=wt-seboss"): no `se?` line left in the fight up
+  to Lv3 (31 ids before), `se+ 00040174` / `se+ 000501fe` for the stairs' meteors. Its price: 639 SEs for 493 in the
+  same SPU budget, caps x 0.40 (4379 Hz) for x 0.49. **Release: sound.py --pack** every galaxy (the full repack).
+- TrampleStar (feat/702-trample-star, #702, 2026-11-18): MapObj/TrampleStar.cpp in `engine/src/trample_star.inc`
+  (trs_*): the rubber ball of PhantomNestZone (PhantomGalaxy 3; PoyoPoyoPlanetZone's two are in no galaxy). The
+  shared mesh as Petari makes it (the cube divided three times: 486 vertices, 768 faces, the LOD's 192, the
+  overlaps), the bind on its body sensor (the rate his speed in 30 .. 50, the nearest vertex, not while he moves out
+  of it), BindingCapture (10 / 15 frames: the rate on the vertices within 400, x 0.85), BindingShoot (the springs 0.1
+  / 0.2, the jump at the capture vertex's zero crossing, x 1.5 with A, its sounds, Jump2; step 120), his matrix at
+  the capture vertex, the LOD past 5000. Everything in MEM_OBJECTS (about 24 KB of the scene's arena). Its texture:
+  `tools/slice.py` TEX_ONLY TrampleStar. Test: plain `XF=-DTRAMPLE_TEST`, PhantomGalaxy/3: in PCSX2 (overlay pack) the bind, the capture, the shot (he leaves at 26 up), again on each landing, the ball drawn with its texture; its three sounds answer `se?` until the sound pack is cut again. ponytail: drawn unlit
+  (texture x its material colour; no actor light, no Mario shadow stage); the divide's edge lookup is a list, not
+  Petari's check flag table. Cost: about 6.0 KB of the ELF (nm trs_*); its mesh and state, about 24 KB, in MEM_OBJECTS only where one is placed; memcheck on a plain build of main with the six classes of this batch: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB. **Release: slice_all.py PhantomGalaxy + sound.py --pack PhantomGalaxy**
+  (SE_OJ_TRAMPOLINE_LAND_L / BOUND_S / BOUND_L answer `se?`).
+- GravityLightRoad (feat/651-gravity-light-road, #651, 2026-11-18): MapObj/GravityLightRoad.cpp in
+  `engine/src/gravity_light_road.inc` (glr_*): KoopaBattleVs3Galaxy's five beams. Its body sensor (250 at the foot of
+  Mario's centre on the beam's line, 2500 x scale y long) binds him inside its cylinder (390 round the axis): Fall,
+  Draw (SE_PM_GRAV_LIGHT_DRAWN_ST, + 2 a frame along its up to 20, 2 a frame towards the axis, his up turned to -up by
+  0.2), until its SW_A (the SwitchCube at its top) or 1800 frames: endBindAndPlayerForceJump(up x 2), Disappear, kill
+  after 59. State in MEM_OBJECTS. Test: plain `XF=-DGLR_TEST`, KoopaBattleVs3Galaxy/1: bound at once, drawn 20 a
+  frame onto the axis, its switch at the top, Disappear, dead (seen in PCSX2; no log line seen for its SE). ponytail:
+  the pack carries no joint box (the BDL's read offline) and one BRK track a model: Wait.brk / Disappear.brk are not
+  played; the matrix blend is of his up vector. Cost: about 2.8 KB of the ELF (nm glr_*), its state in MEM_OBJECTS; memcheck on a plain build of main with this and the five classes after it: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB. No repack.
+- HipDropMoveObj / HipDropDemoMoveObj (feat/621-hipdrop-move, #621, 2026-11-18): LavaObstacleRockShell,
+  LavaObstacleRockHomeA and ForestObstacleWoodA (one placed each; still models before) as gap classes (GAP_HIPMOVE /
+  GAP_HIPDEMO, update_hipmove): Wait (no clip: Move's first frame held) until Mario's hip drop lands on its collision
+  within 225 of its Switch joint (each model's last joint), Move (the Move clip, StageEffectDataTable's start SE, the
+  moving shake, its registered demo started, the moving SE up to the stop steps, the stop SE and the riddle chime
+  there), Done at the clip's end with its SW_A on. HipDropDemoMoveObj holds Mario (Wait clip) on the Move joint
+  while the demo runs. slice.py: the three models skinned (SKINNED_OBJ: the Move clip, the collision on the Move
+  joint). GapSt has a third vector (u). Test: `XF=-DHIPMOVE_TEST=k` on a plain build (Mario held over the k-th row,
+  a hip drop at frame 900, then the next row). In the test LavaObstacleRockShell's Move was cut short: the drop
+  lands Mario in a SwitchCylinder that starts the zone's own demo, and the rock is not its cast. ponytail: no Move
+  BRK (the Shell's cracks); a rock whose zone streams out in Move does not finish it. **Release: slice_all.py**
+  HellProminenceGalaxy, HoneyBeeKingdomGalaxy **+ sound.py --pack** for them (SE_OJ_LAVA_OB_ROCK_A / S _ON, _MV,
+  _STOP and SE_OJ_FOREST_OBS_WOOD_* answer `se?` until then).
 - Enemy audit, second batch, and Kiraira (feat/689-enemy-audit-2, #689 / #690, PR #693, 2026-11-18): the table is
   `docs/class-audit-enemy.md`. PackunPetit: a fire ball / the rainbow attack punchDown (packun_hit), a shell with the
   scene stop, the stop only for the spin / kick / shell, a failed attack pushes. Unizo: enemy attacks not from a Unizo
@@ -65,6 +358,182 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   SpinHitController's star pieces with SE_OJ_STAR_PIECE_BURST (spin_hit_exec). Test: built plain (EggStarGalaxy/1),
   host tests, the route test, memcheck; NOT run in PCSX2 class by class (D:/smg-ps2-wt/unverified-2026-11-18.md).
   No repack.
+- Per-class tables out of bss, 2 (perf/tables-arena-2, #657, 2026-11-18; the rule: the note of #630 below):
+  SpiderThread's `sth.pt` / `.mp` / `.part` (117 KB; sth_init, from game_init's spider_thread_scene with a TombSpider
+  placed; the small header and the hang table stay in bss, so `sth.on` reads as before), the ring Syati's `sy_rings`
+  (121 KB; `sy_alloc`: a scene with a Syati, the rings' loops skip a NULL table as five dead rings, a TalkSyati has
+  none), the Flags' `st_flags` / `st_flag_pts` (113 KB; `st_flag_alloc`: a StFlag and 100 points a placed Flag, the old
+  maxima on top) and draw_oceanspheres' `keep` (72 KB; `os_keep`, os_init with a sphere placed). sy_init and
+  st_flag_init wait for the first update (the zones' models), where an allocation would go with the next zone swap:
+  their `*_alloc` are called from game_init. memcheck: 434048 B of bss gone (_end 12065664, 124032 B before the region loses a step, the region 19200 KB); route EggStarGalaxy/1 f 4281. Arena at boot: StarDustGalaxy/3
+  (`SpiderThread: ... 1101 points`) 3526 KB, OceanRingGalaxy/1 (Syati 8 rings, Flags) 3090 KB, KoopaBattleVs3Galaxy/1
+  (OceanSphere, FlagKoopaCastle) 4615 KB of 5376 KB. Not driven in PCSX2: the web's battle, a ring pass, the flags
+  seen (boots and the "mem:" lines only).
+- Mario leftovers (feat/675-mario-leftovers, #675, 2026-11-18), from the plan's "Mario statuses not ported":
+  Mario::calcTornadoTilt (MarioSpin.cpp; update_tornado_mario: _54C, TornadoMario's up, eased mTornadoTiltSpeed to his
+  head leaning mTornadoTiltAngle to the pad's direction with the stick on in a tornado, back at mTornadoTiltSpeed /
+  mTornadoTiltOffSpeed; _548 is read nowhere); procHipDrop's homing in a spin hip drop (m_hip_homing,
+  MarioJump.cpp:1880: the map faces within his height of his shadow whose host has auto_efx_bitmap's SHD homing bit:
+  PicketSwitch / Big, StinkBugSmall / Parent, Kabokuri, SurfRay, MagnumKiller, SnowMan, PunchBox, JumpStand,
+  SpinningBox, HipDropRock by ObjNameTable; his jump turned to it; a front, side or back wall ends it); the dive's
+  hard landing slides on (startSlidingTask(8, 5, 0x19): his front x 5 for 25 frames); tryWallPunch's 壁ヒット and
+  _EF6 30. Checked, nothing to port: doCubeWarp (no scenario of the 136 places a WarpCube), bodyClap (the star pieces
+  within 100 of him in a bind: collect() takes them within 120, bind or not), forceStopTornado's _40A (set, read
+  nowhere). Left: the homing's other target, MarioActor::_4A8 (the sensor under him his body sensor met: there is no
+  sensor list, each class tests Mario itself); MarioSearchLight (the jet shell's light: SearchLightCone is not in
+  resident.bin, its draw is a light volume through destination alpha (front faces added, back faces subtracted, a box
+  blended by it), its sensor sweeps 2000 ahead for TeresaWater / the SearchTurtle group); MarioStick. Not run in
+  PCSX2 (no test puts him in these); the route's star frame unchanged.
+- MarioStep seen working (fix/673-mario-step, #673, 2026-11-18): #571's step never started. m_check_step asked
+  m_front_wall_norm(), zero unless the front wall is faced (_8), and at a step the floor on the wall turns _8 off
+  (checkAllWall); Mario::checkStep reads mFrontWallTriangle's normal bare: m_front_tri_n, the triangle as checkAllWall
+  last left it. startStep's _4C8 press test added (calcDistToCeil's face). Test: a plain build XF=-DSTEP_TEST=<k>
+  (game_test_step_input: the collision searched for an upright face with a level floor on it 10 to 48 over the level
+  floor before it; Mario put 150 before the k-th and walked at it). PCSX2, HeavensDoorGalaxy 2 (row 39's step of 26;
+  none found in EggStar 1, BattleShip 2, Factory 1, Phantom 1). Before: _15 / _39 on, the place 26 up, no step: his
+  body's collision pushed him up the edge in 12 frames. After: `step: up 24, 10 frames, walk 0.64` when his centre's
+  ball meets the riser, set on the step, the status 14 frames (_14 from 10 down by his walk speed) while his drawn
+  matrix eases, then he walks on.
+- Koopa Vs3's stair meteors (feat/se-koopa-vs3-meteor, #644, 2026-11-18): KoopaParts::initVs3 makes its
+  KoopaFireStairs with mIsKoopaJr (createFireStairs(true)) and the port flew them as Vs1's (a straight line timed to
+  the break, SE_OJ_KOOPA_FIRE_SHOT). koopa.inc kp_fire_stairs / kp_fire_stairs_update (kpfst.jr): no velocity, each
+  Fly frame at the stair's calcTimeRate ((step - mFireAttackStep) / (mTimeToBreak - mFireAttackStep)) between its
+  start (クッパ階段戦の砲弾出現) and the target plus sin(180 x rate) x 1500 along _AC, its front the way it moved;
+  _AC is (0, 1, 0) turned at each launch about Koopa's front by getRandom(0, 45) or (-45, 0) degrees (the side of
+  the stair's gravity the start-to-stair x start-to-target cross points to) and never reset, as the pool's actor
+  keeps it; SE_BM_KOOPAJR_SHIP_METEORSHOT_F at appear, SE_BM_LV_KOOPAJR_SHIP_METEOR every Fly frame. Vs1's are
+  unchanged. Test: `XF=-DKP_TEST` KoopaBattleVs3Galaxy/1 ("koopa: stairs meteor" lines).
+  PCSX2 (SE_LOG): 20 stairs registered, five meteors (157-191 frames, arcs -20 to 34 degrees), `se? 00040174` every
+  frame once one is within the listener's 5000, the breaks' `se? 000501fe`, the fight on to Lv3 as before. No line
+  for SE_BM_KOOPAJR_SHIP_METEORSHOT_F (launched beyond 5000: se_start drops it before the log); the arc not looked at
+  in a picture. **Release: sound.py --pack** KoopaBattleVs3Galaxy (the two names, and SE_OJ_KOOPA_FIRE_EXPLODE which
+  answers `se?` there too). Memory: about 1 KB (320 bytes of it the pool's state).
+- OtaKing's star pieces' burst sound (feat/se-otaking-burst, #643, 2026-11-18): OtaKing::appearStarPiece plays
+  SE_OJ_STAR_PIECE_BURST on its sound object with the pieces of exeDamage / exePowerUp's first step; game.c launched
+  them silent (ota_se now, as its crown's SE_BM_OTAKING_CROWN_FALL). Test: `build.sh ota` (EggStarGalaxy/3).
+  PCSX2 (SE_LOG): `se+ 00050089` after "ota king: hit 1" and "hit 2", the fight still ends with its star. Its
+  other sound calls compared site by site with OtaKing.cpp / OtaKingMagma.cpp: all made. No repack.
+- DinoPackun's star piece reaction (feat/se-dinopackun-star-piece, #642, 2026-11-18): no star piece reached it
+  (dino.react was never set). game.c dino_shot (update_shots): in a battle its head (270) / body (200) take the piece
+  (Vs1: isMsgStarPieceAttack, Vs2Lv1: isMsgStarPieceReflect) and start DinoPackun::startHitReaction:
+  SE_OJ_STAR_PIECE_HIT_STOP, its AnimScaleController's HitReaction (asc_core with DinoPackunParam 0.1 / 0.91 / 0.2 /
+  1.8 / 0.07 / 0.12 / 0.92) scaling Spine1 and its children (dino_scale_joint: hitScaleJoint's (_C.y, _C.z, _C.x) on
+  joints 21-45), the chase held while isHitReaction(15); the egg's sensor (400) in the egg's battle, the tail's parts
+  (1.25 + sJointRadius) and its ball (135) reflect it. appearStarPiece plays SE_OJ_STAR_PIECE_BURST with its 8
+  pieces. Test: `build.sh dino` with `XF=-DDINO_STAR` (a piece on its body 30 frames into each chase).
+  PCSX2 (EggStarGalaxy/1, SE_LOG): `se+ 00050376`, "dino packun: star piece hit reaction", `se+ 00050089` at each
+  battle's start, the fight still ends with its star. Not looked at in a picture: the Spine1 wobble; not run: Vs2
+  (the reflect), a piece on the egg / tail. Memory: about 1.2 KB of code (estimated). No repack.
+- RandomEffectObj (feat/631-random-effect, #631, 2026-11-18): FireworksA (10 placed) and ShootingStarArea (56) played
+  as steady SimpleEffectObj ambient effects. Now in ambient_effects (amb_once 2 / 3; row_step mStep + 2, row_turn
+  mSeStep + 1): the first emit |repeat(x + y + z, 0, arg1)| frames after its placement (0: never, as Petari), then
+  one every arg0 (600) +- arg1 (180) frames while in Move (no SW_A, or it on); FireworksA's
+  SE_OJ_FIREWORK_SEA_SHOOT at the emit and _EXPLODE 40 frames on. Seen in the log of a plain build with
+  `XF=-DSE_LOG` (StarDustGalaxy 1: its ShootingStarArea rows emit in turn); FireworksA not run (its rows wait for
+  SW_A 17 in OceanRingGalaxy). ponytail: no clipping (far 400, radius 1500), appear()'s new first time. **Release:
+  sound.py --pack** OceanRingGalaxy (the two firework SEs are new in game.c).
+- WaterRoad (feat/567-water-road, #567, 2026-11-18): Map/WaterRoad.cpp in `engine/src/water_road.inc` (wrd_*): the
+  tube of water of OceanRingGalaxy (one placement; its demo ウォーターロード出現デモ[ブッシュポンプ], sheet
+  WaterRoadAppear, starts on SW 1003, the ValveSwitch of scenarios 3 and 6). A demo cast, dead until the sheet's
+  appear (dx_cast_hook): SW_A on, DemoStart (SE_OJ_LV_WATER_ROAD_APPEAR, SE_AT_LV_EARTHQUAKE through part 0),
+  DemoGrowUp (the Top effect, SE_OJ_WATER_ROAD_GROW_START, a strong shake and rumble, the rail coord eased out over
+  part 1 with SE_OJ_LV_WATER_ROAD_GROW, the part's camera on its tip), the End effect and DemoWaitEnd, Wait. The bind
+  on its Binder sensor (its radius 500 at the rail's nearest place to Mario, not under 300 above the rail's start;
+  mode_rush), its バインド中 camera on the player, RideStart (WaterRoadIn, SE_OJ_WATER_ROAD_BIND_IN) / RideWait
+  (SwimFlutter) / RideSpin (a swing: SwimSpin, SE_PM_TORNADE_IN_WATER_ST, SE_PM_LV_TORNADE_IN_WATER, + 50 for 30
+  frames), the speed x 0.99 within 100 .. 150, SE_OJ_LV_WATER_ROAD_BIND, Mario's matrix up the rail; at the goal
+  SE_OJ_WATER_ROAD_BIND_END, SE_PV_JUMP_M, endBindAndPlayerJump(0), Disappear (alpha to 0 over 30, kill).
+  SE_AT_LV_WATER_ROAD at the rail's nearest place to the camera. WaterRoadModelInfo: the high and low models' line
+  points as Petari makes them (a ring where the rail's direction left the last by 0.998 / 0.99, tested every 100),
+  u 0.05 a loop point and v the coord x 0.0001, the low one past 10000 of its box, drawn up to the rail coord while
+  it grows. `tools/jpa.py` NAMED WaterRoad (Top, End). Test: plain `XF=-DWATERROAD_TEST` in OceanRingGalaxy/3 (the
+  demo's switch on at frame 1000, Mario put in its foot 120 frames after it waits, a swing 60 frames into the ride).
+  ponytail: a line point keeps its rail place and axes (40 B, MEM_OBJECTS), the 12 loop points are made at the draw;
+  the water as OceanRing's (ocean_ring.inc or_mesh: Water.bti's two stages one sample scrolled as stage 0, the
+  screen term C1 55 96 BE as the frame less 1 - C1), no indirect warp, no EnvMap.bti stage, no R8_EQ stage; its box
+  from the rail's polyline; the rail is the pack's polyline (15 points: both models get 15 rings; Petari's Bezier turns all along). In PCSX2 (overlay
+  packs): the demo, the growth under its camera with Top, End, the ride, the spin, the jump out, Disappear; `se+` for
+  GROW, BIND, BIND_END, EARTHQUAKE, AT_LV_WATER_ROAD, TORNADE, JUMP_M once the sound pack was cut again (`se?`
+  before); no log line seen for APPEAR, GROW_START and BIND_IN. Route test: star got. Cost: about 8 KB of the ELF
+  (nm wrd_*; the line points, 2 x 15 x 40 B, in MEM_OBJECTS); memcheck after it: 36864 B left before the packs'
+  region loses 256 KB. **Release: slice_all.py resident.bin + resident_luigi.bin** (its two effects, +5 KB) **and
+  sound.py --pack OceanRingGalaxy** (its SEs).
+- Class audit A, MapObj/ A-M (fix/645-audit-a-small, #645 / PR #670, 2026-11-18, agent audit-a): every placed class of
+  `src/Game/MapObj/[A-M]*.cpp` read against the port, the table in `docs/class-audit-a.md` (102 classes: 67 ok, 12
+  fixed here, 23 in issues #646-#653). Fixed, all read from Petari and **not run in PCSX2**: DeadLeaves (update_givers:
+  every spin sets Spin: the Spin clip, SE_OJ_LEAVES_SWING, the pieces' SE_OJ_STAR_PIECE_BURST; the item once, dsinit
+  bit 1); Candlestand (update_candles: SE_OJ_FIRE_STAND_IGNIT, SE_OJ_LV_PHANTOM_TOACH_BURN through Fire / Burn / Attack,
+  SE_OJ_PHANTOM_TOACH_OFF, the Attack nerve of 30 frames after a burn (row_turn 6), the burn within 50 x scale, the
+  Flicker's Extinguish and TeresaMansion's Extinguish02 (fx_named: jpa.py NAMED_ONLY), offSwitchA and the item at
+  Extinguish's step 15, the item 220 up the world's y and the coin turned -5 degrees for TeresaMansion); LavaSteam
+  (SW_A only starts it: a later Wait is row_turn 4; the Sign effect shrunk from step 82); LavaStrangeRock (the break
+  SEs' fall-through S + L + M, the hit point Mario's centre); DesertMovingLand (DesertMovingLandSmall run too,
+  SE_OJ_LV_DESERT_LAND_SIGN); DesertLandMoveSwitch (no timer SE with Mario dead / the star get demo); the placed
+  KeySwitch (SE_OJ_KEY_SWITCH_GET, SE_SY_READ_RIDDLE_S, Get), the placed 1-up / life mushroom (Get / GetLifeUp,
+  SE_SY_1UP); MiniatureGalaxy (SE_SY_KOOPA_LAUGH at Open's step 150 for a grand star's galaxy); HeavensDoorDemoObj
+  (Vanish's tryStageEffectStart / Stop: SE_OJ_HD_INSIDE_CAGE_BREAK, SE_OJ_HD_INSIDE_SUN_OFF); LargeChain (the fixed
+  points' own Break + SE). One sub-audit claim was false and is noted in the table (ClipFieldSwitch's margin: Petari's
+  shapes ignore it). **Release: slice_all.py for the galaxies with DeadLeaves / DesertMovingLandSmall (slice.py
+  SKINNED_OBJ: their Spin / Vibration clips) and jpa for TeresaMansionCandlestand / CandlestandIceVolcano (NAMED_ONLY
+  Extinguish02 / Extinguish): covered by the full repack**; until then the clips and those two effects do not show,
+  the rest works on the old packs.
+- SwingRope (feat/568-swing-rope, #568, 2026-11-18): Ride/SwingRope.cpp and SledRopePoint.cpp in
+  `engine/src/swing_rope.inc` (swr_*): the vine of HeavenlyBeachZone (one placement, scale y 14: 28 points). Its
+  nerves Stop / Free / FreeInvalid / BindSlideDownStart / BindSlideDown / BindStretch / BindLoose with Petari's
+  constants (gravity 1, frictions 0.8 .. 0.92 free and 0.7 .. 0.8 bound, the hang point's 0.995, its gravity 0.8 /
+  0.6 and stick 0.5 / 0.8, the slack's 5 / 1, the slide 0.5 a frame to 10 between 100 and length - 200), the bind on
+  its binder sensor (200 at the foot of Mario's place on the rope's line; not on the ground, not swimming, Stop /
+  Free only; SE_PV_CATCH, SE_PM_GRAB_OBJ, its actor camera, mode_rush), the SledRopePoint's binder (50) and its 0.7
+  rebound off the map, Mario's matrix the hang point's, the upper points loose or laid straight (eased over 10), the
+  lower ones from his FootL joint, tryJump (25 .. 50 along the gravity, at most 35 across it, the stick x 5 under 5;
+  SwingRopeSpin, SE_PV_JUMP_S, SE_PM_JUMP_M), its clips (SwingRopeSlideDownStart / SlideDown / Accel / SwingWait /
+  Wait), SE_OJ_LV_ROPE_SWING_WIND_1 and SE_OJ_ROPE_CREAK_H, its ride sensor's items (150), its shadow (50), its
+  three strips (30 / 40 wide, v 0.13 a point) with SwingRope.bti: `tools/slice.py` TEX_ONLY (the texture comes in the
+  galaxy's own pack as an empty model's, not in the effects' textures: no cost outside HeavenlyBeachGalaxy).
+  As Petari: mAccelTime is not cleared by a bind, so a grab after a jump made with the stick held plays
+  SwingRopeWait over SwingRopeSlideDownStart. Test: plain `XF=-DSWINGROPE_TEST` (=2: the camera on the rope from its
+  side; `-DSWR_TEST_A=1500`: a long ride) in HeavenlyBeachGalaxy/1: Mario dropped by the rope, the stick from 200
+  frames, A at 500, again after each jump. ponytail: one SwingRope a scene; the binder is one push out of the faces
+  met, not Binder::bind's stepped move; the wind's level parameter is not passed (se_level has none); no RushCancel
+  (the port's binds have none). Cost: about 12 KB of the ELF (nm: 9.8 KB of swr_* code, 2.2 KB of state; memcheck after it: 76416 B left before the packs' region loses 256 KB). **Release: slice_all.py HeavenlyBeachGalaxy** (the texture; until
+  then the rope works and is not drawn).
+- NPC demo sounds (feat/620-npc-demo-sounds, #620, 2026-11-18): the Gateway's spin demo and Kinopio. gw_update:
+  TicoDemoGetPower::exeDemo's sounds on the baby Luma by the demo's part steps (デモ3: SE_SM_TICO_OP_APPEAR 110, _END
+  140, SE_SV_TICO_OP_APPEAR 180; デモ4: SE_SM_LV_TICO_WAIT to 65, SE_SM_TICO_FLASH_SPIN 72, _FLASH_LIGHT 170,
+  SE_SM_TICO_FUSION 255, SE_PV_POWER_STAR_GET 420); ro_update: RosettaDemoHeavensDoor1::exeDemo's (デモ3:
+  SE_SV_ROSETTA_SWING 70, SE_SM_ROSETTA_OP_SWING 80; SE_SM_LV_TICO_OP_WAIT through 会話1 .. 4, デモ1 .. 5 and デモ6's
+  first 10 steps, then SE_SM_LV_ROSETTA_OP_HIDE). Kinopio (kinopio_nerve, from update_npc_turn): its Escape nerve (a
+  Kinopio that reads an appear switch with arg4 0: its Escape action once, SE_SV_KINOPIO_PUHA, SE_SM_NPC_FLY_OUT) and
+  its power star mode (arg2 8: StarWait's MBGM_KINOPIO_TANKEN_B at its first talk, its eventFunc the TakeOutStar, then
+  startLastStageBGM unless in FishTunnelGalaxy; kino_took lets its star out, slice.py declares it and gives it the
+  PStar model). The star was shown from the start before (no declarer). Not ported: Kinopio's Appear nerve (arg4 not
+  0: the fall to the ground, the NPCs have no binder), Caretaker's BGM calls (BGM_MINIGAME_START, MBGM_RACE_01: its
+  tidy-up mission CareTaker.cpp:113-546 is not ported); "Penguin's turtle jet sounds" are JetTurtle's (SE_OJ_ /
+  SE_SY_GET_TURTLE_JET: on main since #608), TalkBalloon's volume on main since #597. Test: `talk` with
+  XF=-DTALK_CLS=3 on FishTunnelGalaxy/1 (the Kinopio appears: Escape, the talk, the BGM, TakeOutStar, "its star
+  out"); `gateway` for the spin demo. **Release: slice_all.py FishTunnelGalaxy, HoneyBeeKingdomGalaxy** (the declarer
+  and PStar of the two arg2 8 Kinopios).
+- NPC reactions run (verify/npc-react, #619, 2026-11-18): what #604 / #615 merged without a run. `talk` with
+  XF="-DTALK_CLS=0 -DREACT_TEST" picks an NPC of npc_reaction's classes by name (PenguinCoach, Penguin, Caretaker,
+  HoneyBee, a Kinopio with its body sensor, Rabbit: the first of that order with one shown), so one ELF runs every
+  galaxy through out/boot.txt. Seen in PCSX2, each with its four reaction lines (trampled, spun, pointed, star piece)
+  and its SE lines (`se?` for the voices the packs lack until the repack): Rabbit (HeavenlyBeachGalaxy/1), HoneyBee
+  (HoneyBeeKingdomGalaxy/1), Caretaker (FactoryGalaxy/1), Kinopio (BeltConveyerExGalaxy/1), Penguin
+  (OceanRingGalaxy/1); PenguinCoach (HeavenlyBeachGalaxy/1) pointed and star piece only (his talk opens with Mario
+  before him and holds Mario through the test's drop and spin); the Gateway rabbits' hop (SE_SM_RABBIT_JUMP each Run loop,
+  `gateway` with XF=-DSE_LOG). Nothing to fix in the engine.
+- Per-class tables out of bss, 1 (perf/tables-arena-1, #630, 2026-11-18): the ELF reserved every class's worst-case
+  table in every galaxy. `creepers` (128 KB), `vines` (120 KB), `bridges` (96 KB) and CocoSambo's heads (96 KB, the
+  function static of update_sambos, now `sambo_heads`) are pointers filled by game.c `row_table(class, max, size)`:
+  from the arena, one entry a row the scene places (at most the old maximum), NULL where it places none (the count
+  stays 0, nothing reads the table). The rule for the next ones: allocate only from game_init (what it allocates lies
+  under main.c's base_mark: a zone swap keeps it; scene_switch releases the arena to boot_mark and clears .gamebss, so
+  the pointer is NULL again and game_init fills it again); a table whose init waits for the first update needs its
+  allocation called from game_init. memcheck: _end -366208 B against the 11:50 baseline (which main had passed by
+  about 78 KB: 440 KB of tables gone), 251904 B left before the region loses a step, the region one step up
+  (18688 KB). Arena at boot: HoneyBeeKingdomGalaxy/1 (2 Creepers, Plants) 3409 KB, EggStarGalaxy/3 (bridge,
+  CocoSambo) 3602 KB of 5376 KB. The sambos and the bridge were not driven in PCSX2 (their zones not reached at
+  boot); route EggStarGalaxy/1 as before.
 - Enemies on AreaMove / RailMove floors (feat/611-area-move-walkers, #611, 2026-11-18):
   MR::calcVelocityAreaOrRailMoveOnGround as game.c area_rail_vel (an AreaMove floor, code 28: MR::calcAreaMoveVelocity,
   the AreaMoveSphere holding the place: its up less the part towards its centre x arg0 (10); a RailMove floor, 27: the
