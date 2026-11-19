@@ -46823,6 +46823,9 @@ static void put_test(void)
             if (sc->objs[i].sw[SW_A] == PUT_SW_B_OF && sc->objs[i].sw[SW_B] >= 0) sw_set(&sc->objs[i], SW_B, 1);
 #endif
     }
+#ifdef PUT_HOLD /* -DPUT_HOLD: held where he was put (an area he would fall out of) */
+    { static V3 at; if (t == PUT_AT) at = mario->pos; else if (row >= 0 && t > PUT_AT) mario->pos = at; }
+#endif
     if (row >= 0 && t % 60 == 0) {
         const Inst *in = NULL;
         for (int i = 0; i < ninsts; i++) if (insts[i].row == row) { in = &insts[i]; break; }
@@ -48491,6 +48494,9 @@ static void update_quake(void)
         if (step == 120) { camera_shake_stop(&nrv); next = in ? 1 : 0; }
         break;
     }
+#ifdef PUT_TEST
+    if (next >= 0) printf("quake: nerve %d -> %d at step %d" "\n", nrv, next, step);
+#endif
     if (next >= 0) { nrv = next; step = 0; } else step++;
 }
 
