@@ -1550,6 +1550,7 @@ static int luigi_took(int row);                    /* his star taken out (TakeOu
 static int coach_took(int row);                    /* PenguinCoach: its TakeOutStar over */
 static int race_took(int row);                     /* TeresaRacer / PenguinRacerLeader: its TakeOutStar over (race.inc) */
 static int pg_branch(int k, u32 v), pg_event(int k, u32 v); /* PenguinCoach / PenguinStudent talk */
+static int kino_took(int row), kino_event(int k, u32 v); /* Kinopio's power star mode: its TakeOutStar over, its eventFunc */
 static int luigi_scenario(char *stage, int n);    /* the current stage, its scenario */
 /* Skinned placed models (slice.py SKINNED_OBJ): a pool of poses kept by row across rebinds, the class's "wait" clip
  * (else its first) looping unless its behaviour plays another (obj_play). ponytail: 40 at once (instances and walkers), the rest drawn in
@@ -13289,6 +13290,7 @@ static void update_talkers(void)
             if (in->talkcls == 5) t->branch = butler_branch;
             if (in->talkcls == 12) { t->branch = pg_branch; t->event = pg_event; } /* PenguinCoach / PenguinStudent::init: registerBranchFunc / EventFunc */
             if (in->talkcls == 6) { t->event = luigi_event; t->branch = luigi_branch; } /* LuigiNPC::init: registerBranchFunc / EventFunc */
+            if (in->talkcls == 3 && !strcmp(sc->types + 32 * sc->objs[in->row].type, "Kinopio")) t->event = kino_event; /* Kinopio::init: registerEventFunc */
             if (in->talkcls == 3 && sc->objs[in->row].arg[1] == 2 && !strcmp(sc->types + 32 * sc->objs[in->row].type, "KinopioAstro")) {
                 t->event = kast_event; /* KinopioAstro::init: the messenger's eventFunc */
                 kast_peach = gd_any_left_supply() ? 1 + gd_luigi_left_supply() : 0; /* mPeachLetter made (_194), mIsPlayerLuigi */
@@ -44552,7 +44554,7 @@ static V3 star_pos(const Inst *in, int *state)
             *state = row_dead[w - 1];
             return vadd(from, v3(0.0f, 100.0f, 0.0f));
         }
-        if ((!row_dead[w - 1] && !st_star_out(w - 1) && !tbox_star_out(w - 1) && !flip_star_out(w - 1) && !coach_took(w - 1) && !race_took(w - 1) && !sy_took(w - 1)) || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
+        if ((!row_dead[w - 1] && !st_star_out(w - 1) && !tbox_star_out(w - 1) && !flip_star_out(w - 1) && !coach_took(w - 1) && !kino_took(w - 1) && !race_took(w - 1) && !sy_took(w - 1)) || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
                                                                                                        * here: no star) */
     } else if (got_coins < 100 && got_purple < 100) { /* ScenePlayingResult: 100 coins, or 100 purple coins */
         *state = 0;
@@ -48121,6 +48123,53 @@ static int coach_takeout(Inst *in) /* 1 while its TakeOutStar runs (exeAnim) */
     if (g->st > 1 && in->anim && in->anim->done) { tos_kill(); g->i = 1; g->n = 0; sw_changed = 1; printf("penguin coach row %d: its star out%c", in->row, 10); }
     return 1;
 }
+/* Kinopio's Escape nerve and its power star mode (Kinopio.cpp). Escape (:204-222, :418-430): a Kinopio that reads an
+ * appear switch, mBehavior (arg2) not 4 and mAppearBehavior (arg4) 0, starts in it when it appears: its Escape action
+ * once, SE_SV_KINOPIO_PUHA and SE_SM_NPC_FLY_OUT, then its nerve below. mIsSpawnPowerStarMode (mBehavior 8): StarWait
+ * (:450-456) is Wait plus MBGM_KINOPIO_TANKEN_B at its first talk (_185); its eventFunc (:660-673, any value) the
+ * TakeOutStar (NPCUtil.cpp:645-698: its TakeOutStar action and the star model's, the star's level SE past
+ * sStarAppearSeStep 103, the star out at the action's end), then startLastStageBGM unless in FishTunnelGalaxy.
+ * GapSt: n 1 Escape, 2 its wait, 3 TakeOutStar; i its star out; f _185.
+ * ponytail: the Appear nerve (mAppearBehavior not 0: its Change action falling to the ground, :392-416) not ported:
+ * the NPCs here have no binder */
+static int kino_star(const Row *r) { return r->arg[2] == 8; }
+static int kino_took(int row) { return !strcmp(sc->types + 32 * sc->objs[row].type, "Kinopio") && kino_star(&sc->objs[row]) && gap_st(row)->i; }
+static int kino_event(int k, u32 v)
+{
+    int row = talkers[k].row;
+    (void)v;
+    if (row < 0 || !kino_star(&sc->objs[row])) return 1;
+    GapSt *g = gap_st(row);
+    if (g->i == 1) { g->i = 2; if (!on_stage("FishTunnelGalaxy")) bgm_return(); } /* takeOut() over */
+    if (g->i) return 1;
+    if (g->n != 3) { g->n = 3; g->st = 0; printf("kinopio row %d: TakeOutStar%c", row, 10); }
+    return 0;
+}
+static int kinopio_nerve(Inst *in, int talking) /* 1 while Escape / TakeOutStar hold it */
+{
+    const Row *r = &sc->objs[in->row];
+    GapSt *g = gap_st(in->row);
+    if (!g->n) g->n = r->sw[SW_APPEAR] >= 0 && r->arg[2] != 4 && r->arg[4] == 0 ? 1 : 2, g->st = 0;
+    if (g->n == 1) { /* exeEscape */
+        if (!g->st++) {
+            obj_play(in, "escape", 0, 0);
+            se_start(SE_SV_KINOPIO_PUHA, &in->m[12]); se_start(SE_SM_NPC_FLY_OUT, &in->m[12]);
+            printf("kinopio row %d: Escape%c", in->row, 10);
+        } else if (!in->anim || in->anim->done) g->n = 2; /* isAnyAnimOneTimeAndStopped: popNerve */
+        return g->n == 1;
+    }
+    if (g->n == 3) { /* TakeOutStar::exeAnim */
+        if (!g->st++) { obj_play(in, "takeoutstar", 0, 0); tos_appear(in->row, "TakeOutStar"); }
+        if (g->st > 104) {
+            V3 c = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(in->nu, 200.0f));
+            in->lv[0] = se_level(in_water(c, in->nu, NULL) ? SE_OJ_LV_POW_STAR_EXIST_W : SE_OJ_LV_POW_STAR_EXIST, &c.x, in->lv[0]);
+        }
+        if (g->st > 1 && in->anim && in->anim->done) { tos_kill(); g->i = 1; g->n = 2; sw_changed = 1; printf("kinopio row %d: its star out%c", in->row, 10); }
+        return g->n == 3;
+    }
+    if (kino_star(r) && talking && g->f == 0.0f) { g->f = 1.0f; bgm_start("MBGM_KINOPIO_TANKEN_B"); } /* exeStarWait */
+    return 0;
+}
 static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction / tryStartTurnAction */
 {
     FOR_KIND(i, npc) {
@@ -48136,6 +48185,7 @@ static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction /
         float d = vlen(to);
         to = d > 1e-6f ? vmul(to, 1.0f / d) : in->nf;
         int talking = td.st >= 0 && talkers[td.st].row == in->row && (td.nrv == TD_TALK || td.nrv == TD_SLCT || td.nrv == TD_NEXT);
+        if (in->talkcls == 3 && !strcmp(sc->types + 32 * sc->objs[in->row].type, "Kinopio") && kinopio_nerve(in, talking)) continue; /* Escape, TakeOutStar */
         NpcTurn mt;
         npc_mode(t, &sc->objs[in->row], &mt);
         t = &mt;
@@ -52529,9 +52579,22 @@ static void ro_update(void)
     case RO_FADE:
         if (st == 90) { gw.halo_on = 0; gw.ro_nrv = RO_DEMO; gw.ro_step = -1; gw_demo(GP_SPIN1); }
         break;
-    case RO_DEMO:
+    case RO_DEMO: {
         if (gw_first(GP_SPIN6)) gw.dome_on = 2; /* deleteEffect Light */
+        /* RosettaDemoHeavensDoor1::exeDemo's sounds (RosettaDemoHeavensDoor.cpp:115-144): her swing in デモ3, the
+         * Luma's wait through 会話1 .. 4 and デモ1 .. 5 (GP_SPIN1 .. GP_SPINT4 in the sheet's order) and デモ6's
+         * first sRosettaHideFrame 10 steps, then her hide */
+        static u32 lw, lh;
+        Inst *in = gw_inst(gw.rosetta);
+        const float *at = in ? &in->m[12] : &sc->objs[gw.rosetta].pos[0];
+        int s3 = gw_step(GP_SPIN3), s6 = gw_step(GP_SPIN6), wait = s6 >= 0 && s6 < 10;
+        if (s3 == 70) se_start(SE_SV_ROSETTA_SWING, at);    /* sRosettaSwingVoiceFrame */
+        if (s3 == 80) se_start(SE_SM_ROSETTA_OP_SWING, at); /* sRosettaSwingFrame */
+        for (int p = GP_SPIN1; p <= GP_SPINT4 && !wait; p++) wait = gw_part_on(p);
+        if (wait) lw = se_level(SE_SM_LV_TICO_OP_WAIT, at, lw);
+        if (s6 >= 10) lh = se_level(SE_SM_LV_ROSETTA_OP_HIDE, at, lh);
         break;
+    }
     }
 }
 
@@ -52701,6 +52764,21 @@ static void gw_update(void)
     ro_update();
     if (gw.baby >= 0 && gw_step(GP_SPIN4) == 10) bgm_sub("BGM_STAR_POW_GET"); /* sFanfareFrame */
     if (gw.baby >= 0 && gw_first(GP_SPIN5)) { printf("gateway: the spin explained (explainEnableToSpin)\n"); io_entry(IO_SPIN); } /* TicoDemoGetPower::exeDemo */
+    if (gw.baby >= 0 && (gw_part_on(GP_SPIN3) || gw_part_on(GP_SPIN4))) { /* TicoDemoGetPower::exeDemo's sounds (TicoDemoGetPower.cpp:48-88) */
+        static u32 lw;
+        Inst *in = gw_inst(gw.baby);
+        const float *at = in ? &in->m[12] : &sc->objs[gw.baby].pos[0];
+        int s3 = gw_step(GP_SPIN3), s4 = gw_step(GP_SPIN4);
+        if (s3 == 110) se_start(SE_SM_TICO_OP_APPEAR, at);     /* sTicoAppearFrame */
+        if (s3 == 140) se_start(SE_SM_TICO_OP_APPEAR_END, at); /* sTicoAppearEndFrame */
+        if (s3 == 180) se_start(SE_SV_TICO_OP_APPEAR, at);     /* sTicoAppearVoiceFrame */
+        if (s4 >= 0 && s4 <= 65) lw = se_level(SE_SM_LV_TICO_WAIT, at, lw); /* sWaitSeStopFrame */
+        if (s4 == 72) se_start(SE_SM_TICO_FLASH_SPIN, at);     /* sFlashSpinSeFrame */
+        if (s4 == 170) se_start(SE_SM_TICO_FLASH_LIGHT, at);   /* sFlashLightSeFrame */
+        if (s4 == 255) se_start(SE_SM_TICO_FUSION, at);        /* sFusionSeFrame */
+        if (s4 == 420) mario_se(SE_PV_POWER_STAR_GET);         /* sMarioJumpFrame */
+        if (s3 == 110 || s4 == 72 || s4 == 255) printf("gateway: baby Luma's demo sound, デモ3 %d デモ4 %d\n", s3, s4);
+    }
 }
 
 /* RosettaDemoHeavensDoor1's parts: the light dome (at her Center joint, -13 down, -30 back) while she is out, the

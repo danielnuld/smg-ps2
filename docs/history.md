@@ -11,6 +11,22 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- NPC demo sounds (feat/620-npc-demo-sounds, #620, 2026-11-18): the Gateway's spin demo and Kinopio. gw_update:
+  TicoDemoGetPower::exeDemo's sounds on the baby Luma by the demo's part steps (デモ3: SE_SM_TICO_OP_APPEAR 110, _END
+  140, SE_SV_TICO_OP_APPEAR 180; デモ4: SE_SM_LV_TICO_WAIT to 65, SE_SM_TICO_FLASH_SPIN 72, _FLASH_LIGHT 170,
+  SE_SM_TICO_FUSION 255, SE_PV_POWER_STAR_GET 420); ro_update: RosettaDemoHeavensDoor1::exeDemo's (デモ3:
+  SE_SV_ROSETTA_SWING 70, SE_SM_ROSETTA_OP_SWING 80; SE_SM_LV_TICO_OP_WAIT through 会話1 .. 4, デモ1 .. 5 and デモ6's
+  first 10 steps, then SE_SM_LV_ROSETTA_OP_HIDE). Kinopio (kinopio_nerve, from update_npc_turn): its Escape nerve (a
+  Kinopio that reads an appear switch with arg4 0: its Escape action once, SE_SV_KINOPIO_PUHA, SE_SM_NPC_FLY_OUT) and
+  its power star mode (arg2 8: StarWait's MBGM_KINOPIO_TANKEN_B at its first talk, its eventFunc the TakeOutStar, then
+  startLastStageBGM unless in FishTunnelGalaxy; kino_took lets its star out, slice.py declares it and gives it the
+  PStar model). The star was shown from the start before (no declarer). Not ported: Kinopio's Appear nerve (arg4 not
+  0: the fall to the ground, the NPCs have no binder), Caretaker's BGM calls (BGM_MINIGAME_START, MBGM_RACE_01: its
+  tidy-up mission CareTaker.cpp:113-546 is not ported); "Penguin's turtle jet sounds" are JetTurtle's (SE_OJ_ /
+  SE_SY_GET_TURTLE_JET: on main since #608), TalkBalloon's volume on main since #597. Test: `talk` with
+  XF=-DTALK_CLS=3 on FishTunnelGalaxy/1 (the Kinopio appears: Escape, the talk, the BGM, TakeOutStar, "its star
+  out"); `gateway` for the spin demo. **Release: slice_all.py FishTunnelGalaxy, HoneyBeeKingdomGalaxy** (the declarer
+  and PStar of the two arg2 8 Kinopios).
 - NPC reactions run (verify/npc-react, #619, 2026-11-18): what #604 / #615 merged without a run. `talk` with
   XF="-DTALK_CLS=0 -DREACT_TEST" picks an NPC of npc_reaction's classes by name (PenguinCoach, Penguin, Caretaker,
   HoneyBee, a Kinopio with its body sensor, Rabbit: the first of that order with one shown), so one ELF runs every
