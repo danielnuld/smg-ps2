@@ -11,6 +11,13 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Enemy audit, third batch (feat/708-enemy-audit-3, #708, PR #710, 2026-11-18): Dossun: update_dossuns raised its
+  step before the nerve ran, so a nerve's first frame was step 1 and no `*t == 0` block ever ran: no
+  SE_OJ_DOSSUN_FALL_SIGN, no SE_OJ_DOSSUN_LAND, no Land effect, no shake; the step now counts from 0 (raised after
+  the nerve), and the landing rumbles / shakes as startRumbleWithShakeCameraNormalWeak (中 within 2000, 弱 within
+  3500). BombHeiLauncher: its SW_A listened as on / off edges (onSwitchA: countdown 0, LauncherWait: the bomb at once;
+  offSwitchA: Stop). Jellyfish: knockOut (jf_knock) from fire balls, shells, the rainbow attack and explosions.
+  Test: built plain, host tests, the route test, memcheck; NOT run in PCSX2 (unverified-2026-11-18.md). No repack.
 - Enemy audit, second batch, and Kiraira (feat/689-enemy-audit-2, #689 / #690, PR #693, 2026-11-18): the table is
   `docs/class-audit-enemy.md`. PackunPetit: a fire ball / the rainbow attack punchDown (packun_hit), a shell with the
   scene stop, the stop only for the spin / kick / shell, a failed attack pushes. Unizo: enemy attacks not from a Unizo
