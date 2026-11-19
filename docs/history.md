@@ -11,6 +11,16 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Mario's ponytail marks, batch 2 (feat/749-mario-marks-2, #749, 2026-11-19): Mario::damagePolygonCheck on the
+  ceiling within 160 of him (Mario.cpp:1728; m_damage_polygon on calcDistToCeil's face: fire, needle, electric,
+  PullBack, Death; DamageNormal is MarioSwim::addDamage); checkPressDamage's push off a faced front wall (its
+  distance _4E4 x (200 / _72C - 1)) and a side wall (60 x that) with the ceiling under 200 (MarioPress.cpp:43); the
+  wade's rings at mGroundPos (the steps) and mShadowPos (standing) and not his place (MarioWalk.cpp:182);
+  Mario::playSoundJ's water companion while he wades (kind & 0xC: 水跳ねジャンプ / 水跳ね着地 with ジャンプ踏切 / 着地 /
+  尻ドロップ着地: the table and the packs had them); exeGameOverSink's 砂埋まり体 / 手 and 泥埋まり体 / 手 (jpa.py NAMED
+  Mario: DieBuryBody / DieBuryHand / DieDeathMudBody / DieDeathMudHand: resident.bin has to be packed again to show
+  them). Not run in PCSX2 but for the route (star at f 4281): no test puts him under a damage ceiling, between a
+  wall and a low ceiling, or wading.
 - CrystalCage / BreakableCage, part of #648 (fix/648-cages, 2026-11-19, agent audit-a; **not run in PCSX2**): CrystalCage:
   arg0 is a bool (mIsBreakObjVisible: only unset leaves the stump; the port tested == 1), an explosion breaks an S / M
   cage in Wait (receiveMsgEnemyAttack; explosion_breaks, its body 130 x scale). BreakableCage.cpp: BreakableCage /
