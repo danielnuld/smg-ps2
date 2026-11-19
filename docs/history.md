@@ -11,6 +11,15 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- NPC reactions run (verify/npc-react, #619, 2026-11-18): what #604 / #615 merged without a run. `talk` with
+  XF="-DTALK_CLS=0 -DREACT_TEST" picks an NPC of npc_reaction's classes by name (PenguinCoach, Penguin, Caretaker,
+  HoneyBee, a Kinopio with its body sensor, Rabbit: the first of that order with one shown), so one ELF runs every
+  galaxy through out/boot.txt. Seen in PCSX2, each with its four reaction lines (trampled, spun, pointed, star piece)
+  and its SE lines (`se?` for the voices the packs lack until the repack): Rabbit (HeavenlyBeachGalaxy/1), HoneyBee
+  (HoneyBeeKingdomGalaxy/1), Caretaker (FactoryGalaxy/1), Kinopio (BeltConveyerExGalaxy/1), Penguin
+  (OceanRingGalaxy/1); PenguinCoach (HeavenlyBeachGalaxy/1) pointed and star piece only (his talk opens with Mario
+  before him and holds Mario through the test's drop and spin); the Gateway rabbits' hop (SE_SM_RABBIT_JUMP each Run loop,
+  `gateway` with XF=-DSE_LOG). Nothing to fix in the engine.
 - Per-class tables out of bss, 1 (perf/tables-arena-1, #630, 2026-11-18): the ELF reserved every class's worst-case
   table in every galaxy. `creepers` (128 KB), `vines` (120 KB), `bridges` (96 KB) and CocoSambo's heads (96 KB, the
   function static of update_sambos, now `sambo_heads`) are pointers filled by game.c `row_table(class, max, size)`:

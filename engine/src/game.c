@@ -14025,6 +14025,20 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
 #endif
     for (int i = 0; i < ninsts && row < 0; i++)
         if ((TALK_CLS == 9 ? insts[i].dnpc == 3 : insts[i].talkcls == TALK_CLS) && (TALK_CLS == 11 || talk_row_label(insts[i].row, lab)) && TALK_PICK(i)) row = i; /* 9: Rosetta, 11: TicoShop (Common_) */
+#if defined(REACT_TEST) && TALK_CLS == 0 /* XF="-DTALK_CLS=0 -DREACT_TEST": an NPC of npc_reaction's classes placed, the first class of this list with one shown (one ELF for every galaxy) */
+    static const char *const react_cls[] = {"PenguinCoach", "Penguin", "Caretaker", "HoneyBee", "Kinopio", "Rabbit"};
+    float react_h = 60.0f;
+    row = -1; /* (not the loop above's: any talker of class 0) */
+    for (int c = 0; c < 6 && row < 0; c++)
+        for (int i = 0; i < ninsts && row < 0; i++) {
+            if (!row_shown(insts[i].row) || strcmp(sc->types + 32 * sc->objs[insts[i].row].type, react_cls[c])) continue;
+            if (c == 4 && sc->objs[insts[i].row].arg[6] != -1) continue; /* a Kinopio with its body sensor */
+            row = i;
+            if (c == 0) react_h = 300.0f; /* his head sensor */
+        }
+#undef REACT_H
+#define REACT_H react_h
+#endif
     pad_force = 0;
     if (row < 0 && TALK_CLS == 3) { /* the Kinopios wait for their appear switch: on */
         int ty = scene_type(sc, "Kinopio");
@@ -14083,6 +14097,7 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
 #define REACT_H 60.0f /* its body above its place */
 #endif
     if (phase == 1) {
+        if (t % 960 == 1) printf("react test f %d: row %d %s\n", frame, in->row, sc->types + 32 * sc->objs[in->row].type);
         V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), body = vadd(p, vmul(up, REACT_H));
         int c = t % 960;
         test_r2 = 0;
