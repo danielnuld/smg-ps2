@@ -11,6 +11,12 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Enemy audit, fourth batch (feat/725-enemy-audit-4, #725, PR #730, 2026-11-19): Kanina's receiveFireBall from a fire
+  ball and a thrown shell (kan_fire: doDamageFireBall, not while its sensors are off); Gesso without clipping in Wait
+  from step 2 (exeWait). `docs/class-audit-enemy.md`: the rows of the classes compared by clips, sounds, step tests
+  and constants (KoteBug, Poihana, Gesso, Snakehead, Mogu, Metbo: equal) and the PCSX2 runs: #693's BombHei carry
+  (BH_TEST: taken, thrown, Physics) and #637's AnimScaleController kinds (way 2 starts none of them: see the table).
+  Test: built plain, host tests, the route test, memcheck. No repack.
 - Enemy audit, third batch (feat/708-enemy-audit-3, #708, PR #710, 2026-11-18): Dossun: update_dossuns raised its
   step before the nerve ran, so a nerve's first frame was step 1 and no `*t == 0` block ever ran: no
   SE_OJ_DOSSUN_FALL_SIGN, no SE_OJ_DOSSUN_LAND, no Land effect, no shake; the step now counts from 0 (raised after
