@@ -11,6 +11,18 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Per-class tables out of bss, 1 (perf/tables-arena-1, #630, 2026-11-18): the ELF reserved every class's worst-case
+  table in every galaxy. `creepers` (128 KB), `vines` (120 KB), `bridges` (96 KB) and CocoSambo's heads (96 KB, the
+  function static of update_sambos, now `sambo_heads`) are pointers filled by game.c `row_table(class, max, size)`:
+  from the arena, one entry a row the scene places (at most the old maximum), NULL where it places none (the count
+  stays 0, nothing reads the table). The rule for the next ones: allocate only from game_init (what it allocates lies
+  under main.c's base_mark: a zone swap keeps it; scene_switch releases the arena to boot_mark and clears .gamebss, so
+  the pointer is NULL again and game_init fills it again); a table whose init waits for the first update needs its
+  allocation called from game_init. memcheck: _end -366208 B against the 11:50 baseline (which main had passed by
+  about 78 KB: 440 KB of tables gone), 251904 B left before the region loses a step, the region one step up
+  (18688 KB). Arena at boot: HoneyBeeKingdomGalaxy/1 (2 Creepers, Plants) 3409 KB, EggStarGalaxy/3 (bridge,
+  CocoSambo) 3602 KB of 5376 KB. The sambos and the bridge were not driven in PCSX2 (their zones not reached at
+  boot); route EggStarGalaxy/1 as before.
 - Mario carried on AreaMove / RailMove floors (feat/581-power-area-rail-move, #581, 2026-11-18): game.c m_power_moves
   (MarioEnforce.cpp powerAreaMove / powerRailMove): on a floor of code 28 in an AreaMoveSphere round it (arg0 or 10 a
   frame), on one of code 27 along his ground's rail at the point nearest him (10 a frame; the rail's own speed,
