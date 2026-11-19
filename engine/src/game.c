@@ -522,6 +522,7 @@ static int area_inside(const Row *r, V3 p);
 static int area_obj(const char *cls, V3 p);
 static int in_glaring_light(V3 p);
 static int in_dark_matter(V3 p);
+static void col_areas_init(const Scene *s);
 static void mario_set_raster(int t, int x, int y); /* MR::setRasterScroll (race.inc) */
 /* clip_area.inc */
 static void snow_init(const Scene *s), snow_update(void), snow_draw(V3 eye); /* snow_floor.inc */
@@ -2970,6 +2971,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     }
     dx_init(blob);
     st_init(s);
+    col_areas_init(s);
     { /* AstroMapBoard's picture, the mirror's, the raster scroll's bands (a TeresaRacer of a racer id): their VRAM out of the cache */
         int tr = scene_type(s, "TeresaRacer"), raster = 0;
         for (u32 i = 0; tr >= 0 && i < s->nobjs; i++) raster |= (int)s->objs[i].type == tr && s->objs[i].arg[0] != -1;
@@ -47208,6 +47210,20 @@ static void put_test(void)
 #ifdef PUT_TEST2 /* -DPUT_TEST2=<class>: that class when the scene has none of the first (one ELF, two galaxies) */
         if (row < 0) row = game_test_put_at(PUT_STR(PUT_TEST2), PUT_UP);
 #endif
+#ifdef PUT_FILE /* -DPUT_FILE: the class named by host:put.txt's first line instead, if there is one (one ELF, a class a run) */
+        {
+            static char cls[40];
+            FILE *f = fopen("host:put.txt", "rb");
+            if (f) {
+                int n = fread(cls, 1, sizeof cls - 1, f);
+                fclose(f);
+                cls[n > 0 ? n : 0] = 0;
+                for (char *c = cls; *c; c++) if (*c == '\r' || *c == '\n') *c = 0;
+                row = game_test_put_at(cls, PUT_UP);
+                printf("put file: %s row %d" "\n", cls, row);
+            }
+        }
+#endif
 #endif
 #ifndef PUT_NOCAM
         if (row >= 0) { camera_start_pos_end(); camera_set_override(1, vadd(mario->pos, v3(0, 1000, 3000)), vadd(mario->pos, v3(0, 1000, 0)), v3(0, 1, 0), 45.0f); }
@@ -48936,6 +48952,93 @@ static void haze_update(void)
 #endif
 }
 static void haze_draw(void) { if (haze.on) render_raster_scroll(1.625f, 120, 216.0f, haze.t); }
+/* CollisionArea.cpp (a centre origin cube; arg0 -1: it pushes, arg1 -1: a vanished Teresa Mario passes, arg2 its
+ * radius about his centre or his hit radius 60 / 100 as Teresa, arg3 the faces with a polygon). movement: valid (its
+ * SW_APPEAR), a vanished Teresa Mario sets _58 (passing through: 5 more of radius until he is out); else hitCheck of
+ * his centre and, hit, MR::pushPlayerFromArea: from inside the box along its nearest face by the radius and his depth
+ * (_40), from outside to the radius off the point of the face or edge (if that goes along the normal).
+ * hitCheck's corner region (out of all three extents) measures from the corner without the box's centre, as Petari
+ * does: it only hits by the world's origin.
+ * ponytail: AreaPolygon (arg3 not 0: the face's two triangles 10 out as a DynamicCollisionObj, a wall for his binder
+ * and for the other actors) is not ported, the push alone holds him; MarioAccess::addVelocityFromArea's _EA4 and the
+ * rush hosts other than a launch star and the Tamakoro (_934) are not checked; no follow matrix */
+static short *col_areas; /* the rows; bit 15: _58 */
+static int ncol_areas;
+static void col_areas_init(const Scene *s)
+{
+    int t = scene_type(s, "CollisionArea");
+    ncol_areas = 0;
+    for (u32 i = 0; t >= 0 && i < s->nobjs; i++) ncol_areas += (int)s->objs[i].type == t;
+    col_areas = ncol_areas ? mem_alloc(MEM_SCENE, ncol_areas * sizeof *col_areas) : NULL;
+    ncol_areas = 0;
+    for (u32 i = 0; t >= 0 && i < s->nobjs && i < 0x8000; i++) if ((int)s->objs[i].type == t) col_areas[ncol_areas++] = (short)i;
+}
+static int col_area_hit(const Row *r, V3 p, float radius, V3 *pt, V3 *nrm, int *count, float *depth) /* hitCheck */
+{
+    V3 ax, az;
+    row_axes(r, &ax, &az);
+    V3 ay = vcross(az, ax), c = row_pos(r), rel = vsub(p, c);
+    float size[3] = {500.0f * r->scale[0], 500.0f * r->scale[1], 500.0f * r->scale[2]};
+    float l[3] = {vdot(rel, ax), vdot(rel, ay), vdot(rel, az)};
+    V3 axis[3] = {ax, ay, az};
+    int out[3], n = 0;
+    for (int k = 0; k < 3; k++) if (fabsf(l[k]) >= size[k] + radius) return 0;
+    for (int k = 0; k < 3; k++) n += out[k] = fabsf(l[k]) >= size[k];
+    *count = n; /* _3C */
+    if (n == 3) {
+        V3 corner = v3(0, 0, 0);
+        for (int k = 0; k < 3; k++) corner = vadd(corner, vmul(axis[k], l[k] < 0.0f ? -size[k] : size[k]));
+        if (vlen(vsub(corner, p)) >= radius) return 0;
+        *pt = corner;
+        *nrm = vnorm(vadd(vadd(ax, ay), az));
+        return 1;
+    }
+    if (n == 0) {
+        float d[3] = {size[0] - fabsf(l[0]), size[1] - fabsf(l[1]), size[2] - fabsf(l[2])};
+        int k = d[0] < d[1] && d[0] < d[2] ? 0 : d[1] < d[0] && d[1] < d[2] ? 1 : 2;
+        *depth = d[k]; /* _40 */
+        out[k] = 1;
+        n = 1;
+    }
+    V3 nv = v3(0, 0, 0);
+    for (int k = 0; k < 3; k++) {
+        if (!out[k]) continue;
+        float sgn = l[k] < 0.0f ? -1.0f : 1.0f; /* a face (n 1): its normal; an edge (n 2): the two faces' sum */
+        nv = vadd(nv, vmul(axis[k], sgn));
+        l[k] = sgn * size[k];
+    }
+    *pt = vadd(vadd(vadd(vmul(ax, l[0]), vmul(ay, l[1])), vmul(az, l[2])), c);
+    *nrm = vnorm(nv);
+    return 1;
+}
+static void update_collision_areas(void)
+{
+    int through = player_mode == PM_TERESA && mario->t418; /* MR::isPlayerTeresaDisappear */
+    for (int i = 0; i < ncol_areas; i++) {
+        int row = col_areas[i] & 0x7FFF;
+        const Row *r = &sc->objs[row];
+        if (!row_shown(row)) continue;
+        if (r->arg[1] == -1 && through) { col_areas[i] |= (short)0x8000; continue; }
+        int s58 = (col_areas[i] & 0x8000) != 0, count = 0;
+        float radius = r->arg[2] > 0 ? (float)r->arg[2] : player_mode == PM_TERESA ? 100.0f : 60.0f, depth = 0.0f; /* getPlayerHitRadius */
+        if (s58) radius += 5.0f;
+        V3 pt, n, push;
+        if (!col_area_hit(r, mw.c, radius, &pt, &n, &count, &depth)) { col_areas[i] &= 0x7FFF; continue; }
+        if (s58 || r->arg[0] != -1) continue;
+        if (count == 0) push = vmul(n, radius + depth);
+        else {
+            V3 d = vsub(mw.c, pt);
+            if (vlen(d) < 1e-6f) continue;
+            push = vsub(vadd(pt, vmul(vnorm(d), radius)), mw.c);
+        }
+        if (vdot(push, n) <= 0.0f) continue;
+        if ((swimming && sw.jet_t) || mario->launch >= 0 || tmk_riding()) continue; /* addVelocityFromArea */
+        mario->s350 = vadd(mario->s350, push); /* Mario::push */
+#ifdef PUT_TEST
+        { static int t; if (t++ % 30 == 0) printf("collision area: row %d count %d push %d %d %d" "\n", row, count, (int)push.x, (int)push.y, (int)push.z); }
+#endif
+    }
+}
 /* GlaringLightArea::movement (the areas with a SW_A): SE_OJ_RAY_START at its place when the switch comes on after
  * having been off (mIsValid starts true: none for a light on from the start) */
 static void update_glaring_lights(void)
@@ -49044,6 +49147,7 @@ static void keep_effects(void)
     update_glaring_lights();
     wall_shade_calc();
     haze_update();
+    update_collision_areas();
     update_quake();
     float m[16];
     for (int i = 0; i < npieces; i++)
