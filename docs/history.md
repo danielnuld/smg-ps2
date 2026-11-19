@@ -23,6 +23,52 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   (18688 KB). Arena at boot: HoneyBeeKingdomGalaxy/1 (2 Creepers, Plants) 3409 KB, EggStarGalaxy/3 (bridge,
   CocoSambo) 3602 KB of 5376 KB. The sambos and the bridge were not driven in PCSX2 (their zones not reached at
   boot); route EggStarGalaxy/1 as before.
+- Enemies on AreaMove / RailMove floors (feat/611-area-move-walkers, #611, 2026-11-18):
+  MR::calcVelocityAreaOrRailMoveOnGround as game.c area_rail_vel (an AreaMove floor, code 28: MR::calcAreaMoveVelocity,
+  the AreaMoveSphere holding the place: its up less the part towards its centre x arg0 (10); a RailMove floor, 27: the
+  ground's rail direction nearest it x 10). The walkers keep their ground's codes and instance from w_bind (gattr /
+  ginst). Kuribo::control adds 0.05 of it; Karon::control addVelocityLimit (not Broken / StepBroken, which are
+  carried with hNoMoveNoTurnParam instead of standing on their ground's normal); BombBird's SwoonStart / Swoon /
+  SwoonEnd take it as their velocity (hShiftingSandVel 1); BombBirdBomb's Wait takes it (sGroundFric 1) with
+  SE_EM_BOMBBIRDBOMB_LAND_SAND from 5.5, no rebound; CocoNut's _14C / _150 (calcVelocityAreaMoveOnGround x 0.75 while it
+  rolls on such a floor, fading x 0.925 off it, added to its velocity; it does not stop on the floor). Mario's side is
+  #581 (m_power_moves), which also puts AreaMoveSphere into slice.py's LOGIC areas: until those packs exist an AreaMove
+  floor gives zero (no area found), as Petari does outside every sphere. ponytail: the rail's path_arg3 speed (10).
+  Test: built plain (SandClockGalaxy/1), host tests, memcheck; NOT seen in PCSX2 (needs #581's packs: an overlay
+  slice of a galaxy with AreaMoveSphere).
+- TripodBoss's marker stopped at its break (fix/tripod-marker-break, 2026-11-18): #599's tb_marker left the parts'
+  SE_BM_TRIPOD_MARKER playing when the boss broke down with Mario on it (the parts die there in Petari: their sound
+  objects with them). Test: plain -DTB_TEST -DDKJ_TEST -DSE_LOG TriLegLv1Galaxy/1.
+- AnimScaleController on the walkers (feat/521-walker-asc, #521, 2026-11-18): Takobo, Jellyfish, JellyfishElectric,
+  Mogu, Petari, KoteBug and Unizo squash and stretch as Petari's mScaleController does (game.c wa_start / wa_update
+  over asc_core: startHitReaction, startAnim with startAndAddScaleVelocityY). Test XF="-DASC_KIND=<walker kind>
+  -DASC_HOW=<game_test_enemy's way>": PCSX2, EggStarGalaxy/1, Mario beside a Takobo (kind 6, way 2): it attacks,
+  "hit reaction", scale y 1.055, 1.136, 1.013, 0.911, 0.959, 1.046, stopped at step 91, three times. A star piece
+  stuns a Takobo (no scale reaction: as Petari). The other six kinds were not run.
+- CameraRepulsiveCylinder (feat/585-camera-repulsive, #585, 2026-11-18): camera.c view_interp, after
+  interpolateCameraSwitching: translateByRepulsion (`camera_repulsion` -> game.c cam_repulsion:
+  CameraRepulsiveCylinder::getRepulsion, the eye's part across the cylinder's axis over (2 x its length / radius)
+  cubed; the sphere's is zero) and lookAtCenter (the view turned back on the watch point, its up with it). No stage
+  of RMGE01 places a CameraRepulsiveCylinder / Sphere (every StageData archive read: the names are only in
+  ObjNameTable), so nothing changes in play and no pack needs it; slice.py LOGIC carries them all the same. Test:
+  plain with `XF=-DCAM_REPULSE_TEST=3000` (EggStarGalaxy/1: a test cylinder of that radius about Mario's up from
+  frame 300, "cam repulsion: eye a off the axis, pushed b").
+- The seesaws (feat/614-seesaws, #614, 2026-11-18): SimpleSeesawObj (SimpleMapObj.cpp: KoopaShipSeesawStep,
+  IceVolcanoBalanceStepA / B, IceMountainSeesawSlipA-D / NoSlipA; 16 placed, they turned as plain MapPartsRotators)
+  and LavaHomeSeesaw in update_seesaws beside PhantomShipHandle (Inst.seesaw 1-4): MapPartsSeesaw1AxisRotator for
+  RotateAxis 0, MapPartsSeesaw2AxisRotator else (Stay / Move / HipDrop: blended towards its base tilted RotateAngle
+  about up x Mario's place by 0.001 x his distance / inertia, back by 0.0001 x RotateStopTime),
+  LavaHomeSeesawRotator (starts at 0.01, the 0.7 dip under his landing with the weak shake and
+  SE_OJ_LAVA_FLOATER_ON_METAL, SE_OJ_LV_LAVA_SEESAW_MOVE over 0.1); the move sounds of sSeDataTable over 0.001. The
+  rotator's matrix is a quaternion now (start()'s turn back over the limit, the first up from the placement, not
+  gravity; MR::sign's 0; isNearZero 0.001). RotateAccelType is a seesaw's inertia (100-2000) and the pack kept four
+  bits (PhantomShipHandle's 100 read as 4): slice.py map_parts writes it whole to arg 3 for the seesaw classes; an
+  older pack's row keeps the four bits. Petari as it is: IceMountain's seesaws never leave MoveStart (their top speed
+  0.07-0.1 is not over 0.1), so they get neither the restoring force nor the friction. Test: `build.sh seesaw`
+  (`XF=-DSEESAW_N=k` the k-th seesaw row, `-DSEESAW_AXIS2` the first on two axes). ponytail: no SW_B start / end
+  (none placed has one), LavaHomeSeesaw's projection map offset. **Release: slice_all.py** IceVolcanoGalaxy,
+  StarDustGalaxy, HellProminenceGalaxy, EggStarGalaxy (arg 3) **+ sound.py --pack** for them (the seesaws'
+  SE names are new in game.c: `se?` until then).
 - Mario carried on AreaMove / RailMove floors (feat/581-power-area-rail-move, #581, 2026-11-18): game.c m_power_moves
   (MarioEnforce.cpp powerAreaMove / powerRailMove): on a floor of code 28 in an AreaMoveSphere round it (arg0 or 10 a
   frame), on one of code 27 along his ground's rail at the point nearest him (10 a frame; the rail's own speed,

@@ -79,15 +79,42 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
     V3 gpos, gup; int gok; /* walker_up: the gravity's up at gpos */
     u32 lv2[2]; int lvt[3], jc; float lva[2]; /* Unizo: its land / wall-hit level sounds (kept 30 frames: frames left, levelA), the roll's sRollSoundTime; mJumpCount */
     u32 lv; /* its level sound's handle (se_level) */
+    int an, at; float ay, av; /* its AnimScaleController when no other field is free (wa_start): nerve, step, _C.y, _18 */
     u8 clipped; /* out of the view at the last draw (ClippingJudge: LiveActor::startClipped stops its movement) */
     u8 nograv; /* Kuribo _C4 (arg0 set): offCalcGravity, its gravity its rotation's up */
     short ml; /* trySetMoveLimitCollision: the MoveLimit part's row + 1 it binds, -1 none, 0 not looked yet */
     V3 mm[8]; /* Meramera (meramera.inc): _144, _174, _180, _198, _18C, mExtinguishMtx (place, up), its binder's fix */
     u8 pushable; /* Karikari mIsPushable */
+    int gattr; short ginst; /* w_bind: its ground face's codes and instance (the binder's ground: isBindedGround*) */
     short host; /* a BossBegoman follower (initWithoutIter: no placement of its own; its row the boss's): the boss's slot + 1;
                  * -1 a Polta's BombTeresa (BombTeresaHolder, polta.inc) */ } Kuribo; /* walking
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
+enum { ASC_STOP, ASC_ANIM, ASC_HIT }; /* AnimScaleController's nerves (asc_core) */
+static void asc_core(int *nrv, int *t, float *y, float *v, const float p[7]);
+/* a walker's an / at / ay / av AnimScaleController: started (_C.y is 1 whenever it is in Stop), updated (its _C.y
+ * drawn by game_draw while it runs) */
+static void wa_start(Kuribo *k, int nrv)
+{
+    if (k->an == ASC_STOP) { k->ay = 1.0f; k->av = 0.0f; }
+    k->an = nrv; k->at = -1;
+#if defined(ASC_TEST) || defined(ASC_KIND)
+    printf("asc row %d kind %d: %s\n", k->row, k->kind, nrv == ASC_HIT ? "hit reaction" : "anim");
+#endif
+}
+static void wa_update(Kuribo *k, const float p[7])
+{
+#if defined(ASC_TEST) || defined(ASC_KIND)
+    int was = k->an;
+#endif
+    asc_core(&k->an, &k->at, &k->ay, &k->av, p);
+#if defined(ASC_TEST) || defined(ASC_KIND)
+    if (k->an != ASC_STOP && k->at % 4 == 0 && k->at < 24) printf("asc row %d: step %d scale y %.3f\n", k->row, k->at, k->ay);
+    if (was != ASC_STOP && k->an == ASC_STOP) printf("asc row %d: stop at step %d\n", k->row, k->at);
+#endif
+}
+static const float asc_def[7] = {0.2f, 0.91f, 0.2f, 1.8f, 0.06f, 0.12f, 0.91f}, /* sStaticAnimParam */
+                   asc_tight[7] = {0.5f, 0.85f, 0.2f, 1.8f, 0.06f, 0.12f, 0.91f}; /* its tightParam (setParamTight) */
 /* KuriboChief's / ExterminationChecker's KeySwitch (okeys), the ExterminationKuriboKeySwitch checkers (exts) */
 #define MAX_OKEYS 4
 static struct { int on, owner, nrv, step, demo; V3 pos, vel, up; float rate, t; } okeys[MAX_OKEYS];
@@ -99,7 +126,7 @@ enum { BI_SHOOT, BI_WAIT, BI_RISE, BI_BOUND };
 static struct { int on, life, nrv, step, gnd, gattr, wall, restart; V3 pos, vel, a4, gn, wn, box, up, target; float rot[16], f0[16], base[16]; const char *clip; } bitm[MAX_BITEMS];
 /* BombBirdBomb (BombBird's mBombs, game.c bbd_*) */
 #define BBD_BOMBS 24 /* mBombs: 3 a bird */
-static struct { int on, nrv, t, owner, bnd; V3 pos, vel, n; float s; } bbd_b[BBD_BOMBS];
+static struct { int on, nrv, t, owner, bnd, gnd, gattr, ginst; V3 pos, vel, n; float s; } bbd_b[BBD_BOMBS]; /* gnd: on the ground, its codes / instance */
 #define MAX_EXTS 4
 static struct { int row, nrv, step, star; V3 last; } exts[MAX_EXTS]; /* star: ExterminationCheckerKuribo (_A0) */
 static int nexts;
@@ -327,7 +354,9 @@ typedef struct {
     int hipsw;       /* hip drop switch (update_hip_switches): 1 HipDropSwitch, 2 HipDropTimerSwitch, 3 PicketSwitch(Big) */
     int rotor;       /* map part with a RotateSpeed: turns (rotor_matrix), carries Mario */
     int halo;        /* ZoneHalo 1 / PowerStarHalo 2: shown only from afar (update_halos); Air 3, AirFar100m 4 (update_airs) */
-    int seesaw;      /* PhantomShipHandle: MapPartsSeesaw1AxisRotator, turned by Mario's weight (update_seesaws) */
+    int seesaw;      /* 1 PhantomShipHandle, 2 a SimpleSeesawObj on one axis (MapPartsSeesaw1AxisRotator), 3 one on two
+                      * (MapPartsSeesaw2AxisRotator), 4 LavaHomeSeesaw (LavaHomeSeesawRotator): turned by Mario's weight
+                      * (update_seesaws) */
     int sky;         /* sky dome (Petari Sky): centred on the camera, drawn first */
     int sun;         /* BrightSun: its Sun model far off the camera along its rotation, drawn with the skies */
     int steam;       /* LavaSteam: vents on a cycle and burns (update_steam) */
@@ -1074,6 +1103,7 @@ static struct {
 } hhps[MAX_HHPS];
 static int nhhps;
 static void seesaw_matrix(Inst *in);
+static u32 seesaw_se(const char *name);
 static int nseesaws;
 #define MAX_BRIDGES 4
 static int nbridges; /* PhantomShipBridge (update_bridges) */
@@ -1082,8 +1112,8 @@ static int nfollows;
 #define MAX_FOLLOWS 8
 #define FOLLOW_N 16
 static struct { int row, nrv, step, n, slot[FOLLOW_N], alive; float angle; V3 x, y, z, off[FOLLOW_N], vel[FOLLOW_N]; } follows[MAX_FOLLOWS];
-#define MAX_SEESAWS 8
-static struct { int row, nrv, step, hip; float vel, angle; } seesaws[MAX_SEESAWS];
+#define MAX_SEESAWS 16 /* (IceMountainZone has twelve) */
+static struct { int row, nrv, step, hip; float vel, angle; Quat q; /* the two axis one's mRotateMtx; vel its mRotateSpeed */ } seesaws[MAX_SEESAWS];
 static int seesaw_of(int row);
 #define MAX_VINES 4
 #define VINE_PTS 256
@@ -2215,6 +2245,37 @@ static int kcl_line(V3 a, V3 b, V3 *hp, V3 *n, int *inst)
  * the isCameraCodeThrough filter (Camera_through, slice.py kcl_codes bit 10: such faces passed through), and
  * Collision::checkStrikeBallToMap (each face's normal and depth) */
 static int cam_gravity(V3 p, V3 *g) { return gravity_at(grav, ngrav, (const float *)&p, (float *)g); }
+/* CameraRepulsiveCylinder::getRepulsion (CameraRepulsiveArea.cpp; the sphere's is zero): the place's part across
+ * the cylinder's axis, divided by (twice its length over the radius) cubed: a camera at half the radius is pushed
+ * out to the radius, nearer the axis farther */
+static int area_obj(const char *cls, V3 p);
+static int cam_repulsion(V3 pos, V3 *rep)
+{
+#ifdef CAM_REPULSE_TEST /* XF=-DCAM_REPULSE_TEST=<radius>: an endless cylinder of that radius about Mario's up, from
+                         * frame 300 (no stage of RMGE01 places a CameraRepulsiveArea); logged every 60 calls */
+    static int t;
+    if (!mario || ++t < 300) return 0;
+    V3 up = mario->up, ret = vsub(pos, mario->pos);
+    float rad = CAM_REPULSE_TEST;
+#else
+    int a = area_obj("CameraRepulsiveCylinder", pos);
+    if (a < 0) { if (area_obj("CameraRepulsiveSphere", pos) < 0) return 0; *rep = v3(0, 0, 0); return 1; }
+    const Row *r = &sc->objs[a];
+    V3 x, z;
+    row_axes(r, &x, &z);
+    V3 up = vcross(z, x), ret = vsub(pos, row_pos(r));
+    float rad = 500.0f * r->scale[0];
+#endif
+    ret = vsub(ret, vmul(up, vdot(up, ret)));
+    float base = vlen(vcross(ret, up)) * 2.0f / rad;
+    if (base < 1e-6f) { *rep = v3(0, 0, 0); return 1; }
+    *rep = vmul(ret, 1.0f / (base * base * base));
+#ifdef CAM_REPULSE_TEST
+    if (vlen(ret) >= rad) return 0; /* (isInVolume) */
+    if (t % 60 == 0) printf("cam repulsion: eye %d off the axis, pushed %d (radius %d)" "\n", (int)vlen(ret), (int)vlen(*rep), (int)rad);
+#endif
+    return 1;
+}
 static int cam_map_poly(V3 a, V3 d, V3 *hp)
 {
     V3 b = vadd(a, d);
@@ -3241,6 +3302,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         cam_blob = blob;
         camera_rail = cam_rail;
         camera_gravity = cam_gravity; camera_map_poly = cam_map_poly; camera_map_ball = cam_map_ball;
+        camera_repulsion = cam_repulsion;
         const CamParam *cp = c ? (const CamParam *)(c + 16) : NULL;
         if (c && *(const int *)(c + 4) != (int)sizeof(CamParam)) { /* an older blob's 132-byte cameras: no roll */
             int nc = *(const int *)c;
@@ -4839,6 +4901,55 @@ static void coco_hit(Inst *in, V3 dir, float spd, float fall, V3 up)
     row_turn[in->row] = 1; row_step[in->row] = 0;
 }
 
+/* MR::calcVelocityAreaOrRailMoveOnGround (ActorMovementUtil.cpp:1065) for an actor on the ground: attr / inst its
+ * ground face's codes and instance (its binder's). An AreaMove floor (code 28): MR::calcAreaMoveVelocity at its place
+ * (the AreaMoveSphere holding it: its up less the part towards its centre, x arg0 (10); none: zero). A RailMove floor
+ * (27): the direction of its ground's rail nearest it x the rail's path_arg3 (10). what: 1 the area
+ * (calcVelocityAreaMoveOnGround), 3 either. 1 when the floor is one of them.
+ * ponytail: path_arg3 is not in the PATH entries (10) */
+static float rail_nearest(const float *p, int n, V3 q);
+static int area_rail_vel(int attr, int inst, V3 pos, int what, V3 *v)
+{
+    int fc = attr & 0x3F;
+    *v = v3(0, 0, 0);
+    if ((what & 1) && fc == 28) {
+        int a = area_obj("AreaMoveSphere", pos);
+        if (a >= 0) {
+            const Row *r = &sc->objs[a];
+            V3 x, z;
+            row_axes(r, &x, &z);
+            V3 up = vcross(z, x), radial = vsub(row_pos(r), pos);
+            radial = vlen(radial) > 1e-6f ? vnorm(radial) : v3(0, 0, 0);
+            up = vsub(up, vmul(radial, vdot(up, radial)));
+            up = vlen(up) > 1e-6f ? vnorm(up) : v3(0, 0, 0);
+            *v = vmul(up, r->arg[0] == -1 ? 10.0f : (float)r->arg[0]);
+        }
+        return 1;
+    }
+    if ((what & 2) && fc == 27 && inst >= 0 && inst < ninsts && insts[inst].row >= 0) {
+        const Row *r = &sc->objs[insts[inst].row];
+        const unsigned char *e = scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
+        if (e) { /* calcNearestRailDirection */
+            const float *pts = (const float *)(e + 24);
+            u32 np = *(const u32 *)(e + 8);
+            float c = rail_nearest(pts, (int)np, pos);
+            V3 d = vsub(rail_at(pts, np, c + 10.0f), rail_at(pts, np, c));
+            if (vlen(d) < 1e-3f) d = vsub(rail_at(pts, np, c), rail_at(pts, np, c - 10.0f)); /* (the rail's end) */
+            if (vlen(d) > 1e-6f) *v = vmul(vnorm(d), 10.0f);
+        }
+        return 1;
+    }
+    return 0;
+}
+/* CocoNut _14C / _150: the ones that rolled on an AreaMove floor and the move it gives them (x 0.75, fading x 0.925 a
+ * frame off it) */
+static struct { const Inst *in; V3 v; int on; } coco_am[4];
+static int coco_am_of(const Inst *in, int make)
+{
+    for (int i = 0; i < 4; i++) if (coco_am[i].in == in) return i;
+    for (int i = 0; make && i < 4; i++) if (!coco_am[i].in) { coco_am[i].in = in; coco_am[i].v = v3(0, 0, 0); coco_am[i].on = 0; return i; }
+    return -1;
+}
 /* SE_OJ_COCONUT_BOUND with level A (modifySe_Kawamura: volume (A / 100)^2 x 2, at most 1) */
 static void coco_bound(const Inst *in, int lv)
 {
@@ -4849,6 +4960,8 @@ static void coco_bound(const Inst *in, int lv)
 
 static void update_coconuts(void)
 {
+    static const Scene *seen;
+    if (seen != sc) { seen = sc; memset(coco_am, 0, sizeof coco_am); }
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
@@ -4900,10 +5013,16 @@ static void update_coconuts(void)
                 }
             }
         }
+        int am = coco_am_of(in, 0);
+        if (*ph != 1 || *t == 1) { if (am >= 0) coco_am[am].in = NULL; am = -1; } /* exeMove's first step: _14C false, _150 zero */
         if (*ph == 0) { coco_place(in); continue; }
         /* Move: processMove */
         float spd0 = vlen(vadd(vmul(in->cfront, in->cspd), vmul(up, -in->cfall)));
         V3 vel = vadd(vmul(in->cfront, in->cspd), vmul(up, -in->cfall));
+        if (am >= 0) { /* processMove's end: _150 fading unless on the floor (_14C and in the ground's grace), added to its velocity */
+            if (!(coco_am[am].on && in->cair < 10)) coco_am[am].v = vmul(coco_am[am].v, 0.925f);
+            vel = vadd(vel, coco_am[am].v);
+        }
         V3 gn = up, wn;
         int wall = 0;
         V3 center = vadd(in->head, vel);
@@ -4926,6 +5045,12 @@ static void update_coconuts(void)
                 if (in->lv[0]) se_volpitch(in->lv[0], t1 * t1, t1 * 0.5f + 0.5f);
             }
             in->cspd *= 0.925f;
+            { /* _14C = calcVelocityAreaMoveOnGround, _150 its 0.75 */
+                V3 av;
+                int on = area_rail_vel(ground_attr, ground_inst, in->head, 1, &av);
+                if (on && am < 0) am = coco_am_of(in, 1);
+                if (am >= 0) { coco_am[am].on = on; if (on) coco_am[am].v = vmul(av, 0.75f); }
+            }
             in->cstrong = 0;
         } else if (!ground && in->cair < 10) in->cair++; /* isInGroundGracePeriod: _138++ */
         if (wall && vdot(in->cfront, wn) < 0) { /* reflect off the wall */
@@ -4993,7 +5118,10 @@ static void update_coconuts(void)
         for (int k = 0; k < nlogic && !broken; k++)
             if (logic[k].kind == LOGIC_DEATH && row_shown(logic[k].row) && area_inside(&sc->objs[logic[k].row], in->head)) broken = 1;
         if (broken) { fx_at(FX_COCONUT_COCONUTBREAK, in->head, up); *ph = 2; *t = 0; in->m[12] = 1e9f; continue; } /* hidden until it comes back */
-        if (ground && in->cspd < 1.5f) { /* tryMoveEnd: statusToWait (calcMoveSpeed: the rolling speed) */
+        float amv = am >= 0 ? vlen(coco_am[am].v) : 0.0f;
+        if (ground && !(am >= 0 && coco_am[am].on && in->cair < 10) && (in->cspd > amv ? in->cspd : amv) < 1.5f) { /* tryMoveEnd:
+                                                           * statusToWait (calcMoveSpeed: max(_8C, |_150|); not on the floor) */
+            if (am >= 0) coco_am[am].in = NULL;
             *ph = 0; in->cspd = in->cfall = 0;
             printf("coconut %d stops" "\n", row);
         }
@@ -5431,7 +5559,7 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->giver = strcmp(name, "DeadLeaves") == 0 ? 1 : strcmp(name, "Pompon2Plant") == 0 || strcmp(name, "Pompon4Plant") == 0 ? 2 : 0;
     ci->hipsw = strcmp(name, "HipDropSwitch") == 0 ? 1 : strcmp(name, "HipDropTimerSwitch") == 0 ? 2 :
                 strncmp(name, "PicketSwitch", 12) == 0 ? 3 : 0;
-    ci->seesaw = strcmp(name, "PhantomShipHandle") == 0;
+    ci->seesaw = strcmp(name, "PhantomShipHandle") == 0 ? 1 : seesaw_se(name) ? 2 : strcmp(name, "LavaHomeSeesaw") == 0 ? 4 : 0;
     ci->bridge = strcmp(name, "PhantomShipBridge") == 0;
     ci->dossun = strcmp(name, "Dossun") == 0;
     ci->onimasu = strcmp(name, "Onimasu") == 0 || strcmp(name, "OnimasuPivot") == 0;
@@ -5750,6 +5878,7 @@ static void game_rebind_(void)
             char bn[40]; snprintf(bn, sizeof bn, "%sBloom", name); in->md_bloom = scene_model(s, bn);
             if (r->type < 1024) { bloom_of[r->type] = in->md_bloom; bloom_ok[r->type] = 1; }
         }
+        if (in->seesaw == 2 && r->arg[6] != 0) in->seesaw = 3; /* setupInitInfoSeesaw: RotateAxis 0 the one axis rotator, else the two axis one */
         if (in->seesaw) { in->rotor = 0; seesaw_matrix(in); }
         in->railer = scene_blob_g && ((r->arg[7] > 0 && (r->arg[7] >> 30 & 1)) || in->eyebeamer || st_rail_obj(name) || !strcmp(name, "OceanSmallTurtle")) && r->path >= 0 ? /* (st_rail_obj: an objinfo RailMoveObj; OceanSmallTurtle's createMapPartsRailMoverForMercator) */
                      find_path(scene_blob_g, r->zone, r->path) : NULL;
@@ -6420,13 +6549,31 @@ int game_test_petari(void) /* the first Petari: Mario 800 off it (it comes, wait
     return -1;
 }
 
-int game_test_seesaw(int phase) /* the first PhantomShipHandle: Mario dropped 150 along its X (phase 0) or onto it in a
-                                 * hip drop (phase 1); its zone first */
+#ifndef SEESAW_N
+#define SEESAW_N 0
+#endif
+int game_test_seesaw(int phase) /* the first seesaw (XF=-DSEESAW_N=k: the k-th row of one, -DSEESAW_AXIS2: the first on two axes): Mario dropped 150 along its X
+                                 * (phase 0) or onto it in a hip drop (phase 1); its zone first */
 {
     test_nolost = 1;
+    int want = -1, nth = 0;
+    static int listed;
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const char *cn = sc->types + 32 * sc->objs[i].type;
+        if (!strcmp(cn, "PhantomShipHandle") || !strcmp(cn, "LavaHomeSeesaw") || seesaw_se(cn)) {
+            if (!listed) printf("seesaw test: %d is row %d %s axis %d arg3 %d\n", nth, (int)i, cn, (int)sc->objs[i].arg[6], (int)sc->objs[i].arg[3]);
+#ifdef SEESAW_AXIS2 /* the first two axis one */
+            if (want < 0 && seesaw_se(cn) && sc->objs[i].arg[6] != 0) want = (int)i;
+            nth++;
+#else
+            if (nth++ == SEESAW_N) want = (int)i;
+#endif
+        }
+    }
+    listed = 1;
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
-        if (!in->seesaw) continue;
+        if (!in->seesaw || in->row != want) continue;
         int k = seesaw_of(in->row);
         if (k < 0) return -1;
         V3 pos = v3(in->m[12], in->m[13], in->m[14]), up = up_at(pos, mario->up);
@@ -6438,16 +6585,14 @@ int game_test_seesaw(int phase) /* the first PhantomShipHandle: Mario dropped 15
             mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
             if (phase) { mario->hip = HIP_START; mario->hip_t = 0; }
         }
-        if (game_frame % 20 == 0) printf("seesaw: nrv %d angle %d vel x100 %d on %d hip %d\n", seesaws[k].nrv, (int)seesaws[k].angle, (int)(seesaws[k].vel * 100), mario_ground == i, mario->hip);
+        if (game_frame % 20 == 0) printf("seesaw %s kind %d: nrv %d angle %d up %d %d %d vel x1000 %d on %d hip %d\n", sc->types + 32 * sc->objs[in->row].type, in->seesaw, seesaws[k].nrv, (int)seesaws[k].angle, (int)(in->m[4] * 1000), (int)(in->m[5] * 1000), (int)(in->m[6] * 1000), (int)(seesaws[k].vel * 1000), mario_ground == i, mario->hip);
         return seesaws[k].nrv;
     }
-    int ty = scene_type(sc, "PhantomShipHandle");
-    for (u32 i = 0; i < sc->nobjs; i++)
-        if (sc->objs[i].type == ty) {
-            V3 p = row_pos(&sc->objs[i]);
-            mario->up = up_at(p, mario->up); mario->pos = vadd(p, vmul(mario->up, 400.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
-            return -2;
-        }
+    if (want >= 0) {
+        V3 p = row_pos(&sc->objs[want]);
+        mario->up = up_at(p, mario->up); mario->pos = vadd(p, vmul(mario->up, 400.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return -2;
+    }
     return -1;
 }
 
@@ -20650,8 +20795,6 @@ static void m_start_step(Player *m, V3 at) /* startStep, MarioStep::start */
  * a wall (front, side or back) the part into it and along gravity is dropped. tryJump takes the two off his velocity
  * and adds them to the jump (half when against it).
  * ponytail: the rail's speed is its path_arg3 (10 when unset), which the PATH entries do not carry */
-static const unsigned char *find_path(const unsigned char *blob, int zone, int id);
-static float rail_nearest(const float *p, int n, V3 q);
 static V3 m_power_wall(Player *m, V3 v) /* (_8 || _19 || _1A) */
 {
     if (mw.w8 || mw.w19 || mw.w1A) {
@@ -20664,37 +20807,14 @@ static void m_power_moves(Player *m)
 {
     m_v190 = m_v19C = v3(0, 0, 0);
     if (!m->grounded || m->jumping) return;
-    if (m->floor == 28) { /* powerAreaMove: MR::calcAreaMoveVelocity */
-        int a = area_obj("AreaMoveSphere", m->pos);
-        if (a >= 0) {
-            const Row *r = &sc->objs[a];
-            V3 x, z;
-            row_axes(r, &x, &z);
-            V3 up = vcross(z, x), radial = vsub(row_pos(r), m->pos);
-            radial = vlen(radial) > 1e-6f ? vnorm(radial) : v3(0, 0, 0);
-            up = vsub(up, vmul(radial, vdot(up, radial)));
-            up = vlen(up) > 1e-6f ? vnorm(up) : v3(0, 0, 0);
-            m_v190 = m_power_wall(m, vmul(up, r->arg[0] == -1 ? 10.0f : (float)r->arg[0]));
-            m->vel = vadd(m->vel, m_v190); /* addVelocity */
-        }
+    V3 v; /* the area's and the rail's lookups are the enemies' (area_rail_vel) */
+    if (m->floor == 28 && area_rail_vel(m->floor, -1, m->pos, 1, &v)) { /* powerAreaMove: MR::calcAreaMoveVelocity */
+        m_v190 = m_power_wall(m, v);
+        m->vel = vadd(m->vel, m_v190); /* addVelocity */
     }
-    if (m->floor == 27 && mario_ground >= 0 && insts[mario_ground].row >= 0) { /* powerRailMove: his ground's host */
-        const Row *r = &sc->objs[insts[mario_ground].row];
-        const unsigned char *e = scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
-        if (e) {
-            const float *pts = (const float *)(e + 24);
-            u32 np = *(const u32 *)(e + 8);
-            float c = rail_nearest(pts, (int)np, m->pos); /* calcNearestRailDirection */
-            V3 d = vsub(rail_at(pts, np, c + 10.0f), rail_at(pts, np, c));
-            if (vlen(d) < 1e-3f) d = vsub(rail_at(pts, np, c), rail_at(pts, np, c - 10.0f)); /* (the rail's end) */
-            d = vlen(d) > 1e-6f ? vnorm(d) : v3(0, 0, 0);
-            if (mw.w8 || mw.w19 || mw.w1A) { /* (the direction, before its speed) */
-                V3 n = m_wall_norm(m);
-                if (vdot(n, d) < 0.0f) { d = vsub(d, vmul(n, vdot(d, n))); d = vtangent(d, m->up); }
-            }
-            m_v19C = vmul(d, 10.0f);
-            m->vel = vadd(m->vel, m_v19C);
-        }
+    if (m->floor == 27 && area_rail_vel(m->floor, mario_ground, m->pos, 2, &v)) { /* powerRailMove: his ground's host */
+        m_v19C = m_power_wall(m, v); /* (the wall takes its part of the direction; x 10 after: the same) */
+        m->vel = vadd(m->vel, m_v19C);
     }
 }
 static void m_check_step(Player *m) /* checkStep */
@@ -24321,6 +24441,7 @@ static void unizo_update(Kuribo *k, V3 to, float d)
     int grounded = 0, damage = 0;
     if (k->timer > 0) k->timer--; /* control: mSpinAnimTimer */
     k->sstep++; /* its BTP's frame */
+    wa_update(k, asc_tight); /* control: mAnimScaleController->update (setParamTight) */
     if (!k->from) { k->from = (float)(100 + rand() % 100); uz_btp(k, UZB_BLINK); } /* init: startBtp Blink, mBlinkFrame getRandom(100, 200) */
     { /* isBindedGround: a sphere a little lower touches; isBreakGround: a Damage (4) / DamageFire (10) face */
         V3 probe = vsub(center, vmul(up, 4.0f));
@@ -24588,6 +24709,7 @@ static void w_bind(Kuribo *k, float r)
     k->on_ground = collide_n(&c, up, r, &gn, &wn, &wall);
     coll_binder = 0;
     kcl_ml = -1;
+    if (k->on_ground) { k->gattr = ground_attr; k->ginst = (short)ground_inst; }
     k->gn = k->on_ground ? gn : up;
     k->on_wall = wall ? 2 : 0; k->wn = wn;
     k->pos = vsub(c, vmul(up, r));
@@ -26422,8 +26544,9 @@ static void kuribo_update(Kuribo *k)
     }
     k->step++;
     k->act_t += k->act_rate;
-    /* control(): blendQuatFromGroundAndFront 0.05 / 0.5; tryDead */
+    /* control(): blendQuatFromGroundAndFront 0.05 / 0.5; the AreaMove / RailMove floor's 0.05 (addVelocity); tryDead */
     w_blend_quat(k, w_up_ref(k), k->front, 0.05f, 0.5f);
+    { V3 av; if (k->on_ground && area_rail_vel(k->gattr, k->ginst, k->pos, 3, &av)) k->vel = vadd(k->vel, vmul(av, 0.05f)); }
     float depth;
     if (kn_in(k, KNB(KN_WANDER) | KNB(KN_FINDPLAYER) | KNB(KN_CHASE) | KNB(KN_STAGGER) | KNB(KN_NONACTIVE) | KNB(KN_ATTACKSUCCESS)) &&
         (in_death(k->pos) || in_water(k->pos, vmul(k->grav, -1.0f), &depth))) { k->item = 0; w_kill(k); return; }
@@ -26588,7 +26711,6 @@ static V3 w_joint(Kuribo *k, const Model *md, int j, V3 off)
  * its nerve (phase: 0 Stop, 1 Anim, 2 HitReaction) and step (timer); _C = (sqrt(1 / y), y, sqrt(1 / y)).
  * p: _0, _4, _8, _C, _20, _24, _28 of its AnimScaleParam. ponytail: DpdVibration / Crush (the 2P pointer, crushes)
  * left out: no walker here starts them */
-enum { ASC_STOP, ASC_ANIM, ASC_HIT };
 static void asc_start(Kuribo *k, int nrv) { k->phase = nrv; k->timer = -1; }
 static void asc_scale(float *y, float *v, float f1, float f2, float lo, float hi) /* updateScale */
 {
@@ -27179,7 +27301,8 @@ static int spin_hit_exec(Kuribo *k, int max, int item, int stop, float g, int ni
  * touching it in Move / Attack unless he is on top (HitReaction) or hip-dropping; a trample or hip drop: Press (30, a
  * coin); a spin: HitPunch (SpinHitController 22 / 21 / 3, 1.5, 20 / 35, three star pieces); a star piece: StunStart
  * (rate 2), Stun 120, StunEnd, and a spin while stunned blows it too. Its effects TakoboDeath, Hit. ponytail: no star
- * pointer (DpdPointed), no freeze (Ice), no fire floor bounce (arg0), no anim scale */
+ * pointer (DpdPointed), no freeze (Ice), no fire floor bounce (arg0). Its AnimScaleController (defaults): a hit on
+ * Mario starts its hit reaction, its model drawn at _C x scale */
 enum { TN_WAIT, TN_MOVE, TN_PRESS, TN_ATTACK, TN_HITPUNCH, TN_STUNSTART, TN_STUN, TN_STUNEND, TN_HITREACTION };
 static void takobo_update(Kuribo *k, V3 to, float d)
 {
@@ -27271,6 +27394,7 @@ static void takobo_update(Kuribo *k, V3 to, float d)
     }
     k->step++;
     k->act_t += k->act_rate;
+    wa_update(k, asc_def); /* control: mScaleController->updateNerve */
     k->qy = vmul(k->grav, -1.0f); k->qz = vnorm(vtangent(k->front, k->qy)); /* calcMtxFromGravityAndZAxis */
     k->up = k->qy;
     w_bind(k, 80.0f * s);
@@ -27287,6 +27411,7 @@ static void takobo_update(Kuribo *k, V3 to, float d)
     } else if (vlen(vsub(mc, c)) < 70.0f * s + HIT_BODY_R && mario->hip != HIP_FALL && !mario->hurt_timer &&
                (k->nrv == TN_MOVE || k->nrv == TN_ATTACK) && vdot(vsub(mario->pos, c), k->qy) < 0.25f * 70.0f * s) {
         hurt_mario(c, 15.0f);               /* sendMsgEnemyAttack (not isPlayerExistUp) */
+        wa_start(k, ASC_HIT);               /* startHitReaction */
         k->vel = v3(0, 0, 0); w_nrv(k, TN_HITREACTION);
     }
     (void)d;
@@ -27907,8 +28032,9 @@ static void butterfly_update(Kuribo *k)
  * (arg1, 20) 2 every 5 frames from Head3 (20, 40), the rest at the end, then kill (its dead switch). Its body (60, 60
  * up) pushes Mario while shown (isSolidBody); a jet turtle or fire ball then: KickOut, an enemy's blow: SpinOut.
  * Its up turns 0.1 a frame to the ground's normal (control). ponytail: no 2P pointer (Freeze), no
- * footprints (FootPrint decals) or smoke effects, no move limit collision, no AnimScaleController
- * (hit reaction); Mario's spin hits once a spin */
+ * footprints (FootPrint decals) or smoke effects, no move limit collision; Mario's spin hits once a spin.
+ * A star piece in Swoon (which starts over), SwoonStart, SwoonEnd or a shown Wait: its AnimScaleController's hit
+ * reaction (defaults) */
 /* Kuribo fields: phase hidden (hideModel), timer star pieces left, sstep mMeanderStep, to mMeanderAngle, ttarget
  * mTargetDir, tcenter mBodyCenter, bshow its spin latch */
 static int petari_solid(const Kuribo *k) /* isSolidBody */
@@ -28076,6 +28202,7 @@ static void petari_update(Kuribo *k)
     }
     k->step++;
     k->act_t += k->act_rate;
+    wa_update(k, asc_def); /* control: mAnimScaleCtrl->updateNerve */
     /* control: its up 0.1 of the way to the ground's normal (or against gravity), front kept */
     V3 to = w_on_ground(k) ? k->gn : vmul(k->grav, -1.0f), ax = vcross(k->qy, to);
     if (vlen(ax) > 1e-6f) {
@@ -28656,10 +28783,11 @@ static float w_rail_nearest(const float *p, u32 n, V3 q) /* moveCoordToNearestPo
  * swooning, a trample or hip drop: Trample (DownStep, at 36 a coin 100 up: dead); a spin or a kick: Blow
  * (SpinHitController 25 / 20 / 4, 1.5, 30 / 40, three star pieces). A SinkDeath floor: SinkDown (dead at its end).
  * The bomb: Hold (Normal), then Wait 150 (Signal): gravity 1.2, rebounds 0.4 above 5 (SE_EM_BOMBBIRDBOMB_LAND from
- * 5.5); touching Mario it explodes on him; then Explosion (its sensor eased out to 280 in 10, killed after 20; a strong
+ * 5.5; on an AreaMove / RailMove floor it takes the floor's move instead: SE_EM_BOMBBIRDBOMB_LAND_SAND); swooning the
+ * bird is carried by such a floor too (area_rail_vel); touching Mario it explodes on him; then Explosion (its sensor eased out to 280 in 10, killed after 20; a strong
  * rumble / camera shake by distance 800 / 1200 / 2000). ponytail: no star pointer bind (WalkerStateBindStarPointer),
- * no press between roof and ground (isPressedRoofAndGround: the walker binder keeps no roof nor its press sensor), no
- * shifting sand (calcVelocityAreaOrRailMoveOnGround), the ground under it a line probe (bb_ground), the bomb's BRKs
+ * no press between roof and ground (isPressedRoofAndGround: the walker binder keeps no roof nor its press sensor),
+ * the ground under it a line probe (bb_ground), the bomb's BRKs
  * (Normal / Signal: BRKs are baked) and its turning quaternion (_9C stays zero) */
 enum { BD_FLY, BD_SEARCH, BD_ATTACK, BD_BLOW, BD_ESCAPE, BD_DAMAGE, BD_FALL, BD_SWOONSTART, BD_SWOON, BD_SWOONEND, BD_TRAMPLE, BD_SINKDOWN };
 enum { BDB_HOLD, BDB_WAIT, BDB_EXPLOSION };
@@ -28834,6 +28962,10 @@ static void bbd_update(Kuribo *k)
         if (k->nrv == BD_SINKDOWN) { w_se_lv(k, SE_EM_LV_SINK); k->lv2[0] = se_level(SE_EV_LV_BOMBBIRD_SINK, &k->pos.x, k->lv2[0]); }
         if (k->nrv != BD_SINKDOWN && w_on_ground(k)) k->vel = vtangent(k->vel, vnorm(k->grav)); /* vecKillElement(mVelocity, mGravity) */
         bbd_ground_move(k, 0.8f); /* hOnGroundParam */
+        if (k->nrv == BD_SWOONSTART || k->nrv == BD_SWOON || k->nrv == BD_SWOONEND) { /* shifting sand: hShiftingSandVel 1 */
+            V3 av;
+            if (k->on_ground && area_rail_vel(k->gattr, k->ginst, k->pos, 3, &av)) k->vel = av;
+        }
         if (k->nrv == BD_SWOONSTART && w_bck_stopped(k)) w_nrv(k, BD_SWOON);
         else if (k->nrv == BD_SWOON && st > 240) w_nrv(k, BD_SWOONEND); /* hSwoonTime */
         else if (k->nrv == BD_SWOONEND) {
@@ -28894,8 +29026,11 @@ static void update_bbd_bombs(void)
         if (b->nrv == BDB_HOLD) { b->vel = v3(0, 0, 0); continue; } /* exeHold: the bird places it */
         if (b->nrv == BDB_WAIT) {
             float dn = vdot(g, b->vel);
+            V3 av;
+            int sand = b->gnd && area_rail_vel(b->gattr, b->ginst, b->pos, 3, &av); /* calcVelocityAreaOrRailMoveOnGround */
+            if (sand) { b->vel = av; if (dn >= 5.5f) se_start(SE_EM_BOMBBIRDBOMB_LAND_SAND, &b->pos.x); } /* sGroundFric 1 */
             b->vel = vadd(b->vel, vmul(g, 1.2f)); /* addVelocityToGravity(sGravityAccel) */
-            if (b->bnd) { /* reboundVelocityFromCollision(sReboundRate 0.4, sReboundSpeedMin 5, 1) */
+            if (b->bnd && !sand) { /* reboundVelocityFromCollision(sReboundRate 0.4, sReboundSpeedMin 5, 1) */
                 float f = vdot(b->n, b->vel);
                 if (f < -5.0f) { b->vel = vsub(b->vel, vmul(b->n, f * 1.4f)); if (dn >= 5.5f) se_start(SE_EM_BOMBBIRDBOMB_LAND, &b->pos.x); }
                 else if (f < 0.0f) b->vel = vsub(b->vel, vmul(b->n, f));
@@ -28930,6 +29065,7 @@ static void update_bbd_bombs(void)
         int wall = 0;
         int ground = collide_n(&c, vmul(g, -1.0f), 60.0f, &gn, &wn, &wall);
         b->bnd = ground || wall; b->n = ground ? gn : wn;
+        b->gnd = ground; if (ground) { b->gattr = ground_attr; b->ginst = ground_inst; }
         b->pos = c;
         if (b->on && b->nrv != BDB_HOLD) { float m[16]; basis_matrix(m, b->pos, vmul(g, -1.0f), v3(0, 0, 1), 0); fx_named("BombBirdBomb", "LocusSmoke", m, NULL, b); } /* start: emitEffect LocusSmoke (kill: deleteEffect) */
     }
@@ -28953,8 +29089,8 @@ static void draw_bbd_bombs(void)
  * (SearchOn), then Threat (SearchWait) facing him (its front turned 0.5 a frame on its side's plane, within 30 of
  * horizontal), or ThreatWith(Left / Right)Turn (SearchRotate) when he is 35 off its front; past 1500 Wait. Its body
  * (100 at 30 up) hurts Mario strongly (Attack); a spin or explosion knocks it out (40 away, Death 30 or bound: its
- * effect, a coin). ponytail: no point light, no star pointer swoon, the star piece's hit reaction (anim scale) not
- * shown */
+ * effect, a coin); a star piece: its AnimScaleController's hit reaction (defaults). ponytail: no point light, no star
+ * pointer swoon */
 enum { JF_WAIT, JF_WAITR, JF_WAITL, JF_FIND, JF_THREAT, JF_THREATR, JF_THREATL, JF_DEATH, JF_ATTACK, JF_RAILGOAL };
 static V3 jf_side(const Kuribo *k) { return vnorm(vcross(vmul(k->grav, -1.0f), k->front)); }
 static void jf_face(Kuribo *k) /* faceToMario */
@@ -29078,6 +29214,7 @@ static void jelly_update(Kuribo *k)
         k->vel = vmul(k->grav, sinf((k->lva[0] + 45.0f) * 0.0174533f));
         k->lva[0] += 1.0f;
     }
+    wa_update(k, asc_def); /* control: mController->updateNerve */
     k->pos = vadd(k->pos, k->vel);
     if (!k->bind_off && k->nrv == JF_DEATH) { /* the binder (130) only once it is knocked out */
         V3 c = k->pos, gn, wn;
@@ -29109,8 +29246,9 @@ static void jelly_update(Kuribo *k)
  * WaitWith(Right / Left)Turn (0.2 x (1 - step / 280) a frame about its up). Its body (350, 60 below) shocks Mario
  * (sendMsgEnemyAttackElectric: HitMarkNormal, Attack); a spin on it shocks him too. A JetTurtle or an explosion
  * knocks it out: Damage (then DangerWait), the second time (or an invincible Mario at once) Death (stopScene 5, the
- * binder (400) on, PRE_DEAD; at 30 or bound: DEAD, a coin). ponytail: no point light, no star pointer swoon
- * (WalkerStateBindStarPointer: the 2P pointer), the star piece's hit reaction (AnimScaleController) not shown, no
+ * binder (400) on, PRE_DEAD; at 30 or bound: DEAD, a coin); a star piece: its AnimScaleController's hit reaction
+ * (setParamTight). ponytail: no point light, no star pointer swoon
+ * (WalkerStateBindStarPointer: the 2P pointer), no
  * BRK / BTK clips (Wait / Damage / DangerWait colours), no DangerBrk BAS, no changeShowModelFlagSyncNearClipping 700 */
 enum { JE_WAIT, JE_WAITR, JE_WAITL, JE_DAMAGE, JE_DEATH, JE_ATTACK, JE_RAILGOAL };
 static void je_knock(Kuribo *k) /* knockOut */
@@ -29196,6 +29334,7 @@ static void jelec_update(Kuribo *k)
             k->lva[0] += 1.0f;
         }
     }
+    wa_update(k, asc_tight); /* control: mController->updateNerve */
     k->pos = vadd(k->pos, k->vel);
     if (!k->bind_off) { /* initBinder 400, on once it dies */
         V3 c = k->pos, gn, wn;
@@ -29490,7 +29629,8 @@ static void kanina_update(Kuribo *k)
  * The stone hurts Mario (EnemyAttack) and breaks; a spin or star piece breaks it. Mario's hip drop landing 130-1500
  * off flips it (SwoonStart, Swoon 120, SwoonEnd back into the hole); a trample or hip drop on it then: StampDeath
  * (60: Death, a coin, SW_DEAD), a spin: HitBlow (30 away, 50 up, 20: three star pieces); a star piece while it is
- * up flips it. Its body (150 at its head) pushes Mario. ponytail: no 2P pointer, no hit-reaction scale, the stone's
+ * up (Appear, Search, Throw) flips it, one while it swoons starts its AnimScaleController's hit reaction (defaults).
+ * Its body (150 at its head) pushes Mario. ponytail: no 2P pointer, the stone's
  * spin only its Rotate clip */
 enum { MG_HIDEWAIT, MG_HIDE, MG_APPEAR, MG_SEARCH, MG_TURN, MG_THROW, MG_SWOONSTART, MG_SWOONEND, MG_SWOON, MG_HIPREACT,
        MG_STAMPDEATH, MG_HITBLOW };
@@ -29572,6 +29712,7 @@ static void mogu_update(Kuribo *k)
     }
     float near = vlen(vsub(mario->pos, k->pos)), sight = mg_cannonfleet() ? 1500.0f : 900.0f;
     int st = ++k->step;
+    wa_update(k, asc_def); /* control: mAnimScaleController->updateNerve */
     switch (k->nrv) {
     case MG_HIDEWAIT: {
         V3 tp = vsub(mario->pos, k->pos);
@@ -33516,7 +33657,8 @@ static void draw_tako_inks(void)
  * Blow (SpinHitController 40 / 20, no gravity, three star pieces at 10, killed bound or at 15; stopScene 3,
  * EXPLODE_S). Dead in a death area or water. Death effect, its dead switch. Its posture slerps 0.15 to upside down,
  * 0.02 to -1.8 in FlyPursueLast, 0.2 back, Blow spins it -1 rad a frame.
- * ponytail: no star pointer bind, no AnimScaleController / AnimStampController squash, no
+ * Its AnimScaleController (defaults) squashes it as it lands from OverturnFall / Recover and as it hits Mario
+ * (startAndAddScaleVelocityY 0.1, hHitScaleYSpeed). ponytail: no star pointer bind, no AnimStampController squash, no
  * Appear effect; the posture turns the whole model about its Center joint (its base matrix) */
 enum { KT_NOCALCWAIT, KT_WAIT, KT_SEARCH, KT_ESCAPESEARCH, KT_PREESCAPE, KT_FLYSTART, KT_FLYPURSUE, KT_FLYESCAPE, KT_FLYPURSUELAST,
        KT_OVERTURNFALL, KT_OVERTURN, KT_PRERECOVER, KT_RECOVER, KT_HITTOPLAYER, KT_BLOW, KT_STAMPDEATH };
@@ -33582,6 +33724,7 @@ static void kotebug_update(Kuribo *k)
     }
     k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
     float depth;
+    wa_update(k, asc_def); /* control: mScaleController->updateNerve */
     if (in_death(k->pos) || in_water(k->pos, vmul(k->grav, -1.0f), &depth)) { kb_kill(k); return; } /* control */
     /* the posture (about its X): slerped to its target, Blow's turning on */
     if (k->nrv == KT_OVERTURN || k->nrv == KT_OVERTURNFALL || k->nrv == KT_PRERECOVER || k->nrv == KT_STAMPDEATH) k->from += (3.1415927f - k->from) * 0.15f;
@@ -33665,6 +33808,7 @@ static void kotebug_update(Kuribo *k)
             basis_matrix(m, k->pos, k->qy, k->qz, 0);
             fx_named("KoteBug", "PoteSmoke", m, NULL, NULL);
             w_se(k, SE_EM_KOTEBUG_FALL_LAND);
+            wa_start(k, ASC_ANIM); k->av += 0.1f; /* startAndAddScaleVelocityY(hHitScaleYSpeed), startAnim */
             w_nrv(k, KT_OVERTURN);
         }
         break;
@@ -33686,10 +33830,10 @@ static void kotebug_update(Kuribo *k)
         if (st == 0) { w_act(k, "Pon"); w_se(k, SE_EM_KOTEBUG_RECOVER); kb_jump(k, 24.0f); }
         w_rebound0(k);
         kb_damp(k);
-        if (w_on_ground(k)) { w_se(k, SE_EM_KOTEBUG_LAND); w_nrv(k, KT_WAIT); }
+        if (w_on_ground(k)) { w_se(k, SE_EM_KOTEBUG_LAND); wa_start(k, ASC_ANIM); k->av += 0.1f; w_nrv(k, KT_WAIT); } /* (startAndAddScaleVelocityY, startAnim) */
         break;
     case KT_HITTOPLAYER:
-        if (st == 0) { w_act(k, "Wait"); kb_jump(k, 10.0f); k->vel = vadd(k->vel, vmul(k->front, -10.0f)); }
+        if (st == 0) { wa_start(k, ASC_ANIM); k->av += 0.1f; w_act(k, "Wait"); kb_jump(k, 10.0f); k->vel = vadd(k->vel, vmul(k->front, -10.0f)); } /* (startAndAddScaleVelocityY, startAnim) */
         w_rebound0(k);
         kb_damp(k);
         if (w_on_ground(k)) w_nrv(k, KT_FLYSTART);
@@ -34464,12 +34608,20 @@ static int w_zone_ground(const Kuribo *k)
  * (AnimScaleController's defaults). A death area, water: kill; a SinkDeath floor: SinkDown (its clip, the sink level
  * SEs, no shadow) then kill. kill: Death, EXPLODE_S, SW_DEAD (walker_inhale).
  * ponytail: no star pointer bind (WalkerStateBindStarPointer: the 2P pointer), no move limit
- * collision, no velocity areas / rail-moving ground, no danger floor codes in the fall check */
+ * collision, no danger floor codes in the fall check. On an AreaMove / RailMove floor it is carried (area_rail_vel) */
 enum { KR_FIXWAIT, KR_WAIT, KR_SPWAIT, KR_WALK, KR_TURN, KR_WALKRAIL, KR_SEARCH, KR_PURSUE, KR_BROKEN, KR_STEPBROKEN,
        KR_RECOVER, KR_HITREACTION, KR_SPHIT, KR_DEATH, KR_SINKDOWN };
 static const float kr_asc[7] = {0.2f, 0.91f, 0.2f, 1.8f, 0.06f, 0.12f, 0.91f}; /* AnimScaleParam's defaults (AnimScaleController(0)) */
 static void walker_inhale(Kuribo *e);
 static int kr_broken(const Kuribo *k) { return k->nrv == KR_BROKEN || k->nrv == KR_STEPBROKEN || k->nrv == KR_RECOVER || k->nrv == KR_DEATH; }
+static void w_add_vel_limit(Kuribo *k, V3 v) /* MR::addVelocityLimit: up to |v| along it */
+{
+    float l = vlen(v);
+    if (l < 1e-6f) return;
+    V3 d = vmul(v, 1.0f / l);
+    float f = vdot(d, k->vel);
+    if (l > f) k->vel = vadd(k->vel, vmul(d, l - f));
+}
 /* moveAndTurnToDirection (ActorMovementUtil.cpp:1203): its front turned deg on gravity's plane and onto the ground,
  * accel along it, x friction, rebound, then gravity (or into the ground) */
 static void kr_move(Kuribo *k, V3 dir, float accel, float grav, float fric, float deg)
@@ -34597,8 +34749,12 @@ static void karon_update(Kuribo *k, V3 to, float d)
         break;
     case KR_BROKEN: case KR_STEPBROKEN:
         if (st == 0) { w_act(k, k->nrv == KR_BROKEN ? "SpinBreak" : "StepBreak"); w_se(k, SE_EM_KARON_BROKEN); w_se(k, SE_EV_KARON_DAMAGE); }
-        if (k->on_ground) k->vel = vmul(k->gn, vdot(k->gn, k->vel)); /* the velocity along its ground's normal only */
-        else k->vel = vadd(vmul(k->grav, vdot(k->grav, k->vel)), vmul(k->grav, 1.0f)); /* forceBindOnGround(1, 0.8) */
+        {
+            V3 av; /* carried by an AreaMove / RailMove floor (addVelocityLimit, hNoMoveNoTurnParam) */
+            if (k->on_ground && area_rail_vel(k->gattr, k->ginst, k->pos, 3, &av)) { w_add_vel_limit(k, av); kr_to_player(k, 0.0f, 1.2f, 0.8f, 0.0f); }
+            else if (k->on_ground) k->vel = vmul(k->gn, vdot(k->gn, k->vel)); /* the velocity along its ground's normal only */
+            else k->vel = vadd(vmul(k->grav, vdot(k->grav, k->vel)), vmul(k->grav, 1.0f)); /* forceBindOnGround(1, 0.8) */
+        }
         if (st > 300) w_nrv(k, KR_RECOVER);
         break;
     case KR_RECOVER:
@@ -34633,6 +34789,10 @@ static void karon_update(Kuribo *k, V3 to, float d)
 #endif
     k->step++;
     k->act_t += k->act_rate;
+    if (k->nrv != KR_STEPBROKEN && k->nrv != KR_BROKEN) { /* control: the AreaMove / RailMove floor's move (addVelocityLimit) */
+        V3 av;
+        if (k->on_ground && area_rail_vel(k->gattr, k->ginst, k->pos, 3, &av)) w_add_vel_limit(k, av);
+    }
     w_bind(k, 70.0f);
     k->qy = vmul(k->grav, -1.0f);
     k->qz = vlen(vtangent(k->front, k->qy)) > 1e-6f ? vnorm(vtangent(k->front, k->qy)) : k->qz; /* LiveActor::calcAndSetBaseMtx */
@@ -37815,24 +37975,72 @@ static int mp_running(const Row *r, int row)
  * along its X / (0.1 x inertia: RotateAccelType, 1000 unset); after 2 frames the restoring force (RotateStopTime x
  * 0.01 towards its first up; slower than 0.1 and upright: stopped) and friction 0.99; clamped to RotateSpeed x 0.01
  * a frame; RotateAngle > 0 limits it (bounced back x -0.5). A hip drop on it adds 40 x that. Stopped: Stay. */
+/* SimpleMapObj.cpp: SimpleSeesawObj is a MapObjActor with one of the two seesaw rotators (setupInitInfoSeesaw:
+ * RotateAxis 0 the one axis one, else MapPartsSeesaw2AxisRotator), started at init (no SW_B on any placed), its move
+ * sound from sSeDataTable while it turns faster than 0.001. MapPartsSeesaw2AxisRotator.cpp: Stay until Mario stands on
+ * it, then Move for good: with him on it, it blends (blendMtxRotate: JMAQuatLerp) towards its base turned RotateAngle
+ * about its up x his place in its frame, by 0.001 x his distance / inertia (RotateAccelType, 500 unset; a tenth of it
+ * in the hip drop's frame), then back towards its base by 0.0001 x RotateStopTime. The inertia is over the pack's four
+ * RotateAccelType bits: slice.py map_parts writes it whole to arg 3 (unused by these classes); an older pack's row
+ * keeps the four bits.
+ * LavaHomeSeesaw.cpp / LavaHomeSeesawRotator.cpp: the one axis seesaw again with its own nerves: it starts at 0.01 a
+ * frame; Stay turns too (no friction) until Mario lands, then MoveStart: a weak camera shake, ON_METAL, 0.7 a frame
+ * down for steps 0-5 and back up for 6-7, Move at 8; Stay again when slower than 0.01 and level; no "stopped" snap.
+ * ponytail: its projection map's offset (initAfterPlacement: updateMtxUseBaseMtxWithLocalOffset) is not made. */
 enum { SS_STAY, SS_MOVESTART, SS_MOVE, SS_HIPDROP };
+static u32 seesaw_se(const char *name) /* sSeDataTable */
+{
+    static const struct { const char *name; u32 se; } t[] = {
+        {"KoopaShipSeesawStep", SE_OJ_LV_KOOPA_SHIP_SEESAW}, {"IceVolcanoBalanceStepA", SE_OJ_LV_VOL_BAL_STEP_ROT},
+        {"IceVolcanoBalanceStepB", SE_OJ_LV_VOL_BAL_STEP_ROT}, {"IceMountainSeesawSlipA", SE_OJ_LV_ICE_M_SEESAW_S},
+        {"IceMountainSeesawSlipB", SE_OJ_LV_ICE_M_SEESAW_M}, {"IceMountainSeesawSlipC", SE_OJ_LV_ICE_M_SEESAW_L},
+        {"IceMountainSeesawSlipD", SE_OJ_LV_ICE_M_SEESAW_L}, {"IceMountainSeesawNoSlipA", SE_OJ_LV_ICE_M_SEESAW_S},
+    };
+    for (u32 i = 0; i < sizeof t / sizeof t[0]; i++) if (!strcmp(name, t[i].name)) return t[i].se;
+    return 0;
+}
+static Quat seesaw_base(const Row *r, V3 *up) /* the placement's rotation (its base matrix at init) */
+{
+    float m[16], one[3] = {1, 1, 1};
+    mat_translate_rot_scale(m, r->pos, r->rot, one);
+    if (up) *up = v3(m[4], m[5], m[6]);
+    return q_from_axes(v3(m[0], m[1], m[2]), v3(m[4], m[5], m[6]), v3(m[8], m[9], m[10]));
+}
 static int seesaw_of(int row)
 {
     for (int i = 0; i < nseesaws; i++) if (seesaws[i].row == row) return i;
     if (nseesaws == MAX_SEESAWS) return -1;
     memset(&seesaws[nseesaws], 0, sizeof seesaws[0]);
     seesaws[nseesaws].row = row; seesaws[nseesaws].step = -1; /* start(): Stay */
+    seesaws[nseesaws].hip = -1; /* (its start() still to run: update_seesaws) */
+    seesaws[nseesaws].q = seesaw_base(&sc->objs[row], NULL);
     return nseesaws++;
 }
-static void seesaw_matrix(Inst *in) /* its placement turned `angle` about its own Z */
+static void seesaw_matrix(Inst *in) /* calcAndSetBaseMtx: its rotator's mRotateMtx at its place */
 {
     const Row *r = &sc->objs[in->row];
     int k = seesaw_of(in->row);
-    float base[16], rz[16], a = k >= 0 ? seesaws[k].angle * 0.0174533f : 0;
-    mat_translate_rot_scale(base, r->pos, r->rot, r->scale);
-    mat_identity(rz);
-    rz[0] = cosf(a); rz[1] = sinf(a); rz[4] = -sinf(a); rz[5] = cosf(a);
-    mat_mul(in->m, base, rz);
+    if (k < 0) { mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale); return; }
+    V3 ax[3];
+    q_axes(seesaws[k].q, &ax[0], &ax[1], &ax[2]);
+    for (int j = 0; j < 3; j++) {
+        in->m[4 * j] = ax[j].x * r->scale[j]; in->m[4 * j + 1] = ax[j].y * r->scale[j]; in->m[4 * j + 2] = ax[j].z * r->scale[j];
+        in->m[4 * j + 3] = 0; in->m[12 + j] = r->pos[j];
+    }
+    in->m[15] = 1;
+}
+static float seesaw_angle(V3 up, V3 gup) /* calcRotatedAngle: its up against gravity's, degrees */
+{
+    float c = vdot(vnorm(up), gup);
+    if (fabsf(1.0f - c) < 0.001f) c = 1.0f;
+    if (fabsf(c) < 0.001f) c = 0.0f;
+    return acosf(c > 1 ? 1 : c < -1 ? -1 : c) * 57.29578f;
+}
+static float seesaw_sign(float x) { return x > 0 ? 1.0f : x < 0 ? -1.0f : 0.0f; } /* MR::sign */
+static Quat q_lerp(Quat a, Quat b, float t) /* JMAQuatLerp (the nearer of b and -b), kept unit */
+{
+    if (a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w < 0) b = (Quat){-b.x, -b.y, -b.z, -b.w};
+    return q_norm((Quat){a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t});
 }
 /* PhantomShipBridge.cpp: with SW_A it waits (no BCK: its bind pose) until SW_A turns on, then MoveA; SW_B on:
  * MoveB; without SW_A it is at MoveA's end at once (setStateMoveA). Step 55 of either: shakeCameraNormal. Its Move
@@ -37928,14 +38136,95 @@ static void update_seesaws(void)
         const Row *r = &sc->objs[in->row];
         int packed = r->arg[7] > 0 ? r->arg[7] : 0, acc = packed >> 4 & 15, stop = packed >> 12 & 0x3FFF;
         float vmax = r->arg[4] != -1 ? r->arg[4] * 0.01f : 0, limit = r->arg[5] > 0 ? (float)r->arg[5] : 0;
-        float inertia = 0.1f * (acc > 0 ? (float)acc : 1000.0f);
+        if (r->arg[3] > 0) acc = r->arg[3]; /* RotateAccelType whole (slice.py map_parts) */
+        const char *cn = sc->types + 32 * r->type;
+        u32 se = in->seesaw == 1 ? SE_OJ_LV_P_SHIP_HANDLE_MOVE : seesaw_se(cn);
+        float se_speed = in->seesaw == 1 ? 0.1f : 0.001f; /* mMoveSoundSpeed */
         V3 pos = v3(in->m[12], in->m[13], in->m[14]), ax = vnorm(v3(in->m[8], in->m[9], in->m[10]));
         V3 x = vnorm(v3(in->m[0], in->m[1], in->m[2])), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
         V3 g = vmul(up_at(pos, v3(0, 1, 0)), -1.0f), off = vsub(mario->pos, pos);
-        float dist = 0.001f * fabsf(vdot(x, off)), sgn = vdot(vcross(off, g), ax) < 0 ? -1.0f : 1.0f;
         int on = mario_ground == i;
+        float old[16];
+        memcpy(old, in->m, 64);
+        if (o->hip < 0) { /* start() */
+            o->hip = 0;
+            if (in->seesaw == 4) o->vel = 0.01f; /* sAngularSpeedMin */
+            float a = seesaw_angle(up, vmul(g, -1.0f));
+            if (in->seesaw != 3 && limit > 0 && limit < a) { /* placed past its limit: turned back over it */
+                o->q = q_norm(q_mul(o->q, q_axis(ax, 1.05f * 0.0174533f * (a - limit))));
+                seesaw_matrix(in);
+                continue;
+            }
+        }
+        if (in->seesaw == 3) { /* MapPartsSeesaw2AxisRotator */
+            if (hip_hit && hip_inst == i) { o->hip = 1; if (o->nrv != SS_HIPDROP) { o->nrv = SS_HIPDROP; o->step = -1; } } /* receiveMsg */
+            if (o->nrv == SS_STAY) { if (on) o->nrv = SS_MOVE; continue; } /* exeStay */
+            int rot = on; /* exeMove */
+            if (o->nrv == SS_HIPDROP) { /* exeHipDrop */
+                rot = o->hip; o->hip = 0;
+                if (!rot) { o->nrv = SS_MOVE; continue; }
+            }
+            V3 bup;
+            Quat qb = seesaw_base(r, &bup);
+            if (rot) { /* rotate() */
+                V3 bx, bz, d = vsub(mario->pos, pos);
+                q_axes(qb, &bx, NULL, &bz);
+                V3 l = v3(vdot(d, bx), vdot(d, bup), vdot(d, bz)); /* mBaseMtxInv x his place */
+                float in2 = (acc > 0 ? (float)acc : 500.0f) * (o->nrv == SS_HIPDROP ? 0.1f : 1.0f); /* getInertiaConst */
+                float sp = 0.001f * vlen(l) / in2;
+                sp = sp < 0 ? 0 : sp > 1 ? 1 : sp;
+                Quat qt = q_mul(qb, q_axis(vcross(bup, l), limit * 0.0174533f)); /* mBaseMtx x the tilt */
+                o->vel = sp - o->vel; /* mRotateSpeed */
+                if (se && fabsf(o->vel) > se_speed) in->lv[0] = se_level(se, &in->m[12], in->lv[0]);
+                o->q = q_lerp(o->q, qt, sp);
+            }
+            if (o->nrv == SS_MOVE) { /* restoreMove */
+                float sp = 0.0001f * stop;
+                o->q = q_lerp(o->q, qb, sp > 1 ? 1 : sp);
+            }
+            seesaw_matrix(in);
+            if (on) carry(old, in);
+            continue;
+        }
+        float inertia = 0.1f * (acc > 0 ? (float)acc : 1000.0f);
+        float dist = 0.001f * fabsf(vdot(x, off)), sgn = seesaw_sign(vdot(vcross(off, g), ax));
         if (hip_hit && hip_inst == i) { o->nrv = SS_HIPDROP; o->step = -1; o->hip = 1; } /* tryHipDrop */
         int st = ++o->step;
+        if (in->seesaw == 4) { /* LavaHomeSeesawRotator */
+            int snd = o->nrv != SS_HIPDROP;
+            if (o->nrv == SS_STAY && on) { o->nrv = SS_MOVESTART; o->step = -1; continue; } /* exeStay */
+            if (o->nrv == SS_MOVESTART) {
+                if (st == 0) { camera_shake(SHAKE_WEAK); se_start(SE_OJ_LAVA_FLOATER_ON_METAL, &in->m[12]); }
+                if (st == 8) { o->nrv = SS_MOVE; o->step = -1; continue; } /* sGroundOnReboundTime */
+            }
+            if (o->nrv == SS_HIPDROP && st == 0) o->vel += sgn * 40.0f * dist / inertia; /* addForceHipDrop */
+            /* updateRotateMtx: updateVelocity */
+            V3 up0;
+            seesaw_base(r, &up0); /* mInitialUp */
+            float force = vdot(vcross(up, up0), ax);
+            if (on) o->vel += sgn * dist / inertia;
+            if (o->nrv != SS_MOVESTART && st > 2) {
+                o->vel += seesaw_sign(force) * 0.01f * stop / inertia; /* updateRestoreForce */
+                if (o->nrv != SS_STAY) o->vel *= 0.99f;
+            }
+            o->vel = o->vel < -vmax ? -vmax : o->vel > vmax ? vmax : o->vel;
+            if (o->nrv != SS_STAY && o->nrv != SS_MOVESTART && fabsf(o->vel) < 0.01f && fabsf(force) < 0.001f) {
+                o->nrv = SS_STAY; o->step = -1; /* tryStay */
+            } else {
+                V3 nu = vadd(vmul(up, cosf(o->vel * 0.0174533f)), vmul(vcross(ax, up), sinf(o->vel * 0.0174533f)));
+                if (limit > 0 && seesaw_angle(nu, vmul(g, -1.0f)) >= limit) o->vel *= -0.5f; /* tryRebound */
+                else {
+                    float d = o->vel;
+                    if (o->nrv == SS_MOVESTART) d = 0.7f * (st <= 5 ? 1.0f : -1.0f) * seesaw_sign(o->vel); /* its dip under his landing: sGroundOnDownTime */
+                    o->q = q_norm(q_mul(q_axis(ax, d * 0.0174533f), o->q));
+                    seesaw_matrix(in);
+                    if (on) carry(old, in);
+                }
+            }
+            if (!snd) { if (!o->hip) { o->nrv = SS_MOVE; o->step = -1; } o->hip = 0; } /* exeHipDrop's end */
+            else if (snd && fabsf(o->vel) > 0.1f) in->lv[0] = se_level(SE_OJ_LV_LAVA_SEESAW_MOVE, &in->m[12], in->lv[0]); /* soundMoveSE */
+            continue;
+        }
         if (o->nrv == SS_STAY) {
             if (on) { o->nrv = SS_MOVESTART; o->step = -1; }
             continue;
@@ -37945,27 +38234,28 @@ static void update_seesaws(void)
         /* rotate: updateVelocity */
         if (on) o->vel += sgn * dist / inertia;
         if (o->nrv != SS_MOVESTART && st > 2) {
-            V3 up0 = up_at(pos, v3(0, 1, 0)); /* ponytail: its first up taken as against gravity (placements are upright) */
+            V3 up0;
+            seesaw_base(r, &up0); /* mInitialUp */
             float force = vdot(vcross(up, up0), ax);
-            if (fabsf(force) < 1e-6f && fabsf(o->vel) <= 0.1f) o->vel = 0;
-            else o->vel += (force < 0 ? -1.0f : 1.0f) * 0.01f * stop / inertia;
+            if (fabsf(force) < 0.001f && fabsf(o->vel) <= 0.1f) o->vel = 0;
+            else o->vel += seesaw_sign(force) * 0.01f * stop / inertia;
             o->vel *= 0.99f;
         }
         o->vel = o->vel < -vmax ? -vmax : o->vel > vmax ? vmax : o->vel;
-        if ((o->nrv == SS_MOVESTART || o->nrv == SS_MOVE) && fabsf(o->vel) > 0.1f) /* exeMove: mMoveSoundSpeed 0.1 */
-            in->lv[0] = se_level(SE_OJ_LV_P_SHIP_HANDLE_MOVE, &in->m[12], in->lv[0]);
+        int moving = o->nrv != SS_HIPDROP; /* exeMove's sound, after its rotate() */
         if (o->nrv == SS_HIPDROP) { if (!o->hip) { o->nrv = SS_MOVE; o->step = -1; } o->hip = 0; }
         if (o->vel == 0) { o->nrv = SS_STAY; o->step = -1; continue; }
         if (limit > 0) { /* isGoingToReachTargetAngle */
             V3 nu = vadd(vmul(up, cosf(o->vel * 0.0174533f)), vmul(vcross(ax, up), sinf(o->vel * 0.0174533f)));
-            float c = vdot(vnorm(nu), vmul(g, -1.0f));
-            if (acosf(c > 1 ? 1 : c < -1 ? -1 : c) * 57.29578f >= limit) { o->vel *= -0.5f; continue; }
+            if (seesaw_angle(nu, vmul(g, -1.0f)) >= limit) { o->vel *= -0.5f; limit = -1; }
         }
-        float old[16];
-        memcpy(old, in->m, 64);
-        o->angle += o->vel;
-        seesaw_matrix(in);
-        if (on) carry(old, in);
+        if (limit >= 0) { /* (not bounced back) */
+            o->angle += o->vel;
+            o->q = q_norm(q_mul(q_axis(ax, o->vel * 0.0174533f), o->q)); /* the turn about its Z, before mRotateMtx */
+            seesaw_matrix(in);
+            if (on) carry(old, in);
+        }
+        if (moving && se && fabsf(o->vel) > se_speed) in->lv[0] = se_level(se, &in->m[12], in->lv[0]);
     }
 }
 
@@ -45205,10 +45495,12 @@ static void update_shots(void)
             else if (e->kind == WALK_BUTTERFLY) { hit = 0; continue; }
             else if (e->kind == WALK_PETARI) { /* isMsgStarPieceAttack: a hit reaction; Swoon starts over */
                 if (e->phase) { hit = 0; continue; }
+                if (e->nrv == PT_SWOON || e->nrv == PT_SWOONSTART || e->nrv == PT_SWOONEND || e->nrv == PT_WAIT) wa_start(e, ASC_HIT); /* startHitReaction */
                 if (e->nrv == PT_SWOON) w_nrv(e, PT_SWOON);
             }
-            else if (e->kind == WALK_UNIZO || e->kind == WALK_POIHANA || e->kind == WALK_JELLYFISH || e->kind == WALK_JELEC) { /* isMsgStarPieceAttack: nothing more
-                                                                                                  * (Jellyfish: its anim scale hit reaction) */ }
+            else if (e->kind == WALK_JELLYFISH || e->kind == WALK_JELEC) wa_start(e, ASC_HIT); /* isMsgStarPieceAttack: startHitReaction */
+            else if (e->kind == WALK_UNIZO) wa_start(e, ASC_HIT); /* isMsgStarPieceReflect: startHitReaction */
+            else if (e->kind == WALK_POIHANA) { } /* isMsgStarPieceAttack: nothing more */
             else if (e->kind == WALK_GESSO) { if (e->nrv != GE_PUNCHDOWN) w_nrv(e, GE_ROTATE); } /* isMsgStarPieceAttack: Rotate */
             else if (e->kind == WALK_METBO) { w_se(e, SE_EM_METBO_TRAMPLE); if (!mb_swoon(e) && e->nrv != MB_RECOVER && !mb_down(e)) w_nrv(e, MB_GUARD); } /* isMsgStarPieceReflect */
             else if (e->kind == WALK_BOMBHEI) { if (e->nrv == BH_GONE) { hit = 0; continue; } } /* isMsgStarPieceReflect */
@@ -45226,7 +45518,8 @@ static void update_shots(void)
             else if (e->kind == WALK_SNAKEHEAD) { if (e->phase) { hit = 0; continue; } } /* isMsgStarPieceReflect: nothing more (Waylay: not there) */
             else if (e->kind == WALK_MOGUCCHI) { if (e->nrv != MC_SCATTER && e->nrv != MC_DIE) w_nrv(e, MC_APPEARDOWN); } /* isMsgStarPieceAttack */
             else if (e->kind == WALK_MOGU) { /* isMsgStarPieceAttack: up, it flips (SwoonStart) */
-                if (e->nrv == MG_APPEAR || e->nrv == MG_SEARCH || e->nrv == MG_TURN || e->nrv == MG_THROW) { if (e->bshow == 1) e->bshow = 0; w_nrv(e, MG_SWOONSTART); }
+                if (e->nrv == MG_SWOONSTART || e->nrv == MG_SWOONEND || e->nrv == MG_SWOON || e->nrv == MG_HIPREACT) wa_start(e, ASC_HIT); /* startHitReaction */
+                else if (e->nrv == MG_APPEAR || e->nrv == MG_SEARCH || e->nrv == MG_THROW) { if (e->bshow == 1) e->bshow = 0; w_nrv(e, MG_SWOONSTART); }
                 else if (e->nrv == MG_HIDEWAIT || e->nrv == MG_HIDE) { hit = 0; continue; }
             }
             else if (e->kind == WALK_KANINA) { /* isMsgStarPieceReflect: Guard */
@@ -57645,7 +57938,13 @@ void game_draw(void)
             f = vlen(f) > 1e-3f ? vnorm(f) : vnorm(vtangent(vsub(mario->pos, k->pos), k->up));
             V3 u2 = vadd(vmul(k->up, cosf(k->to)), vmul(f, sinf(k->to))), f2 = vsub(vmul(f, cosf(k->to)), vmul(k->up, sinf(k->to)));
             float rh = (k->dir == 1 ? 0.0f : 30.0f) * fabsf(sinf(k->len / 60.0f)), hr = vlen(vtangent(k->vel, k->up)) / 4.0f; /* mRollHeight, sRollCycle */
-            basis_matrix(m, vsub(vsub(vadd(k->pos, vmul(k->up, 126.36f)), vmul(u2, 126.36f)), vmul(k->up, rh * (hr >= 1.0f ? 1.0f : hr))), u2, f2, 0);
+            float cy = k->an != ASC_STOP ? k->ay : 1.0f, cx = sqrtf(1.0f / cy); /* its AnimScaleController's _C */
+            basis_matrix(m, vsub(vsub(vadd(k->pos, vmul(k->up, 126.36f * cy)), vmul(u2, 126.36f)), vmul(k->up, rh * (hr >= 1.0f ? 1.0f : hr))), u2, f2, 0);
+            for (int j = 0; j < 3 && cy != 1.0f; j++) { /* scaleMtxToLocalMtx(mBaseMtx: its up, _C): cx across, cy along the up */
+                V3 col = v3(m[4 * j], m[4 * j + 1], m[4 * j + 2]);
+                col = vadd(vmul(col, cx), vmul(k->up, (cy - cx) * vdot(col, k->up)));
+                m[4 * j] = col.x; m[4 * j + 1] = col.y; m[4 * j + 2] = col.z;
+            }
             if (!wvis) continue;
             if (unizo_breaking(k)) { /* its break model's clip, facing away from the camera */
                 const Model *bm = scene_model(sc, unizo_brk[k->dir]);
@@ -57733,6 +58032,10 @@ void game_draw(void)
                 if (k->kind == WALK_MKOOPA && k->nrv == MKM_FIRE) fx_named(walker_cls(k), "Fire", m, (const float (*)[16])a->world, k); /* emitEffect Fire (its joint) */
                 if (k->kind == WALK_KCHIEF || k->kind == WALK_SAMBOHEAD || k->kind == WALK_KARON || k->kind == WALK_TAKOHEI || (k->kind == WALK_BOMBBIRD && k->len > 0.0f)) { /* setBaseScale(mScaleController->_C x mScale) */
                     float sy = k->kind == WALK_BOMBBIRD ? k->len : k->from, sx = sqrtf(1.0f / sy);
+                    for (int j = 0; j < 3; j++) { m[j] *= sx; m[4 + j] *= sy; m[8 + j] *= sx; }
+                }
+                if (k->an != ASC_STOP) { /* setBaseScale(its wa_start AnimScaleController's _C x mScale) */
+                    float sy = k->ay, sx = sqrtf(1.0f / sy);
                     for (int j = 0; j < 3; j++) { m[j] *= sx; m[4 + j] *= sy; m[8 + j] *= sx; }
                 }
                 draw_skin(md, m, a);

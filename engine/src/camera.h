@@ -49,6 +49,8 @@ extern const float *(*camera_rail)(int zone, int id, int *n, int *closed);
 extern int (*camera_gravity)(V3 p, V3 *g);
 extern int (*camera_map_poly)(V3 a, V3 d, V3 *hp);
 extern int (*camera_map_ball)(V3 c, float r, V3 *n, float *depth, int max);
+/* the CameraRepulsiveArea holding pos and its push on a camera there (CameraRepulsiveArea::getRepulsion); 0 none */
+extern int (*camera_repulsion)(V3 pos, V3 *rep);
 
 /* Areas are in world space (tools/slice.py to_world); camera parameters are zone-local, so each camera computes in
  * its zone's frame (Petari Camera::setZoneMtx): zones = world matrix per zone (column-major), NULL = all identity. */
