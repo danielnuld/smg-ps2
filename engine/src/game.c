@@ -21575,6 +21575,29 @@ static int m_damage_polygon(Player *m, int code, V3 n)
     }
     return 0;
 }
+/* Mario::isCurrentShadowFloorDangerAction (MarioCollision.cpp:1239): the face under his shadow has another floor code
+ * than his ground's, one that acts on him (the damages, the jump floors, the sinks, Needle, RailMove, AreaMove;
+ * DamageFire not as Ice Mario; none as Teresa); and Mario::update's pull (Mario.cpp:1758) after the floor check: his
+ * shadow 5 or more under his ground's place and ahead of him, 5 towards it.
+ * ponytail: mDrawStates._A (read by MarioAnimator, MarioMove and the shadow) is not kept */
+static int m_shadow_danger(const Player *m)
+{
+    if (!mw.s2) return 0;
+    int code = tri_attr(&mw.shadow) & 0x3F;
+    if (code == (tri_attr(&m_gtri) & 0x3F) || player_mode == PM_TERESA) return 0;
+    switch (code) {
+    case 10: return player_mode != PM_ICE;
+    case 4: case 6: case 7: case 8: case 0xB: case 15: case 17: case 18: case 24: case 25: case 27: case 28: case 31: case 0x22: return 1;
+    }
+    return 0;
+}
+static void m_shadow_danger_pull(Player *m)
+{
+    if (!m_shadow_danger(m)) return;
+    V3 d = vsub(mw.shadow_pos, mw.ground_pos);
+    if (vdot(d, vmul(m->up, -1.0f)) >= 5.0f && vdot(d, m->face) > 0.0f && vlen(d) > 1e-6f)
+        m->s350 = vadd(m->s350, vmul(vnorm(d), 5.0f)); /* addVelocity(setLength 5) */
+}
 static int m_dstate10; /* mDrawStates._10: in damageWallCheck (MarioFireDance::start / impact: off the wall) */
 static int m_damage_wall(Player *m) /* damageWallCheck */
 {
@@ -24472,8 +24495,10 @@ static void update_mario_(void)
             ground_inst = m_gtri.inst; ground_sub = m_gtri.sub; ground_prism = m_gtri.prism; ground_attr = tri_attr(&m_gtri);
             se_map_code(KCL_SOUND(ground_attr));
             m->vup = 0; m->hvel = vtangent(m->vel, m->up);
-            m_damage_floor(m);
-            if (!m->jumping) m_save_safety(m);
+            if (!m_damage_floor(m)) {
+                if (!m->jumping) m_save_safety(m);
+                m_shadow_danger_pull(m);
+            }
         }
     } else if (ground && (!m->jumping || m->vup <= 0)) {
         m->grounded = 1;
@@ -24485,7 +24510,7 @@ static void update_mario_(void)
         else if (m->jumping && !m->hip && !m->rabbit && !m->teresa && !dmg.st) m_do_landing(m);
         if (jumped) m->spin_lock = 0; /* checkTornado */
         if (!m->hip) { m->vup = 0; m->hvel = vtangent(m->vel, m->up); }
-        m_damage_floor(m);
+        if (!m_damage_floor(m)) m_shadow_danger_pull(m);
     } else if (!ground) m->grounded = 0;
     m_dstate10 = 1;
     m_damage_wall(m);
