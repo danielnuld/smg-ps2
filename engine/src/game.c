@@ -15980,6 +15980,7 @@ static int fluff_try(Player *m) /* receiveOtherMsg isMsgAutoRushBegin */
         flf.tup = flf.up;
         flf.inst = i; flf.phase = 1; flf.t = 0; flf.spins = 3;
         m->hip = 0; m->spin_timer = 0;
+        if (mario_anim) mario_play("fluffstart", 1.0f, 0); /* exeRideStart: startBckPlayer FluffStart */
         fx_named("Fluff", "Splash", in->m, NULL, NULL);
         pad_rumble(RUMBLE_WEAK);
         se_start(SE_PV_CATCH, &m->pos.x); se_start(SE_PM_GRAB_OBJ, &m->pos.x);
@@ -16068,12 +16069,24 @@ static int fluff_update_ride(Player *m, Inst *in, V3 grav)
     return 0;
 }
 
-/* returns 1 while Mario rides. flf.phase 1 RideStart, 2 RideFly, 3 RideSpinUp, 4 RideFlyOnWind, 5 RideSpinUpOnWind */
+static void flf_bck(const char *clip) /* startBckPlayer: MarioAnime's Fluff* clips, looping by the clip's own mode */
+{
+    int mode = 0;
+    if (!mario_anim) return;
+    anim_clip_info(clip, &mode);
+    mario_play(clip, 1.0f, mode == 2 || mode == 4);
+}
+/* returns 1 while Mario rides. flf.phase 1 RideStart, 2 RideFly, 3 RideSpinUp, 4 RideFlyOnWind, 5 RideSpinUpOnWind.
+ * Mario's clips: FluffStart (RideStart), FluffFly / FluffFlyLast with no spin left (RideFly), FluffFlyWind
+ * (RideFlyOnWind), FluffSpin (the spin ups) */
 static int fluff_update(Player *m)
 {
     Inst *in = &insts[flf.inst];
     V3 up = up_at(in->head, m->up), grav = vmul(up, -1.0f);
     int first = ++flf.t == 0;
+    if (first && flf.phase == 2) flf_bck(flf.spins > 0 ? "flufffly" : "fluffflylast");
+    if (first && flf.phase == 4) flf_bck("fluffflywind");
+    if (first && (flf.phase == 3 || flf.phase == 5)) flf_bck("fluffspin");
     if (flf.phase == 1) { /* RideStart */
         if (vdot(in->hvel, flf.up) < 15.0f) in->hvel = vadd(in->hvel, vmul(flf.up, 0.2f)); /* sRideStartUpSpeedMax / Accel */
         if (fluff_update_ride(m, in, grav)) return 0;
