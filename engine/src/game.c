@@ -20783,8 +20783,6 @@ static void m_start_step(Player *m, V3 at) /* startStep, MarioStep::start */
  * a wall (front, side or back) the part into it and along gravity is dropped. tryJump takes the two off his velocity
  * and adds them to the jump (half when against it).
  * ponytail: the rail's speed is its path_arg3 (10 when unset), which the PATH entries do not carry */
-static const unsigned char *find_path(const unsigned char *blob, int zone, int id);
-static float rail_nearest(const float *p, int n, V3 q);
 static V3 m_power_wall(Player *m, V3 v) /* (_8 || _19 || _1A) */
 {
     if (mw.w8 || mw.w19 || mw.w1A) {
@@ -20797,37 +20795,14 @@ static void m_power_moves(Player *m)
 {
     m_v190 = m_v19C = v3(0, 0, 0);
     if (!m->grounded || m->jumping) return;
-    if (m->floor == 28) { /* powerAreaMove: MR::calcAreaMoveVelocity */
-        int a = area_obj("AreaMoveSphere", m->pos);
-        if (a >= 0) {
-            const Row *r = &sc->objs[a];
-            V3 x, z;
-            row_axes(r, &x, &z);
-            V3 up = vcross(z, x), radial = vsub(row_pos(r), m->pos);
-            radial = vlen(radial) > 1e-6f ? vnorm(radial) : v3(0, 0, 0);
-            up = vsub(up, vmul(radial, vdot(up, radial)));
-            up = vlen(up) > 1e-6f ? vnorm(up) : v3(0, 0, 0);
-            m_v190 = m_power_wall(m, vmul(up, r->arg[0] == -1 ? 10.0f : (float)r->arg[0]));
-            m->vel = vadd(m->vel, m_v190); /* addVelocity */
-        }
+    V3 v; /* the area's and the rail's lookups are the enemies' (area_rail_vel) */
+    if (m->floor == 28 && area_rail_vel(m->floor, -1, m->pos, 1, &v)) { /* powerAreaMove: MR::calcAreaMoveVelocity */
+        m_v190 = m_power_wall(m, v);
+        m->vel = vadd(m->vel, m_v190); /* addVelocity */
     }
-    if (m->floor == 27 && mario_ground >= 0 && insts[mario_ground].row >= 0) { /* powerRailMove: his ground's host */
-        const Row *r = &sc->objs[insts[mario_ground].row];
-        const unsigned char *e = scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
-        if (e) {
-            const float *pts = (const float *)(e + 24);
-            u32 np = *(const u32 *)(e + 8);
-            float c = rail_nearest(pts, (int)np, m->pos); /* calcNearestRailDirection */
-            V3 d = vsub(rail_at(pts, np, c + 10.0f), rail_at(pts, np, c));
-            if (vlen(d) < 1e-3f) d = vsub(rail_at(pts, np, c), rail_at(pts, np, c - 10.0f)); /* (the rail's end) */
-            d = vlen(d) > 1e-6f ? vnorm(d) : v3(0, 0, 0);
-            if (mw.w8 || mw.w19 || mw.w1A) { /* (the direction, before its speed) */
-                V3 n = m_wall_norm(m);
-                if (vdot(n, d) < 0.0f) { d = vsub(d, vmul(n, vdot(d, n))); d = vtangent(d, m->up); }
-            }
-            m_v19C = vmul(d, 10.0f);
-            m->vel = vadd(m->vel, m_v19C);
-        }
+    if (m->floor == 27 && area_rail_vel(m->floor, mario_ground, m->pos, 2, &v)) { /* powerRailMove: his ground's host */
+        m_v19C = m_power_wall(m, v); /* (the wall takes its part of the direction; x 10 after: the same) */
+        m->vel = vadd(m->vel, m_v19C);
     }
 }
 static void m_check_step(Player *m) /* checkStep */
