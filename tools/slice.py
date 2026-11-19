@@ -328,6 +328,7 @@ LOGIC = ("SoundEmitterCube", "SoundEmitterSphere", "QuakeEffectAreaCube", "Playe
          "DeathCylinder", "AreaMoveSphere", "RestartCube", "StarPieceSpot", "WaterCube", "WaterSphere", "WaterCylinder",
          "ChangeBgmCube", "BgmProhibitArea", "AudioEffectCube", "AudioEffectSphere", "AudioEffectCylinder", "AstroChangeStageCube", "MovieStarter", "RunawayRabbitCollect", "PhantomTorch", "PhantomBonfire", "Hanachan",
          "PlaneCollisionCube", "BeeWallShortDistAreaCube", "GlaringLightAreaCylinder", "DarkMatterCylinder",
+         "ExtraWallCheckArea", "ExtraWallCheckCylinder",  # Mario's wall shade (game.c wall_shade_calc)
          # Mario's areas (MR::getAreaObj: game.c area_obj / foo_sphere)
          "CelestrialSphere", "TowerModeCylinder", "NonSleepCube", "EffectCylinder", "SmokeEffectColorAreaCube",
          "MessageAreaCube", "MessageAreaCylinder", "PullBackCylinder", "PlaneModeCube", "PlaneCircularModeCube",

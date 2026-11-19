@@ -48836,6 +48836,88 @@ static void ambient_effects(void)
 static struct { short row; unsigned char kind; u32 h; } snd_em[48];
 static int n_snd_em = -1;
 static const Scene *snd_em_sc;
+/* MarioActor::calcViewWallShadowModel (MarioActorShadow.cpp:208) and drawWallShade (MarioActorSpecialDraw.cpp:505): in
+ * an ExtraWallCheckArea (along the cube's Z) or an ExtraWallCheckCylinder (towards its axis: calcCylinderToCenter)
+ * the first face of the map within arg0 of his centre takes his shade. _208 follows its distance (0.9 / 0.1); out of
+ * the area it grows by 10 a frame to 1000, along the last area's line. updateRandomTexture(_208): the two 8 x 8 masks
+ * in turn, each texel up 4 with the chance 1 - _208 / 1000, else down 1 (0..15). The shade is a fan of radius 100 on
+ * the face, black, its alpha 128 at the centre and 1 at the rim, times the mask. Not on a bee's wall.
+ * ponytail: the mask (tiled 10 times over the fan) as its mean; drawn 3 before the face with the usual depth test,
+ * not 5 behind it with GX_GREATER; the silhouette of his simple model flattened on the wall (viewCalcRef(3)) is not
+ * drawn; _A08 & 2 (his reflection in the glass floors) is not in the port */
+static struct { int row, cyl, on, cur; float d; V3 pos, n; unsigned char mask[2][64]; } wsh = {.row = -1, .d = 1000.0f};
+static float wsh_cylinder(const Row *r, V3 *dir) /* calcCylinderToCenter */
+{
+    V3 x, z;
+    row_axes(r, &x, &z);
+    V3 up = vnorm(vcross(z, x));
+    V3 v = vtangent(vsub(vadd(row_pos(r), vmul(up, 250.0f * r->scale[1])), mw.c), up);
+    if (vlen(v) < 1e-6f) { /* on the axis */
+        if (wsh.d < 1000.0f && (wsh.d += 10.0f) >= 1000.0f) wsh.d = 1000.0f;
+        return -1.0f;
+    }
+    *dir = vnorm(v);
+    return (float)r->arg[0];
+}
+static void wall_shade_calc(void)
+{
+    static const Scene *at;
+    if (at != sc) { at = sc; wsh.row = -1; wsh.d = 1000.0f; }
+    wsh.on = 0;
+    if (mario->bee_wall) return;
+    V3 dir = v3(0, 0, 0), x;
+    float len = 0.0f;
+    int a = area_obj("ExtraWallCheckArea", mw.c), fading = 0;
+    if (a >= 0) { row_axes(&sc->objs[a], &x, &dir); len = (float)sc->objs[a].arg[0]; wsh.row = a; wsh.cyl = 0; } /* calcCubeAxisZ */
+    else if ((a = area_obj("ExtraWallCheckCylinder", mw.c)) >= 0) { len = wsh_cylinder(&sc->objs[a], &dir); wsh.row = a; wsh.cyl = 1; }
+    if (a < 0 || len < 0.0f) {
+        if (wsh.d >= 1000.0f || wsh.row < 0) return;
+        if ((wsh.d += 10.0f) >= 1000.0f) wsh.d = 1000.0f;
+        if (!wsh.cyl) { row_axes(&sc->objs[wsh.row], &x, &dir); len = (float)sc->objs[wsh.row].arg[0]; }
+        else len = wsh_cylinder(&sc->objs[wsh.row], &dir);
+        if (len < 0.0f) return;
+        fading = 1;
+    }
+    V3 hp, n;
+    int ci;
+    if (!map_line(mw.c, vmul(dir, len), &hp, &n, &ci)) return;
+    wsh.pos = hp; wsh.n = n;
+    if (!fading) wsh.d = 0.9f * wsh.d + 0.1f * vlen(vsub(hp, mw.c));
+    wsh.cur = 1 - wsh.cur; /* updateRandomTexture */
+    float prob = 1.0f - wsh.d / 1000.0f;
+    prob = prob < 0.0f ? 0.0f : prob > 1.0f ? 1.0f : prob;
+    for (int k = 0; k < 64; k++) {
+        int al = (wsh.mask[wsh.cur][k] >> 4) + (frand(0.0f, 1.0f) < prob ? 4 : -1);
+        wsh.mask[wsh.cur][k] = (unsigned char)((al < 0 ? 0 : al > 15 ? 15 : al) << 4);
+    }
+    wsh.on = 1;
+#ifdef PUT_TEST
+    { static int t; if (t++ % 60 == 0) printf("wall shade: row %d cyl %d fading %d dist %d at %d %d %d" "\n", wsh.row, wsh.cyl, fading, (int)wsh.d, (int)hp.x, (int)hp.y, (int)hp.z); }
+#endif
+}
+static void wall_shade_draw(void)
+{
+    if (!wsh.on) return;
+    int sum = 0;
+    for (int k = 0; k < 64; k++) sum += wsh.mask[wsh.cur][k] >> 4;
+    u32 al = (u32)(sum * 0x40 / (64 * 15)); /* 128 / 255 of 0x80, times the mask */
+    if (!al) return;
+    V3 n = wsh.n, t = v3(0.0f, n.z, -n.y);
+    if (vlen(t) < 1e-3f) t = v3(n.z, 0.0f, n.x);
+    t = vmul(vnorm(t), 100.0f);
+    V3 c = vadd(wsh.pos, vmul(n, 3.0f));
+    static const float uv[17][2];
+    float pos[17][3] = {{c.x, c.y, c.z}};
+    u32 col[17] = {al << 24};
+    u16 idx[48];
+    for (int i = 0; i < 16; i++) {
+        V3 p = vadd(c, rot_axis(t, n, (float)i * 0.3926991f));
+        pos[i + 1][0] = p.x; pos[i + 1][1] = p.y; pos[i + 1][2] = p.z;
+        col[i + 1] = 0;
+        idx[3 * i] = 0; idx[3 * i + 1] = (u16)(i + 1); idx[3 * i + 2] = (u16)((i + 1) % 16 + 1);
+    }
+    render_mesh_vc(pos, uv, col, 17, idx, 16, NO_TEX, 1);
+}
 /* GlaringLightArea::movement (the areas with a SW_A): SE_OJ_RAY_START at its place when the switch comes on after
  * having been off (mIsValid starts true: none for a light on from the start) */
 static void update_glaring_lights(void)
@@ -48942,6 +49024,7 @@ static void keep_effects(void)
     ambient_effects();
     update_sound_emitters();
     update_glaring_lights();
+    wall_shade_calc();
     update_quake();
     float m[16];
     for (int i = 0; i < npieces; i++)
@@ -58064,6 +58147,7 @@ void game_draw(void)
     }
     if (!mario_hidden && !m_hide481 && !bh.on) /* ponytail: MarioShadow's volume (his posed model) as an oval of its bind pose's extent */
         draw_shadow(mario->pos, mario->up, mario->face, 34.0f, 37.0f, 8.0f, 50.0f, 1000.0f);
+    if (!mario_hidden && !m_hide481) wall_shade_draw(); /* MarioActor::draw: not is481or482On */
     {
         /* MarioActor::updateBlink / swapTexture("EyeLid_v"): the clip's own eye pattern if it has one (setBlink: its
          * BTP, EYEP; a looping one on its own frame count, else at the clip's frame), else a blink every 60..359
