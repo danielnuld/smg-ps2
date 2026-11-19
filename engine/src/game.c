@@ -15364,6 +15364,8 @@ static int jf_knock(Kuribo *k, V3 from);
 static int pk_blow(Kuribo *k, V3 from);
 static int bg_hitall(Kuribo *k, V3 from);
 static int sh_blow(Kuribo *k, V3 from);
+static int mc_hitall(Kuribo *k, V3 from);
+static int bbd_hitall(Kuribo *k, V3 from);
 static int kan_fire(Kuribo *k, V3 from);
 static void walker_inhale(Kuribo *e);
 static void fireball_hit_walkers(int b)
@@ -15400,6 +15402,8 @@ static void fireball_hit_walkers(int b)
         if (e->kind == WALK_PUKUPUKU) { if (!pk_blow(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* a HitAll: BlownOff */
         if (e->kind == WALK_BEGOSPIKE || e->kind == WALK_BEGOSPRING || e->kind == WALK_BEGOBABY) { if (!bg_hitall(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* a HitAll on its body: Blow */
         if (e->kind == WALK_SAMBOHEAD) { if (!sh_blow(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* a HitAll: HitBlow */
+        if (e->kind == WALK_MOGUCCHI) { if (!mc_hitall(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* a HitAll on its body while down: Scatter */
+        if (e->kind == WALK_BOMBBIRD) { if (!bbd_hitall(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* a HitAll: Blow swooning, Damage in flight */
         if (e->kind == WALK_KANINA) { if (!kan_fire(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* isMsgFireBallAttack: receiveFireBall */
         if (e->kind == WALK_MOGU || e->kind == WALK_TERESAW || e->kind == WALK_METBO || e->kind == WALK_SNAKEHEAD || e->kind == WALK_BOMBHEI || e->kind == WALK_STRSPIDER ||
             e->kind == WALK_JELEC || e->kind == WALK_BEGOLAUNCH || e->kind == WALK_BOMBTERESA) continue; /* (JellyfishElectric, BombTeresa: no fire ball nor HitAll; BegomanLauncher: no sensor) */ /* (Mogu, TeresaWater, Metbo, Snakehead, BombHei, StringSpider: neither isMsgFireBallAttack nor isMsgPlayerHitAll) */
@@ -15752,6 +15756,8 @@ static void update_jets(void)
                 else if (e->kind == WALK_PUKUPUKU) took = pk_blow(e, p); /* a HitAll: BlownOff */
                 else if (e->kind == WALK_BEGOSPIKE || e->kind == WALK_BEGOSPRING || e->kind == WALK_BEGOBABY) took = bg_hitall(e, p); /* a HitAll on its body: Blow */
                 else if (e->kind == WALK_SAMBOHEAD) took = sh_blow(e, p); /* a HitAll: HitBlow */
+                else if (e->kind == WALK_MOGUCCHI) took = mc_hitall(e, p); /* a HitAll on its body while down: Scatter */
+                else if (e->kind == WALK_BOMBBIRD) took = bbd_hitall(e, p); /* a HitAll: Blow swooning, Damage in flight */
                 else if (e->kind == WALK_KANINA) took = kan_fire(e, p); /* isMsgJetTurtleAttack: receiveFireBall */
                 else if (e->kind == WALK_SPIDER) took = js_blow(e, p); /* a HitAll: HitBlow */
                 else if (e->kind == WALK_KURIBO || e->kind == WALK_KMINI || e->kind == WALK_TAKOHEI) { /* isMsgJetTurtleAttack, a HitAll: requestBlowDown (KuriboMini: a coin), TakoHei's requestPunch */
@@ -29750,6 +29756,15 @@ static void bbd_ground_move(Kuribo *k, float fric) /* moveAndTurnToPlayer(0, 1.2
 {
     w_move_turn(k, vsub(mario->pos, k->pos), 0.0f, 1.2f, fric, 0.0f);
 }
+/* receiveMsgPlayerAttack's isMsgPlayerHitAll from a shell, a fire ball, rainbow Mario: swooning, mSpinHitController's
+ * start and Blow; in flight its bomb killed and Damage; else not taken */
+static int bbd_hitall(Kuribo *k, V3 from)
+{
+    if (k->nrv == BD_BLOW || k->nrv == BD_TRAMPLE || k->nrv == BD_SINKDOWN) return 0;
+    if (bbd_swoon(k)) { spin_hit_start(k, from, 30.0f, 40.0f); k->item = 1; w_nrv(k, BD_BLOW); return 1; }
+    if (bbd_flying(k)) { bbd_damage(k); return 1; }
+    return 0;
+}
 static void bbd_update(Kuribo *k)
 {
     const Row *r = &sc->objs[k->row];
@@ -30841,6 +30856,17 @@ static void mc_place(Kuribo *k, const float *rail, u32 rn) /* updatePosition: th
     }
     V3 ahead = rail_at(rail, rn, k->lva[1] + 1.0f), f = vtangent(vsub(ahead, rp), k->grav);
     if (vlen(f) > 1e-3f) k->front = vnorm(f); /* makeEulerRotation: up against gravity, the rail's way */
+}
+/* receiveAttackByBodySensor's isMsgPlayerHitAll (a shell, a fire ball, rainbow Mario): only while Down / AppearDown
+ * (from its step 10) / Dive: stopScene(8), calcScatterVec, Scatter; else not taken */
+static int mc_hitall(Kuribo *k, V3 from)
+{
+    int down = k->nrv == MC_DOWN || k->nrv == MC_APPEARDOWN || k->nrv == MC_DIVE;
+    if (!down || (k->nrv == MC_APPEARDOWN && k->step < 10)) return 0;
+    scene_stop = 8; pad_rumble(RUMBLE_MIDDLE);
+    k->ttarget = vsub(k->pos, from);
+    w_nrv(k, MC_SCATTER);
+    return 1;
 }
 static void mogucchi_update(Kuribo *k)
 {
@@ -36078,6 +36104,8 @@ static void update_invincible(void)
         if (e->kind == WALK_PUKUPUKU) { if (pk_blow(e, mario->pos)) m_invincible_hit(es); continue; } /* a HitAll: BlownOff */
         if (e->kind == WALK_BEGOSPIKE || e->kind == WALK_BEGOSPRING || e->kind == WALK_BEGOBABY) { if (bg_hitall(e, mario->pos)) m_invincible_hit(es); continue; } /* a HitAll on its body: Blow */
         if (e->kind == WALK_SAMBOHEAD) continue; /* (its own update takes the rainbow touch: HitBlow) */
+        if (e->kind == WALK_MOGUCCHI) { if (mc_hitall(e, mario->pos)) m_invincible_hit(es); continue; } /* a HitAll on its body while down: Scatter */
+        if (e->kind == WALK_BOMBBIRD) { if (bbd_hitall(e, mario->pos)) m_invincible_hit(es); continue; } /* a HitAll: Blow swooning, Damage in flight */
         if (e->kind == WALK_MOGU) { if (mg_hitall(e)) m_invincible_hit(es); continue; } /* isMsgInvincibleAttack: tryPunchHitted */
         int took = walker_blow(e, mario->pos);
         if (took > 0 && e->kind == WALK_KMINI) e->item = 1; /* KuriboMini: isMsgInvincibleAttack, setTypeCoin(1) */
