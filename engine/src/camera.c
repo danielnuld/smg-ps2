@@ -576,6 +576,30 @@ static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
         *up = vnorm(vadd(vadd(vmul(x, sa * sb), vmul(y, ca)), vmul(z, sa * cb)));
         break;
     }
+    case CAM_DEAD: { /* CameraDead.cpp: the eye stays; for num1 frames the watch point goes to the target's (the offsets
+                      * at once: makeWatchPointImm) by (frame / num1)^4 of what is left each frame (num2 0: at once)
+                      * and the fovy to atan2(the target's radius 150 / dist, its distance) (not over the fovy: the
+                      * radians against the degrees, as decompiled), in degrees, the same way.
+                      * ponytail: the camera man's roll is not taken off its up */
+        static int frame;
+        static float fov;
+        static V3 dw, du;
+        if (fresh) { frame = 0; fov = f_fovy; dw = type_watch; du = type_up; }
+        if (frame <= p->num1) {
+            float k = p->num1 ? (float)frame / p->num1 : 1.0f;
+            k *= k; k *= k;
+            V3 wi = vadd(vadd(t->pos, vec(p->woffset)), vadd(vmul(t->front, p->loffset), vmul(t->up, p->loffsetv)));
+            dw = p->num2 ? vadd(dw, vmul(vsub(wi, dw), k)) : wi;
+            float ang = atan2f(150.0f / p->dist, vlen(vsub(type_eye, t->pos)));
+            if (ang > fov) ang = fov;
+            ang *= 180.0f / PI;
+            fov = p->num1 ? fov + k * (ang - fov) : ang;
+        }
+        f_fovy = fov; /* setFovy */
+        frame++;
+        *eye = type_eye; *watch = dw; *up = du;
+        break;
+    }
     case CAM_EYEPOS_FIX_THERE: { /* CameraFixedThere.cpp: the eye stays where the last camera left it */
         *eye = type_eye;
         V3 f = vnorm(vsub(w, type_eye));
@@ -746,6 +770,8 @@ static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
  * stars' flights start theirs with the flight's first pose, move the target with the flight and end it at landing
  * (endForceAtLanding); a star without a camera set keeps the area camera. */
 static int ev_on, ev_ending, ev_first, ev_n, ev_i, ev_t; /* the event cameras running (cams[ev_first + i]) */
+static const CamParam *ev_code; /* the one running is a chunk declared in code (camera_event_death), not of CAMS */
+static const CamParam *ev_cam(void) { return ev_code ? ev_code : &cams[ev_first + ev_i]; }
 static int ev_player; /* startEventCameraNoTarget / startGlobalEventCameraNoTarget: the player its target */
 static V3 ev_up, ev_front, ev_pos;                         /* their target matrix (CameraTargetMtx) */
 
@@ -759,7 +785,7 @@ unsigned camera_class_hash(const char *name)
 /* the event cameras of class cls whose num, shifted right by `shift`, is set: one after another from the first */
 static int ev_begin(unsigned cls, int set, int shift, V3 up, V3 front, V3 pos)
 {
-    ev_first = -1; ev_n = 0;
+    ev_first = -1; ev_n = 0; ev_code = NULL;
     for (int i = 0; i < ncams; i++)
         if (cams[i].kind == 'e' && cams[i].evclass == cls && (cams[i].num >> shift) == set) {
             if (ev_first < 0) ev_first = i;
@@ -815,11 +841,33 @@ int camera_event_named(const char *name, int zone)
         }
     if (k < 0) return 0;
     ev_on = 1; ev_ending = 0; ev_i = 0; ev_t = 0; ev_player = 1;
-    ev_first = k; ev_n = 1;
+    ev_first = k; ev_n = 1; ev_code = NULL;
     cur = -3;
     timer = 0; camint = cams[k].camint; fresh = 1;
     type_eye = f_eye; type_watch = f_watch; type_up = pose_up;
     return 1;
+}
+
+/* MarioActor::init (MarioActor.cpp:388): 奈落カメラ is declareGlobalEventCameraAbyss (CAM_TYPE_EYEPOS_FIX_THERE, num1 1)
+ * and 昇天カメラ declareGlobalEventCameraDead(0.35, 0x78, 0x3C) (CAM_TYPE_DEAD: dist, num1 its time, num2 its type;
+ * lofserpoff, wOffset 0, LOffsetV 100); neither is read from the stage's cameras (_64). The rest a chunk's defaults
+ * (camera.py). MarioActor's game over nerves start them with no target (startGlobalEventCameraNoTarget) */
+void camera_event_death(int abyss)
+{
+    static CamParam c[2];
+    for (int i = 0; i < 2; i++) {
+        memset(&c[i], 0, sizeof c[i]);
+        c[i].kind = 'e'; c[i].camint = 60; c[i].evfrm = -1; /* (CameraManEvent's sDefaultBlendFrame: no enableErpFrame) */ c[i].fovy = 45.0f; c[i].dist = 1200.0f;
+        c[i].axis[1] = c[i].up[1] = 1.0f;
+    }
+    c[0].type = CAM_DEAD; c[0].dist = 0.35f; c[0].num1 = 0x78; c[0].num2 = 0x3C; c[0].flags = 4; c[0].loffsetv = 100.0f;
+    c[1].type = CAM_EYEPOS_FIX_THERE; c[1].num1 = 1; c[1].woffset[1] = 100.0f;
+    ev_code = &c[abyss ? 1 : 0];
+    ev_on = 1; ev_ending = 0; ev_i = 0; ev_t = 0; ev_player = 1;
+    ev_first = 0; ev_n = 1;
+    cur = -3;
+    timer = 0; camint = ev_code->camint; fresh = 1;
+    type_eye = f_eye; type_watch = f_watch; type_up = pose_up;
 }
 
 int camera_actor_start(const char *cls, const char *event, int set, V3 up, V3 front, V3 pos)
@@ -879,7 +927,7 @@ void camera_prog_end(int frames) { if (pr_on) { pr_on = 0; cur = -3; back_camint
 void camera_event_end_now(int frame)
 {
     if (!ev_on) return;
-    const CamParam *p = &cams[ev_first + ev_i];
+    const CamParam *p = ev_cam();
     ev_on = 0; cur = -3;
     back_camint = p->flags >> 7 ? (p->flags >> 7) - 1 : p->flags & 64 ? p->camint : frame >= 0 ? frame : 60;
     printf("camera: event end, back over %d\n", back_camint);
@@ -1121,7 +1169,7 @@ static void update(const CamTarget *t)
     if (ev_on) { /* MultiEventCamera::update: the next one after its evfrm frames; endForceAtLanding */
         if (ev_ending && !t->jumping && !t->flying) { ev_on = 0; cur = -3; }
         else {
-            const CamParam *p = &cams[ev_first + ev_i];
+            const CamParam *p = ev_cam();
             if (p->evfrm >= 0 && ev_t >= p->evfrm && ev_i < ev_n - 1) {
                 ev_i++; ev_t = 0;
                 timer = 0; camint = cams[ev_first + ev_i].camint; fresh = 1;
@@ -1132,10 +1180,10 @@ static void update(const CamTarget *t)
             if (!ev_player) { et.pos = ev_pos; et.up = ev_up; et.front = ev_front; }
             et.flying = 0;
             V3 e, w, u;
-            zone_pose(&cams[ev_first + ev_i], &et, move, &e, &w, &u);
+            zone_pose(ev_cam(), &et, move, &e, &w, &u);
             fresh = 0;
             type_eye = e; type_up = u;
-            blend_to(e, w, u, cams[ev_first + ev_i].roll); /* CameraManEvent::applyParameter: setRoll */
+            blend_to(e, w, u, ev_cam()->roll); /* CameraManEvent::applyParameter: setRoll */
             return;
         }
     }

@@ -18,7 +18,7 @@ freeze and the rainbow attack. A class read here gets its own case in each of th
 | JumpSpider | 141 | fixed #688 | The kick while powerless (isMsgPlayerKick: HitBlow); a fire ball / a shell: HitBlow; the generic rainbow kill beside its own; EyeLight kept while drawn |
 | PackunPetit | 132 | fixed #693 | A fire ball / the rainbow attack: punchDown (not in HitWaitForAttack / Hit); a shell: the scene stop and punchDown (not in Attack either); the scene stop only for the spin, the kick and the shell; a failed attack pushes Mario |
 | Unizo (Unizo, UnizoLand, UnizoShoal) | 86 | partly #693 | An enemy attack not from a Unizo (blows, explosions): doBreak (was the generic kill, or nothing for explosions); rainbow Mario no longer kills it (no isMsgInvincibleAttack: a push); doAttack only when Mario took the attack; UnizoLand's SearchSmoke in Chase. Left: UnizoShoal's Ripple at the water surface, its sendMsgEnemyAttack on other enemies |
-| KoteBug | 85 | partly #693 | Messages only: a fire ball: Blow (was the generic kill); a shell: Blow when overturned, else setOverturnFall. Its nerves were not re-read |
+| KoteBug | 85 | partly #693 | Messages only: a fire ball: Blow (was the generic kill); a shell: Blow when overturned, else setOverturnFall. Its clips, sounds, step tests and constants compared with the .cpp: equal (#730) |
 | Meramera (Meramera, IceMeramera) | 85 | partly #688 | Enemy blows no longer kill it (only explosions and the rainbow attack: requestDownForce); a shell passes; the Meramera-Meramera push was done twice (0.5 + 0.5); IgnitionForce's setVelocityJump kept its horizontal velocity; IceMeramera's Revival effect in Sink was behind the hidden-model return. Left: sendMsgElementAttack on non-player sensors (a fire one lights a waiting Candlestand), ExtinguishSide / ExtinguishSmoke are one-shot instead of following mExtinguishMtx, the fire ball / rainbow tests use the generic 60 sphere instead of its body 55 x scale |
 | Kiraira (Kiraira, KirairaRail) | 80 | partly #693 | Ported after Kiraira.cpp (it was an early stand-in): Wait / FaceToMario / FaceToMarioAndStare, Explode from his touch or spin, a star piece, a shell (force-detonated: the explosion to what its eye holds, the other Kirairas BeExploded 10 frames later), the rumble / shake, its sounds, Dead 300 with the group's alarm, RecoverSign 120, Recover; down, its body pushes. Left (issue #691): its model packed with clips (Down / Revival BCKs, eye BTPs, BRKs), SearchLight, KirairaChain, its shadow |
 | MechanicKoopaMini | 75 | partly #688 | A shell passes (was the generic kill); Pursue's distance tests run after a JumpStart too; the push between two was done twice. Left: the star piece test uses the generic sphere, not its body 130 x scale at JointRoot |
@@ -32,20 +32,20 @@ freeze and the rainbow attack. A class read here gets its own case in each of th
 | StinkBugSmall | 40 | partly #688 | The rainbow attack, a fire ball and enemy blows no longer kill it generically (its own HipDropDown for the rainbow one); a nerve set by a message starts at its first step (a hip drop in DashSignEnd killed with no Death clip); Shake with Mario hip-dropping on it: Panic; Panic's second level sound. Left: the rainbow wall / roof touch, HipDropDown's invalidateClipping, the Death BRK |
 | BasaBasa (BasaBasa, BasaBasaIce) | 36 | partly #688 | No clipping out of Wait / AirWait (it froze out of view); a fire ball / a shell / the rainbow attack / an enemy blow: PunchDown (was the generic kill); explosions pass; BasaBasaIce as Ice Mario; trample / spin taken in HitBack; AttachCelling without sensors; a failed attack pushes Mario; TrampleDown stops the clip. Left: the spin storm on BasaBasaIce, the hang model, AnimStampController |
 | BegomanSpike | 34 | todo | |
-| Poihana | 33 | partly #693 | Messages only: a fire ball: tryShock with the scene stop (was the generic kill). Its nerves were not re-read |
-| Kanina (Kanina, KaninaRed) | 33 | partly #693 | Messages only: enemy blows pass. Left: receiveFireBall from fire balls and shells, receiveInvincibleAttack. Its nerves were not re-read |
+| Poihana | 33 | partly #693 | Messages only: a fire ball: tryShock with the scene stop (was the generic kill). Its clips, sounds, step tests and constants compared with the .cpp: equal (#730) |
+| Kanina (Kanina, KaninaRed) | 33 | partly #693 | Messages only: enemy blows pass. A fire ball / a thrown shell: receiveFireBall (doDamageFireBall) (#730). Left: receiveInvincibleAttack (the port kills it at a rainbow touch; Petari only at a rainbow trample, else doDamageFireBall). Its nerves were not re-read |
 | StringSpider | 33 | partly #693 | Messages only: fire balls and shells pass (were the generic kill). Its nerves were not re-read |
-| Gesso | 31 | partly #693 | Messages only: a fire ball / the rainbow attack / an explosion: knockOut (were the generic kill, or nothing); enemy blows pass. Its nerves were not re-read |
-| Snakehead (Snakehead, SnakeheadSmall) | 30 | partly #693 | Messages only: fire balls, the rainbow attack and enemy blows pass (were the generic kill; only the shell: TurtleDown). Its nerves were not re-read |
-| BombHeiLauncher (BombHeiLauncher, BombLauncher) | 28 | todo | |
-| Dossun | 27 | todo | |
-| Jellyfish | 26 | todo | |
+| Gesso | 31 | partly #693 | Messages only: a fire ball / the rainbow attack / an explosion: knockOut (were the generic kill, or nothing); enemy blows pass. Unclipped in Wait from step 2 (exeWait's invalidateClipping: a waiting one out of view never noticed Mario) (#730). Its clips, sounds, step tests compared: equal |
+| Snakehead (Snakehead, SnakeheadSmall) | 30 | partly #693 | Messages only: fire balls, the rainbow attack and enemy blows pass (were the generic kill; only the shell: TurtleDown). Its clips and sounds compared: equal (#730) |
+| BombHeiLauncher (BombHeiLauncher, BombLauncher) | 28 | fixed #710 | onSwitchA: mCountdown 0 and LauncherWait (it throws at once; it waited Stop's 120 frames and the countdown's 60), offSwitchA: Stop. Everything else equal. Left: isOnPlayerShadow in the launch test, its Open BCK |
+| Dossun | 27 | fixed #710 | Its step counted from 1 on a nerve's first frame, so no first step ever ran: SE_OJ_DOSSUN_FALL_SIGN, SE_OJ_DOSSUN_LAND, the Land effect and the shake were never played; the landing's rumble / shake distances (中 within 2000 with the normal weak shake, 弱 within 3500 with the weak one). Everything else equal. Left: the FallStart BCK / BVA faces, the quick comet (x 2.5) |
+| Jellyfish | 26 | partly #710 | Messages only: knockOut from a fire ball, a shell, the rainbow attack (a HitAll) and an explosion (were the generic kill, or nothing); enemy blows pass. Its nerves were not re-read |
 | RingBeamer | 22 | todo | |
-| Mogu | 22 | partly #693 | Messages only: a fire ball passes; a shell / the rainbow attack: tryPunchHitted unless hidden (were the generic kill); enemy blows pass. Its nerves were not re-read |
+| Mogu | 22 | partly #693 | Messages only: a fire ball passes; a shell / the rainbow attack: tryPunchHitted unless hidden (were the generic kill); enemy blows pass. Its clips, sounds, step tests and constants compared with the .cpp: equal (#730) |
 | Mogucchi | 22 | partly #693 | Messages only: enemy blows pass (no receiveMsgEnemyAttack). Left: fire balls / shells / the rainbow attack are a HitAll for it (still the generic kill). Its nerves were not re-read |
 | SearchBeamer | 22 | todo | |
 | EyeBeamer | 21 | todo | |
-| Metbo | 21 | partly #693 | Messages only: fire balls and shells pass (were the generic kill). Its nerves were not re-read |
+| Metbo | 21 | partly #693 | Messages only: fire balls and shells pass (were the generic kill). Its clips, sounds, step tests and constants compared with the .cpp: equal (#730) |
 | Pukupuku | 19 | todo | |
 | TeresaWater | 19 | partly #693 | Messages only: it answers no attack (fire balls, shells, the rainbow attack and enemy blows killed it generically). Its nerves were not re-read |
 | Hanachan | 19 | todo | |
@@ -79,3 +79,15 @@ freeze and the rainbow attack. A class read here gets its own case in each of th
 | Jiraira, MogucchiRefuseTerritory | 0 | skipped | Not placed |
 
 Shared: SpinHitController's star pieces come with SE_OJ_STAR_PIECE_BURST (spin_hit_exec dropped them silently): #688.
+
+## PCSX2 runs (2026-11-19)
+
+- #693 BombHei's carry (plain, `XF="-DBH_TEST -DSE_LOG"`, CannonFleetGalaxy/1): "bomb hei row 53 taken" (Taken), "thrown"
+  90 frames later (Thrown), then Physics at its bound, its fuse running through all of it. The camera of the start
+  planet is too far above to judge the hand's place in a picture: to be looked at in play.
+- #637 AnimScaleController, one ELF with `XF="-DASC_KIND=-1 -DASC_HOW=2"` (the kind picked from the scene): Jellyfish
+  (FishTunnelGalaxy/1), Mogu (CosmosGardenGalaxy/1), Petari (EggStarGalaxy/1), KoteBug (HoneyBeeKingdomGalaxy/1),
+  Unizo (HeavenlyBeachGalaxy/1): the test ran for each kind ("asc test: kind 19 / 21 / 16 / 3 / 14", way 2 = Mario
+  standing beside it), and none started its controller: way 2 is not what starts it for these classes (Jellyfish,
+  Unizo: a star piece's startHitReaction; Mogu, Petari: a star piece while swooning; KoteBug: its landing after Recover
+  and HitToPlayer). With the star pieces (`XF=-DASC_KIND=-1`, two shots at the first of the kind): Unizo: "asc row 323 kind 14: hit reaction", scale y 1.055, 1.136, 1.013, 0.911, 0.959, 1.046, stopped at step 91; Jellyfish, Mogu, Petari and KoteBug: the shots went out and no piece was reported on them, so their controllers were not seen running (Mogu and Petari only react while swooning / waiting, KoteBug only after its Recover): still to be seen.

@@ -313,6 +313,17 @@ static int galaxy_num_can_open(const char *unused) /* GameDataHolder::getGalaxyN
     return n;
 }
 int gd_just_tico_galaxy(void) { return at_start(tico_galaxy_num, "") < tico_galaxy_num(""); } /* isJustAppearTicoGalaxy */
+int gd_just_complete_galaxy(const char *g) /* isJustCompleteGalaxy (checkIfComplete: getPowerStarNumOwned == getPowerStarNum) */
+{
+    int n = gd_power_star_num(g);
+    return at_start(gd_star_num_galaxy, g) != n && gd_star_num_galaxy(g) == n;
+}
+static int book_can_read(const char *unused) { (void)unused; return gd_book_can_read(); }
+int gd_just_book(void) /* 0 none, 1 isAddPictureBook, 2 isJustOpenLibraryRoom too */
+{
+    int prev = at_start(book_can_read, ""), after = gd_book_can_read();
+    return prev < after ? (prev == 0 ? 2 : 1) : 0;
+}
 int gd_just_open_galaxy(void) /* StageResultSequenceChecker::isJustOpenGalaxyWithoutChallengeGalaxy */
 {
     int prev = at_start(galaxy_num_can_open, ""), after = galaxy_num_can_open(""), green = 0;
