@@ -48,6 +48,17 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   row alive. tools/slice.py: LOGIC UnizoLauncher, EXTRA UnizoLand / UnizoLandBreak (**repack** IceVolcanoGalaxy,
   SkullSharkGalaxy). Test: `walker` with `XF=-DUZL_TEST` ("unizo launcher row", "uzl test" lines). Left out: its
   Body sensor (100, it attacks nothing).
+=======
+- CrystalCageMoving after Petari (feat/728-crystal-cage-moving, #728, 2026-11-19): the class had no code (1 placed:
+  MarioLancherLecture3Zone, BattleShipGalaxy; a mappartsinfo row, so it rode its rail and, wrongly, turned with the
+  generic rotator). statics.inc `st_ccm` (ST_CCM): WaitBig / BreakBig / WaitSmall / BreakSmall / BreakAll and the
+  demo's DemoTicoMove / Stop / Change; Mario in the MarioLauncher's flight (`ml_flying`) touching its Body (350, then
+  30 on its axis) is crashMario; the rail mover stops while isNerveTypeEnd (`st_rail_go`), no rotator; the Tico
+  inside (`st_ccm_draw`, scale 3 then 1) flies to the cage's first place and changes; the demo 脱出スピドラ出現 from
+  its part 1 (クリスタル破壊), its action nerve at チコ出現 (`st_cast_hook`). tools/slice.py: SKINNED_OBJ
+  CrystalCageMoving (Wait / CoreWait, the BreakOutside / BreakInside effects), EXTRA Tico (**repack**
+  BattleShipGalaxy). Test: plain with `XF=-DST_CCM_TEST` ("crystal cage moving", "ccm test" lines). Left out: the
+  Tico's ColorChange frame and draw order, the star pointer.
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /
