@@ -11,6 +11,18 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Mecha-Bowser's arms and head after Petari, part of #15 (feat/15-mecha-koopa-parts, 2026-11-19; written without
+  the emulator: **not run in PCSX2** until its PR says so): MechaKoopaPartsArmLeft / Right and MechaKoopaPartsHead
+  (FactoryGalaxy's MechanicKoopaZone) were still models; the right arm's rail mover ran from the start. statics.inc
+  `st_mkarm` (ST_MKARM): the arm's nerves round its rotator (Wait / MoveStart with its Front / Rear clip and the
+  rotator paused: `st_rotor_go` in update_rotors / Move), the right arm's break on its SW_B (BreakStart, then Break:
+  Spark, BlackSmoke, its rail mover only from here: st_rail_go, killed at the rail's end); `st_mkhead` (ST_MKHEAD):
+  SW_A on at init, the demo メカクッパ爆発's action nerves by part (`st_cast_hook`: DemoBreak with its explosions and
+  the camera's shake, DemoWhiteFadeOut, DemoWhiteWait: hidden, SW_A off, Mario at 爆破デモ後マリオ, DemoWhiteFadeIn),
+  then DemoAppearStar: the head declares the scenario's star (`st_star_out`). tools/slice.py: the arms skinned
+  (Front / Rear / BreakStart), the head a star declarer; tools/jpa.py NAMED MechaKoopaPartsHead (**repack**
+  FactoryGalaxy, resident.bin). Its twelve sounds were three lines of docs/sound-gaps.md. Not done: the demo's
+  other casts' actions (MechaKoopaPartsCaterpillar's nerve at 白画面, ClockworkHandle's functor at 耳飛び).
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /

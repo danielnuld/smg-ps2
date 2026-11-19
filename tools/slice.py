@@ -96,6 +96,7 @@ SKINNED_OBJ += ("DashRing",)  # DashRing.cpp: Loop / Start / End / Revival (game
 SKINNED_OBJ += ("QuarterRollGravityRoomArrow",)  # its RollGravityA / B (Reverse) clips (game.c statics.inc st_qrarrow)
 SKINNED_OBJ += ("DeadLeaves", "DesertMovingLandSmall")  # DeadLeaves.cpp: Spin (game.c update_givers); DesertMovingLand's small one: Vibration (update_dlands)
 SKINNED_OBJ += ("PrizeRing",)  # PrizeRing.cpp: Start / Loop / End, its Number BVA (game.c syati.inc)
+SKINNED_OBJ += ("MechaKoopaPartsArmRight", "MechaKoopaPartsArmLeft")  # Front / Rear / BreakStart, the right one's Spark / BlackSmoke (statics.inc st_mkarm)
 SKINNED_OBJ += ("JumpGuarder", "JumpGuarderHead")  # JumpGuarder (game.c update_rbeamers: rbeamer 3) and its head
 SKINNED_OBJ += ("SubmarineVolcanoBigColumnBreak",)  # SubmarineVolcanoBigColumn: its break model's Break (statics.inc)
 SKINNED_OBJ += ("LavaObstacleRockShell", "LavaObstacleRockHomeA", "ForestObstacleWoodA")  # HipDropMoveObj / HipDropDemoMoveObj: Move, the collision on the Move joint (game.c update_hipmoves)
@@ -2160,6 +2161,8 @@ def declare_stars(keep, scenario, appear, jp):
             k = None if s32(r["args"][0]) in (0, -1) else -1
         elif r["name"] == "PenguinCoach":  # PenguinCoach::init: declarePowerStar for Behavior_Star / Tutorial / Race (arg0 1-3)
             k = None if 1 <= s32(r["args"][0]) <= 3 else -1
+        elif r["name"] == "MechaKoopaPartsHead":  # MechaKoopaPartsHead::init: declarePowerStar
+            k = None
         elif r["name"] == "Kinopio":  # Kinopio::init: declarePowerStar in its power star mode (mBehavior 8)
             k = None if s32(r["args"][2]) == 8 else -1
         elif r["name"] in ("TrickRabbit", "TrickRabbitFreeRun", "TrickRabbitFreeRunCollect"):  # their init: declarePowerStar

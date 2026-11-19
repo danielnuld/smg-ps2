@@ -284,6 +284,7 @@ static int st_kind_name(const char *n)
     if (!strcmp(n, "OceanFloaterTypeU")) return ST_FLOATERU; /* OceanFloaterLandParts */
     if (!strcmp(n, "QuarterRollGravityRoomArrow")) return ST_QRARROW;
     if (!strcmp(n, "SandCapsulePressGround")) return ST_SCPRESS;
+    if (!strncmp(n, "MechaKoopaParts", 15)) return !strcmp(n + 15, "Head") ? 113 : !strncmp(n + 15, "Arm", 3) ? 112 : ST_NONE; /* ST_MKHEAD, ST_MKARM */
     if (!strcmp(n, "SurprisedGalaxy") || (!strncmp(n, "Surp", 4) && strlen(n) > 10 && !strcmp(n + strlen(n) - 6, "Galaxy"))) return ST_SURP;
     for (u32 k = 0; k < sizeof st_still / sizeof *st_still; k++) if (!strcmp(n, st_still[k])) return ST_STILL;
     return ST_NONE;
@@ -299,6 +300,7 @@ typedef struct { int row, n, st, on, t2, t3; const unsigned char *kcl; u32 lv[3]
 static StSt st_st[128];
 static void st_column(Inst *in, StSt *g); /* SubmarineVolcanoBigColumn (below) */
 static void st_flex(Inst *in, StSt *g, int i); /* FlexibleSphere (below) */
+static int st_mkarm(Inst *in, StSt *g, int i), st_mkarm_rail(int row), st_mkhead_star(int row); static void st_mkhead(Inst *in, StSt *g), st_mkhead_action(int row, int part); /* MechaKoopaParts (below) */
 static int nst_st;
 static const Scene *st_st_sc;
 static StSt *st_get(int row)
@@ -428,7 +430,7 @@ static struct {
     Anim *core, *ea; const Model *mcore, *mel, *msh;
     struct { V3 pos, vel, dir, g; int alive, nrv, st; u32 lv; } e[ST_MP_E];
 } st_mpl;
-static int st_star_out(int row) { return st_mpl.at == sc && st_mpl.row == row && st_mpl.broke; }
+static int st_star_out(int row) { return (st_mpl.at == sc && st_mpl.row == row && st_mpl.broke) || st_mkhead_star(row); }
 static float st_reaction(float t, float a, float b) /* MR::getScaleWithReactionValueZeroToOne(t, a, b) */
 {
     if (t < a) return t / a;
@@ -1020,6 +1022,7 @@ static int st_rail_obj(const char *n)
 static int st_rail_go(const Inst *in) /* update_railers: may its rail mover run (RailDemoMoveObj: its demo's camera) */
 {
     const char *n = sc->types + 32 * sc->objs[in->row].type;
+    if (!strncmp(n, "MechaKoopaPartsArm", 18)) return st_mkarm_rail(in->row); /* MechaKoopaPartsArm::exeBreak: startRailMover */
     if (st_rail_obj(n) != 2) return 1;
     StSt *g = st_get(in->row);
     if (g->n == 0) { /* tryStartMove: DemoCtrlBase::tryStart */
@@ -1221,6 +1224,7 @@ static int st_cast_hook(int row, int type, int part) /* dx_cast_hook: the demo a
         if (g->n == 0) { g->n = 1; g->t2 = 0; printf("watch tower %d: MoveStart (demo)%c", row, 10); }
         return 1;
     }
+    if (type == 3 && st_kind(sc->objs[row].type) == 113) { st_mkhead_action(row, part); return 1; } /* MechaKoopaPartsHead */
     if (type == 3 && st_kind(sc->objs[row].type) == ST_SCPRESS) { /* tryRegisterDemoActionNerve: DisappearDemo */
         StSt *g = st_get(row);
         if (g->n != SCP_DEMO) { g->n = SCP_DEMO; g->st = 0; }
@@ -1491,6 +1495,8 @@ static void st_objs_update(void)
         case ST_FLOATERU: st_floater_u(in, g); break;
         case ST_QRARROW: st_qrarrow(in, g); break;
         case ST_SCPRESS: if (st_scpress(in, g, i)) return; break;
+        case 112: if (st_mkarm(in, g, i)) return; break; /* ST_MKARM */
+        case 113: st_mkhead(in, g); break; /* ST_MKHEAD */
         case ST_TEXSW: { /* SimpleMapObj::init: TexChange (BTK) at arg1 (setupInitInfoTextureChangeArg1; -1 none),
                           * SimpleTextureSwitchChangeObj::changeTexture on its SW_A's rise: frame 1 for good (slice.py
                           * BRK_STEPS: "<class>~<frame>") */
@@ -1738,6 +1744,136 @@ static void st_columns_draw(void)
         if (st_kind(sc->objs[in->row].type) != ST_BIGCOL || st_get(in->row)->n != 1) continue;
         Anim *a = obj_anim(16 * (int)sc->nobjs + in->row, md, "SubmarineVolcanoBigColumnBreak");
         if (a) draw_skin(md, in->m, a); /* (its base matrix, the column's) */
+    }
+}
+
+/* MechaKoopaPartsArm.cpp / MechaKoopaPartsHead.cpp after Petari (FactoryGalaxy's MechanicKoopaZone; still models:
+ * the right arm's rail mover ran from the start).
+ * The arms (ST_MKARM): their rotator swings them (update_rotors). WaitRear / WaitFront until the rotator turns:
+ * MoveStartFront / Rear (the rotator paused, its Front / Rear clip, SE_OJ_M_KOOPA_ARM_START; with Mario on it
+ * shakeCameraNormal and a middle rumble) until the clip stops, then MoveFront / Rear (the rotator again,
+ * SE_OJ_LV_M_KOOPA_ARM_MOVE) until it rests: SE_OJ_M_KOOPA_ARM_END, WaitFront / Rear. The right arm's SW_B:
+ * BreakStart (its BreakStart clip, SE_OJ_M_KOOPA_ARM_FALL_ST, the rotator paused) until the clip stops, then Break
+ * (Spark, BlackSmoke, its rail mover started, SE_OJ_LV_M_KOOPA_ARM_FALL) until the mover reaches its rail's end:
+ * SE_OJ_M_KOOPA_ARM_BREAK, killed. StSt: n its nerve, st its step, k its rotator's angle a frame ago, on: k set.
+ * The head (ST_MKHEAD): its SW_A on at init; it declares the star. The demo メカクッパ爆発's action nerves by part:
+ * 壊れ開始 (0) DemoBreak (SE_BM_MECHA_KOOPA_DOWN, the stage BGM's volume to 0 over 30, shakeCameraInfinity 0.2 / 2;
+ * every step a middle rumble and SE_BM_LV_MECHA_KOOPA_PRE_BREAK; at 120 Explosion1 / 2, ExplosionEye1 / 2,
+ * SE_OJ_M_KOOPA_EYE_BREAK; at 300 Explosion and SE_BM_MECHA_KOOPA_BREAK_FIRE_ST, then SE_BM_LV_MECHA_KOOPA_BREAK_FIRE),
+ * フェードアウト (2) DemoWhiteFadeOut (the shake stopped, a strong rumble and shake, SE_BM_MECHA_KOOPA_EXPLODE,
+ * closeWipeWhiteFade 60), 白画面 (3) DemoWhiteWait (hidden, SW_A off, Mario at 爆破デモ後マリオ), フェードイン (4)
+ * DemoWhiteFadeIn (openWipeWhiteFade 60; at the part's last step DemoAppearStar: startAfterBossBGM, its star; killed
+ * at the star's appear demo's end). StSt: n 0 Wait .. 5 DemoAppearStar, 6 dead; on: its star asked for (1), its
+ * appear demo seen (2); t3: set up.
+ * ponytail: isRotatorMoving is the rotator's angle changing; isRailMoverReachedEnd its coordinate at the rail's
+ * length; setPlayerStateWait is the demo's own wait */
+enum { ST_MKARM = 112, ST_MKHEAD }; /* (their own line: the list above is edited by every new class) */
+enum { MKA_WAITREAR, MKA_WAITFRONT, MKA_STARTFRONT, MKA_STARTREAR, MKA_MOVEFRONT, MKA_MOVEREAR, MKA_BREAKSTART, MKA_BREAK, MKA_DEAD };
+static int st_mkarm_rotor(int row) { int n = st_get(row)->n; return n != MKA_STARTFRONT && n != MKA_STARTREAR && n < MKA_BREAKSTART; } /* pauseRotator */
+static int st_mkarm_rail(int row) { return st_get(row)->n == MKA_BREAK; } /* startRailMover */
+static int st_rotor_go(const Inst *in) /* update_rotors: may its rotator run */
+{
+    return st_kind(sc->objs[in->row].type) != ST_MKARM || st_mkarm_rotor(in->row);
+}
+static int st_mkarm(Inst *in, StSt *g, int i)
+{
+    const Row *r = &sc->objs[in->row];
+    int right = !strcmp(sc->types + 32 * r->type, "MechaKoopaPartsArmRight");
+    float ang = row_angle[in->row];
+    int moving = g->on && ang != g->k; /* isRotatorMoving */
+    g->k = ang; g->on = 1;
+    if (g->n == MKA_DEAD) return 0;
+    if (right && g->n < MKA_BREAKSTART && r->sw[SW_B] >= 0 && sw_on(r, SW_B)) { g->n = MKA_BREAKSTART; g->st = 0; printf("mecha koopa arm %d: break%c", in->row, 10); } /* startBreak */
+    int st = g->st++, front = g->n == MKA_STARTFRONT || g->n == MKA_MOVEFRONT;
+    switch (g->n) {
+    case MKA_WAITREAR: case MKA_WAITFRONT: /* exeWait */
+        if (moving) { g->n = g->n == MKA_WAITFRONT ? MKA_STARTREAR : MKA_STARTFRONT; g->st = 0; }
+        break;
+    case MKA_STARTFRONT: case MKA_STARTREAR: /* exeMoveStart */
+        if (st == 0) {
+            obj_play(in, front ? "front" : "rear", 0, 0);
+            se_start(SE_OJ_M_KOOPA_ARM_START, &in->m[12]);
+            if (mario_ground == i) { camera_shake(SHAKE_NORMAL); pad_rumble(RUMBLE_MIDDLE); }
+        } else if (!in->anim || in->anim->done) { g->n = front ? MKA_MOVEFRONT : MKA_MOVEREAR; g->st = 0; } /* endMoveStart: resumeAllMapPartsFunctions */
+        break;
+    case MKA_MOVEFRONT: case MKA_MOVEREAR: /* exeMove */
+        g->lv[0] = se_level(SE_OJ_LV_M_KOOPA_ARM_MOVE, &in->m[12], g->lv[0]);
+        if (st > 1 && !moving) { se_start(SE_OJ_M_KOOPA_ARM_END, &in->m[12]); g->n = front ? MKA_WAITFRONT : MKA_WAITREAR; g->st = 0; }
+        break;
+    case MKA_BREAKSTART:
+        if (st == 0) { obj_play(in, "breakstart", 0, 0); se_start(SE_OJ_M_KOOPA_ARM_FALL_ST, &in->m[12]); }
+        else if (!in->anim || in->anim->done) { g->n = MKA_BREAK; g->st = 0; }
+        break;
+    case MKA_BREAK:
+        fx_named("MechaKoopaPartsArmRight", "Spark", in->m, NULL, g);
+        fx_named("MechaKoopaPartsArmRight", "BlackSmoke", in->m, NULL, &g->st);
+        g->lv[0] = se_level(SE_OJ_LV_M_KOOPA_ARM_FALL, &in->m[12], g->lv[0]);
+        if (!in->railer || row_coord[in->row] >= railer_len(in->railer) - 0.5f) { /* isRailMoverReachedEnd */
+            se_start(SE_OJ_M_KOOPA_ARM_BREAK, &in->m[12]);
+            g->n = MKA_DEAD;
+            row_dead[in->row] = 1; game_rebind(); /* kill */
+            printf("mecha koopa arm %d: gone%c", g->row, 10);
+            return 1;
+        }
+        break;
+    }
+    return 0;
+}
+static int st_mkhead_star(int row) { return st_kind(sc->objs[row].type) == ST_MKHEAD && st_get(row)->on; } /* requestAppearPowerStar */
+static void st_mkhead_action(int row, int part) /* registerDemoActionNerve by the part's name */
+{
+    StSt *g = st_get(row);
+    int n = part == 0 ? 1 : part == 2 ? 2 : part == 3 ? 3 : part == 4 ? 4 : 0;
+    if (n) { g->n = n; g->st = 0; printf("mecha koopa head %d: demo nerve %d%c", row, n, 10); }
+}
+static void st_mkhead(Inst *in, StSt *g)
+{
+    const Row *r = &sc->objs[in->row];
+    if (!g->t3) { g->t3 = 1; if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1); } /* init: onSwitchA */
+    if (g->n >= 3) in->invisible = 1; /* hideModel (kept over a rebind) */
+    int st = g->st++;
+    switch (g->n) {
+    case 1: /* exeDemoBreak */
+        if (st == 0) { se_start(SE_BM_MECHA_KOOPA_DOWN, &in->m[12]); audio_move_volume(0.0f, 30); camera_shake_infinity(g, 0.2f, 2.0f); }
+        pad_rumble(RUMBLE_MIDDLE);
+        g->lv[0] = se_level(SE_BM_LV_MECHA_KOOPA_PRE_BREAK, &in->m[12], g->lv[0]);
+        if (st == 120) { /* sStepToBreakFaceEffect */
+            static const char *const fx[4] = {"Explosion1", "Explosion2", "ExplosionEye1", "ExplosionEye2"};
+            for (int k = 0; k < 4; k++) fx_named("MechaKoopaPartsHead", fx[k], in->m, NULL, NULL);
+            se_start(SE_OJ_M_KOOPA_EYE_BREAK, &in->m[12]);
+        }
+        if (st == 300) { fx_named("MechaKoopaPartsHead", "Explosion", in->m, NULL, NULL); se_start(SE_BM_MECHA_KOOPA_BREAK_FIRE_ST, &in->m[12]); } /* sStepToExplosionEffect */
+        if (st > 300) g->lv[1] = se_level(SE_BM_LV_MECHA_KOOPA_BREAK_FIRE, &in->m[12], g->lv[1]);
+        break;
+    case 2: /* exeDemoWhiteFadeOut */
+        if (st == 0) {
+            camera_shake_stop(g);
+            pad_rumble(RUMBLE_STRONG); camera_shake(SHAKE_STRONG);
+            se_start(SE_BM_MECHA_KOOPA_EXPLODE, &in->m[12]);
+            menu_wipe(1, 60, 0xFFFFFF); /* closeWipeWhiteFade(sStepForWhiteFadeOut) */
+        }
+        break;
+    case 3: /* exeDemoWhiteWait */
+        if (st == 0) {
+            const float *gp = scene_gpos("爆破デモ後マリオ"); /* setPlayerPos */
+            if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 0);
+            if (gp) {
+                float m[16], one[3] = {1, 1, 1};
+                mat_translate_rot_scale(m, gp, gp + 3, one);
+                m_set_trans(v3(m[12], m[13], m[14])); mario->up = vnorm(v3(m[4], m[5], m[6])); mario->face = vnorm(v3(m[8], m[9], m[10]));
+                mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            }
+        }
+        break;
+    case 4: /* exeDemoWhiteFadeIn */
+        if (st == 0) menu_wipe(0, 60, 0xFFFFFF); /* openWipeWhiteFade(sStepForWhiteFadeIn) */
+        if (dx_last(4)) { g->n = 5; g->st = 0; } /* isDemoPartLastStep(フェードイン) */
+        break;
+    case 5: /* exeDemoAppearStar */
+        if (st == 0) { bgm_after_boss(); g->on = 1; sw_changed = 1; printf("mecha koopa head %d: its star%c", in->row, 10); }
+        if (g->on == 1 && pd.name && !strcmp(pd.name, "パワースター出現")) g->on = 2;
+        if (g->on == 2 && !pd.name) { g->n = 6; printf("mecha koopa head %d: gone%c", in->row, 10); } /* isEndPowerStarAppearDemo: kill (hidden already) */
+        break;
     }
 }
 
