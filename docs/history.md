@@ -84,6 +84,22 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   HellMeteoZone / KoopaBattleVs2Galaxy, the Invincible's bounce in TeresaHouseZone. Left out: arg5 1's appear camera
   demo (出現, a dozen rows), the rail's arg0 speed, an item with arg0 shown before its appear switch, ExplainOneUp is
   there already (io_entry).
+- Caretaker's talk and its tidy-up mission, part of #732 (feat/732-caretaker-mission, 2026-11-19; written without the
+  emulator: **not run in PCSX2** until its PR says so): a Caretaker had no talk at all (no talk class). Now talk
+  class 14: every Caretaker talks (its balloon 150 up), with branchFuncComet / eventFuncComet (`care_branch` /
+  `care_event`: the purple coins had; its TakeOutStar, forceKillPlayerByGroundRace, setMessageArg). The ones with
+  arg0 neither -1 nor 1 (BombTimeAttackZone in BattleShipGalaxy, BombTimeAttack2Zone in CannonFleetGalaxy: 30 s,
+  SW_A 30, SW_B 22) run the mission (`care_update`, CareTaker.cpp:344-546): Wait, PreTalk (Yes: the demo
+  ゴミ掃除タイムアタック), PreWipeOut / PreWipeIn (Mario at バトルシップ・タイムアタック前位置, the BombTimerLayout out),
+  PreWait, CountDown, Tidy (the timer, its counter sounds; SW_A on or the time up), Runaway, PstWipeOut (the
+  BreakableTrash of its group killed or out again: `care_group`), PstWipeIn, PstWait, PstTalk (branchFuncStar on
+  SW_A; its TakeOutStar by the talk's event: `care_takeout`, `care_took` lets its star out), AppearedStar;
+  offPlayerControl (`care_ctrl_off`) and Mario's Watch (`care_puppet`). tools/slice.py: the mission Caretaker's
+  PStar (morph_arcs) and its star's declarer (declare_stars) (**repack** BattleShipGalaxy, CannonFleetGalaxy). Test:
+  plain with `XF=-DCARE_TEST` (the talk skipped as Yes, a trash made dead every 30 frames; `=2`: none, the time runs
+  out): "caretaker row n: nerve k", "care test" lines. Left out: the talk camera's own calls, its rail, the clipping
+  calls, the emitters' forced delete; who turns SW_A on (the zone's switch logic on the trash's dead switches) was
+  not checked.
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /
