@@ -111,7 +111,7 @@ enum { KPL_DAMAGE, KPL_COIN, KPL_PLATE };
 static struct { int ki, kind, alive, nrv, st; V3 pos; float m[16]; } kpl[KP_PLATES];
 static int kp_planet_ki = -1, kp_planet_ok, kp_planet_star = -1, kp_star_demo = -1; static float kp_planet_m[16]; static V3 kp_pc;
 /* the pools */
-static struct { int on, nrv, st, stair, dur; V3 pos, vel, front, a0; float rotx, mf; } kpfst[KP_FIRE_STAIRS]; /* KoopaFireStairs */
+static struct { int on, nrv, st, stair, dur; V3 pos, vel, front, a0; float rotx, mf; int jr; V3 ac; u32 lv; } kpfst[KP_FIRE_STAIRS]; /* KoopaFireStairs (jr: mIsKoopaJr, ac: _AC) */
 static struct { int on, nrv, st, dur, valid; V3 pos, vel, front, grav; float speed, off, f; u32 lv; } kpfs[KP_FIRE_SHORT]; /* KoopaFireShort */
 static struct { int on, st; float ang; V3 up, front; float m94[16], mb[16], mm[16]; V3 sp; } ksw[KP_SHOCK];     /* KoopaShockWave */
 static Anim *ka_fire, *ka_mbreak, *ka_sw, *ka_sws;
@@ -384,7 +384,11 @@ static void kp_plates_update(void) /* KoopaBattleMapDamagePlate: Break 180 (burn
 }
 
 /* --- KoopaFireStairs (MeteorStrike): flies to the stair's target at a constant speed, timed to its break; at the
- * break the Hit / MeteorStrikeBreak effects, its break model's Break, killed at its end ------------------------------ */
+ * break the Hit / MeteorStrikeBreak effects, its break model's Break, killed at its end. Vs3's are made with
+ * mIsKoopaJr (KoopaParts::initVs3: createFireStairs(true)): no velocity, set each frame at the stair's time rate
+ * between its start and the target plus sin(180 x rate) x 1500 along _AC (its up, turned up to 45 degrees about
+ * Koopa's front at each launch, never reset: the pool's actor keeps it), SE_BM_KOOPAJR_SHIP_METEORSHOT_F at appear
+ * and SE_BM_LV_KOOPAJR_SHIP_METEOR while it flies ------------------------------------------------------------------- */
 static void kp_stair_target(int k, V3 ref, V3 *out, float *dist) /* KoopaBattleMapStair::calcAndSetTargetPos */
 {
     static const float off[8][2] = {{0, -1}, {1, -1}, {1, 0}, {1, 1}, {0, 1}, {-1, 1}, {-1, 0}, {-1, -1}};
@@ -417,14 +421,25 @@ static int kp_fire_stairs(int k, V3 from) /* KoopaParts::emitFireStairsToPos (us
     for (int i = 0; i < KP_FIRE_STAIRS; i++) {
         if (kpfst[i].on) continue;
         typeof(&kpfst[0]) f = &kpfst[i];
+        V3 ac = vlen(f->ac) > 0.5f ? f->ac : v3(0, 1, 0); /* _AC: (0, 1, 0) at its construction */
         memset(f, 0, sizeof *f);
-        f->on = 1; f->stair = k; f->pos = f->a0 = from; f->rotx = 0; f->st = -1;
+        f->on = 1; f->stair = k; f->pos = f->a0 = from; f->rotx = 0; f->st = -1; f->ac = ac;
+        f->jr = kp.vs == 3;
         int bt = kp_stair_break_time(k) - kss[k].step; /* calcRemainTimeToBreak */
         V3 d = vsub(kss[k].ac, from);
         float len = vlen(d);
         f->vel = f->front = len > 1e-6f ? vnorm(d) : v3(0, 0, 1);
-        f->vel = vmul(f->vel, len / (float)(bt - 1 > 0 ? bt - 1 : 1));
-        se_start(SE_OJ_KOOPA_FIRE_SHOT, &f->pos.x); /* appear: emitEffect MeteorStrike */
+        if (f->jr) { /* setInfo(stair, Koopa's front: useFront) */
+            V3 c = vcross(vsub(kss[k].pos, from), d), sg = vmul(up_at(kss[k].pos, v3(0, 1, 0)), -1.0f); /* the stair's gravity */
+            float deg = vdot(c, sg) > 0.0f ? frand(0.0f, 45.0f) : frand(-45.0f, 0.0f); /* sFlyUpDirDegreeMax */
+            f->ac = rot_axis(f->ac, kp.b.front, deg * 0.0174533f); /* rotateVecDegree */
+            f->vel = v3(0, 0, 0);
+            se_start(SE_BM_KOOPAJR_SHIP_METEORSHOT_F, &f->pos.x);
+            printf("koopa: stairs meteor %d to stair %d, %d frames, arc %.0f degrees\n", i, k, bt, deg);
+        } else {
+            f->vel = vmul(f->vel, len / (float)(bt - 1 > 0 ? bt - 1 : 1));
+            se_start(SE_OJ_KOOPA_FIRE_SHOT, &f->pos.x); /* appear: emitEffect MeteorStrike */
+        }
         return i;
     }
     return -1;
@@ -451,7 +466,18 @@ static void kp_fire_stairs_update(void)
                 se_start(SE_OJ_KOOPA_FIRE_EXPLODE, &f->pos.x);
                 pad_rumble(RUMBLE_STRONG); camera_shake(SHAKE_WEAK);
                 f->nrv = 1; f->st = -1; f->mf = 0;
-            } else f->rotx = fmodf(f->rotx + 15.0f, 360.0f); /* sRotateSpeed */
+            } else {
+                if (f->jr) {
+                    const typeof(kss[0]) *s = &kss[f->stair];
+                    float rate = (float)(s->step - s->fstep) / (float)(kp_stair_break_time(f->stair) - s->fstep); /* calcTimeRate */
+                    V3 old = f->pos;
+                    f->pos = vadd(vadd(vmul(f->a0, 1.0f - rate), vmul(s->ac, rate)), vmul(f->ac, sinf(3.1415927f * rate) * 1500.0f));
+                    V3 dv = vsub(f->pos, old);
+                    if (vlen(dv) > 0.001f) f->front = vnorm(dv); /* isNearZero */
+                    f->lv = se_level(SE_BM_LV_KOOPAJR_SHIP_METEOR, &f->pos.x, f->lv);
+                }
+                f->rotx = fmodf(f->rotx + 15.0f, 360.0f); /* sRotateSpeed */
+            }
         } else { /* Break: the break model's Break (its BCK's length), kill at its end */
             if (st == 0 && ka_mbreak && m_kmeteorb && m_kmeteorb->skin) {
                 anim_bind(ka_mbreak, m_kmeteorb->skin); ka_mbreak->clip_id = -1; anim_start(ka_mbreak, "meteorstrikebreak/break", 0);
@@ -1964,7 +1990,7 @@ static void kstb3_update(void)
         if (!nkss && st % 60 == 0) kstb3_register(); /* (a stairs zone streamed in later: their initAfterPlacement then) */
         for (int k = 0; k < nkss; k++) /* tryAttack: isRequestAttackVs3 */
             if (kss[k].reg && !k3.a6[k] && kstb_is_type(k, 0) && kss[k].nrv == KS_WAITFIRE && (kss[k].step == kss[k].fstep || kss[k].fstep < 0)) {
-                k3.a6[k] = 1; kp_fire_stairs(k, kp.jp[0]); /* emitFireStairsToTarget(useFront: ponytail, the fire's own front) */
+                k3.a6[k] = 1; kp_fire_stairs(k, kp.jp[0]); /* emitFireStairsToTarget(mNamePos, useFront) */
             }
         break;
     }
