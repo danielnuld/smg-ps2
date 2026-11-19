@@ -49507,8 +49507,10 @@ static int coach_takeout(Inst *in) /* 1 while its TakeOutStar runs (exeAnim) */
  * TakeOutStar (NPCUtil.cpp:645-698: its TakeOutStar action and the star model's, the star's level SE past
  * sStarAppearSeStep 103, the star out at the action's end), then startLastStageBGM unless in FishTunnelGalaxy.
  * GapSt: n 1 Escape, 2 its wait, 3 TakeOutStar; i its star out; f _185.
- * ponytail: the Appear nerve (mAppearBehavior not 0: its Change action falling to the ground, :392-416) not ported:
- * the NPCs here have no binder */
+ * Appear (:392-416; mAppearBehavior not 0): its Change action, falling by sFallGravity 0.6 a step with
+ * sFallFrictionRate 0.98 until it is bound to the ground, over once its BCK stopped (GapSt: n 4, v.x its fall speed, v.y
+ * set once it moved: p its place from then on). ponytail: the NPCs here have no binder: the fall is a line to the map
+ * under its feet along its own up (no wall, no slide); no faceToPlayer in the fall */
 static int kino_star(const Row *r) { return r->arg[2] == 8; }
 static int kino_took(int row) { return !strcmp(sc->types + 32 * sc->objs[row].type, "Kinopio") && kino_star(&sc->objs[row]) && gap_st(row)->i; }
 static int kino_event(int k, u32 v)
@@ -49526,7 +49528,21 @@ static int kinopio_nerve(Inst *in, int talking) /* 1 while Escape / TakeOutStar 
 {
     const Row *r = &sc->objs[in->row];
     GapSt *g = gap_st(in->row);
-    if (!g->n) g->n = r->sw[SW_APPEAR] >= 0 && r->arg[2] != 4 && r->arg[4] == 0 ? 1 : 2, g->st = 0;
+    if (!g->n) g->n = r->sw[SW_APPEAR] < 0 || r->arg[2] == 4 ? 2 : r->arg[4] == 0 ? 1 : 4, g->st = 0;
+    if (g->v.y != 0.0f) { in->m[12] = g->p.x; in->m[13] = g->p.y; in->m[14] = g->p.z; } /* (a rebind puts it back at its placement) */
+    if (g->n == 4) { /* exeAppear */
+        V3 p = v3(in->m[12], in->m[13], in->m[14]), hp;
+        if (!g->st++) { obj_play(in, "change", 0, 0); g->v.x = 0.0f; g->v.z = 0.0f; printf("kinopio row %d: Appear%c", in->row, 10); }
+        if (g->v.z == 0.0f) { /* (v.z: bound to the ground) */
+            g->v.x = (g->v.x + 0.6f) * 0.98f;
+            if (kcl_line(vadd(p, vmul(in->nu, 30.0f)), vsub(p, vmul(in->nu, g->v.x)), &hp, NULL, NULL)) { p = hp; g->v.x = 0.0f; g->v.z = 1.0f; }
+            else if (g->st > 600) g->v.z = 1.0f; /* (no ground under it: where it is) */
+            else p = vsub(p, vmul(in->nu, g->v.x));
+            g->p = p; g->v.y = 1.0f;
+            in->m[12] = p.x; in->m[13] = p.y; in->m[14] = p.z;
+        } else if (!in->anim || in->anim->done) g->n = 2; /* isBinded, isBckStopped: popNerve */
+        return g->n == 4;
+    }
     if (g->n == 1) { /* exeEscape */
         if (!g->st++) {
             obj_play(in, "escape", 0, 0);
