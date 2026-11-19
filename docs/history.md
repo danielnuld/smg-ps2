@@ -11,6 +11,11 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- LavaJamboSunPlanet (feat/704-lava-jambo-sun, #704, 2026-11-18): MapObj/LavaJamboSunPlanet.cpp in
+  `engine/src/lava_jambo_sun.inc` (ljs_*): HellShellZone's sun on its rail (HellProminenceGalaxy). Wait (SW_A on:
+  Move), Pause (SW_B on: Move), Move (the current rail point's arg0 x 0.1 a frame, SE_AT_LV_JUMBO_SUN_MOVE; the
+  point's arg1 1: Pause; the goal: Wait). Test: plain `XF=-DLJS_TEST`, HellProminenceGalaxy/1 (its SW_A on at frame 1000): in PCSX2 it leaves Wait and moves down its rail at its points' 0.6 .. 0.8 a frame (the Pause at a point's arg1 and its sound's log line were not seen in the run). ponytail: no bloom model, no LodCtrl. Cost:
+  about 0.9 KB of the ELF (nm ljs_*, one 56 B state); memcheck on a plain build of main with the six classes of this batch: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB. **Release: sound.py --pack HellProminenceGalaxy** (SE_AT_LV_JUMBO_SUN_MOVE was cut).
 - Sound packs: the classes made by plain create functions (fix/sfxcut-create-functions, #698, 2026-11-18):
   tools/sfxcut.py create_classes took a placement's class from the template argument of its create function; 44 of
   the 47 placements made by a plain function (KoopaFunction::createKoopaVs1 / 2 / 3, MR::createDinoPackunVs1 / Vs2,
