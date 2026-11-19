@@ -50,6 +50,11 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   SE_OJ_LV_LAVA_GEYSER_KEEP from ShootUp to ShootDown. Left: LavaProminenceTriple, LavaHomeSeesaw and
   LavaJamboSunPlanet (not ported: static models). **Release: sound.py --pack** HellProminenceGalaxy,
   FloaterOtaKingGalaxy and the other galaxies that place them (simplest with the full repack).
+- Rail movers of stop type 0 were killed at their rail's end (fix/601-rail-stop-kill, #601, 2026-11-18): game.c
+  update_railers' chain of the end types let every part of MoveStopType 0 that is not a UFO fall into the last
+  `else` (row_kill: type 3's Vanish), since the UFO's end shake was put there (d189a3f). Petari:
+  MapPartsRailMover::restartAtEnd, type 0 is Wait. Found with OceanFloaterTypeU (#509), which vanished at the top of
+  its rise. Engine only. Not looked for: which other placed parts of type 0 had been vanishing.
 - StageEffectDataTable's SEs (feat/stage-se, #588, 2026-11-18): the port played eight names of Petari's table, on
   rail movers only. Now `engine/src/stage_se.inc` is the whole sStageEffectSeDataTable (155 names: start / moving /
   stop SE, the stop SE's step, the riddle type) with sStageEffectPadDataTable's rumbles and the kind of the class that

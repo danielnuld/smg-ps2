@@ -37442,9 +37442,11 @@ static void update_railers(void)
             n = n >= len ? len : 0;
             int hold = *(const int *)(pa + 12 * (n > 0 ? nr - 1 : 0) + 8);
             if (hold > 0) row_rhold[row] = hold;
-            if (type == 0) row_rdir[row] = 2;
-            if (type == 0 && !strncmp(sc->types + 32 * r->type, "UFO", 3)) { /* UFOBase::control: isDone the first time */
-                pad_rumble(RUMBLE_MIDDLE); camera_shake(SHAKE_NORMAL); se_start(SE_OJ_UFO_MOVE_END, &in->m[12]);
+            if (type == 0) { /* restartAtEnd: Wait */
+                row_rdir[row] = 2;
+                if (!strncmp(sc->types + 32 * r->type, "UFO", 3)) { /* UFOBase::control: isDone the first time */
+                    pad_rumble(RUMBLE_MIDDLE); camera_shake(SHAKE_NORMAL); se_start(SE_OJ_UFO_MOVE_END, &in->m[12]);
+                }
             }
             else if (type == 1) row_rdir[row] = -dir;
             else if (type == 2) n = 0;
