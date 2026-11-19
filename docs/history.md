@@ -30,6 +30,12 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   SKINNED_OBJ: their Spin / Vibration clips) and jpa for TeresaMansionCandlestand / CandlestandIceVolcano (NAMED_ONLY
   Extinguish02 / Extinguish): covered by the full repack**; until then the clips and those two effects do not show,
   the rest works on the old packs.
+- AnimScaleController on the walkers (feat/521-walker-asc, #521, 2026-11-18): Takobo, Jellyfish, JellyfishElectric,
+  Mogu, Petari, KoteBug and Unizo squash and stretch as Petari's mScaleController does (game.c wa_start / wa_update
+  over asc_core: startHitReaction, startAnim with startAndAddScaleVelocityY). Test XF="-DASC_KIND=<walker kind>
+  -DASC_HOW=<game_test_enemy's way>": PCSX2, EggStarGalaxy/1, Mario beside a Takobo (kind 6, way 2): it attacks,
+  "hit reaction", scale y 1.055, 1.136, 1.013, 0.911, 0.959, 1.046, stopped at step 91, three times. A star piece
+  stuns a Takobo (no scale reaction: as Petari). The other six kinds were not run.
 - CameraRepulsiveCylinder (feat/585-camera-repulsive, #585, 2026-11-18): camera.c view_interp, after
   interpolateCameraSwitching: translateByRepulsion (`camera_repulsion` -> game.c cam_repulsion:
   CameraRepulsiveCylinder::getRepulsion, the eye's part across the cylinder's axis over (2 x its length / radius)
