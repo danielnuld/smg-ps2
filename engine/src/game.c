@@ -15188,6 +15188,7 @@ static int poihana_shock(Kuribo *k);
 static int ge_hitall(Kuribo *k, V3 from);
 static int mg_hitall(Kuribo *k);
 static void bh_chain(Kuribo *k);
+static int jf_knock(Kuribo *k, V3 from);
 static void walker_inhale(Kuribo *e);
 static void fireball_hit_walkers(int b)
 {
@@ -15219,6 +15220,7 @@ static void fireball_hit_walkers(int b)
         if (e->kind == WALK_KOTEBUG) { if (!kb_blow(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* isMsgFireBallAttack: Blow */
         if (e->kind == WALK_POIHANA) { if (!poihana_shock(e)) continue; scene_stop = 3; fireballs[b].t = 0; return; } /* a HitAll: tryShock, stopSceneForDefaultHit(3) */
         if (e->kind == WALK_GESSO) { if (!ge_hitall(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* a HitAll: knockOut */
+        if (e->kind == WALK_JELLYFISH) { if (!jf_knock(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* a HitAll: knockOut */
         if (e->kind == WALK_MOGU || e->kind == WALK_TERESAW || e->kind == WALK_METBO || e->kind == WALK_SNAKEHEAD || e->kind == WALK_BOMBHEI || e->kind == WALK_STRSPIDER) continue; /* (Mogu, TeresaWater, Metbo, Snakehead, BombHei, StringSpider: neither isMsgFireBallAttack nor isMsgPlayerHitAll) */
         if (e->kind == WALK_KURIBO || e->kind == WALK_KMINI || e->kind == WALK_TAKOHEI) { /* isMsgFireBallAttack, a HitAll: requestBlowDown (KuriboMini: a coin), TakoHei's requestPunch */
             if (walker_blow(e, fireballs[b].pos) <= 0) continue;
@@ -15563,6 +15565,7 @@ static void update_jets(void)
                 else if (e->kind == WALK_PACKUN) took = packun_hit(e, p, 1); /* a HitAll: stopSceneForDefaultHit(5), punchDown */
                 else if (e->kind == WALK_KOTEBUG) took = kb_hitall(e, p); /* a HitAll: Blow overturned, else setOverturnFall */
                 else if (e->kind == WALK_MOGU) took = mg_hitall(e); /* isMsgJetTurtleAttack: tryPunchHitted */
+                else if (e->kind == WALK_JELLYFISH) took = jf_knock(e, p); /* a HitAll: knockOut */
                 else if (e->kind == WALK_SPIDER) took = js_blow(e, p); /* a HitAll: HitBlow */
                 else if (e->kind == WALK_KURIBO || e->kind == WALK_KMINI || e->kind == WALK_TAKOHEI) { /* isMsgJetTurtleAttack, a HitAll: requestBlowDown (KuriboMini: a coin), TakoHei's requestPunch */
                     took = walker_blow(e, p) > 0;
@@ -28829,7 +28832,7 @@ static int walker_blow(Kuribo *e, V3 from)
 {
     if (e->kind == WALK_JELEC || e->kind == WALK_BEGOLAUNCH || e->kind == WALK_MKOOPA || e->kind == WALK_MERAMERA || e->kind == WALK_KARON) return 0; /* (JellyfishElectric / MechanicKoopaMini / Meramera / Karon: only isMsgExplosionAttack, walker_explosion; BegomanLauncher: none) */
     if (e->kind == WALK_TERESA || e->kind == WALK_STINKBUG || e->kind == WALK_MERAKING || e->kind == WALK_MOGU) return 0; /* (no receiveMsgEnemyAttack) */
-    if (e->kind == WALK_GESSO || e->kind == WALK_BOMBHEI) return 0; /* (only isMsgExplosionAttack: walker_explosion; BombHei's blows only from a Wanwan) */
+    if (e->kind == WALK_GESSO || e->kind == WALK_BOMBHEI || e->kind == WALK_JELLYFISH) return 0; /* (only isMsgExplosionAttack: walker_explosion; BombHei's blows only from a Wanwan) */
     if (e->kind == WALK_TERESAW || e->kind == WALK_SNAKEHEAD || e->kind == WALK_MOGUCCHI || e->kind == WALK_KABOKURI || e->kind == WALK_SAMBOHEAD || e->kind == WALK_KANINA) return 0; /* (TeresaWater, Snakehead, Mogucchi, Kabokuri, SamboHead, Kanina: no receiveMsgEnemyAttack) */
     if (e->kind == WALK_BASABASA) return bb_punch(e, from, 0); /* isMsgToEnemyAttackBlow / Trample: startWithoutStopScene, PunchDown */
     if (e->kind == WALK_UNIZO) { if (unizo_breaking(e)) return 0; unizo_break(e); return 1; } /* receiveMsgEnemyAttack, not from a Unizo: doBreak */
@@ -28890,6 +28893,7 @@ static void walker_explosion(V3 from)
         if (e->kind == WALK_BASABASA) continue; /* (no isMsgExplosionAttack) */
         if (e->kind == WALK_GESSO) { ge_hitall(e, from); continue; } /* isMsgExplosionAttack: knockOut */
         if (e->kind == WALK_BOMBHEI) { bh_chain(e); continue; } /* isMsgExplosionAttack: Explode */
+        if (e->kind == WALK_JELLYFISH) { jf_knock(e, from); continue; } /* isMsgExplosionAttack (not in Death): knockOut */
         walker_blow(e, from);
     }
 }
@@ -29737,6 +29741,14 @@ static int jf_after_wait(Kuribo *k, int rail) /* selectNerveAfterWait */
         return 1;
     }
     return 0;
+}
+static int jf_knock(Kuribo *k, V3 from) /* knockOut: isMsgPlayerHitAll (a fire ball, a shell, rainbow Mario), isMsgExplosionAttack */
+{
+    if (k->nrv == JF_DEATH) return 0;
+    V3 d = vnorm(vsub(k->pos, from));
+    k->vel = vmul(d, 40.0f); k->front = vmul(d, -1.0f);
+    w_nrv(k, JF_DEATH);
+    return 1;
 }
 static void jelly_update(Kuribo *k)
 {
@@ -33820,6 +33832,11 @@ static void bomb_update(Kuribo *k)
     }
     if (launcher) { /* the launcher: BLN_WAIT / BLN_STOP in snrv / sstep, its countdown in lvt[0] */
         int ss = ++k->sstep, active = r->sw[SW_A] < 0 || sw_on(r, SW_A);
+        if (r->sw[SW_A] >= 0 && active != k->lvt[1]) { /* listenStageSwitchOnOffA */
+            k->lvt[1] = active;
+            if (active) { k->lvt[0] = 0; k->snrv = BLN_WAIT; k->sstep = ss = 0; } /* onSwitchA: mCountdown 0, LauncherWait: it throws at once */
+            else { k->lvt[0] = -1; k->snrv = BLN_STOP; k->sstep = ss = 0; }      /* offSwitchA: mCountdown -1, Stop */
+        }
         if (!active && k->nrv != BH_GONE) w_nrv(k, BH_GONE); /* offSwitchA: the bomb killed */
         if (k->lvt[0] > 0) k->lvt[0]--;
         if (k->snrv == BLN_STOP) { if (ss == 0) k->lvt[0] = -1; if (active && ss > 120) { k->snrv = BLN_WAIT; k->sstep = -1; } }
@@ -35730,6 +35747,7 @@ static void update_invincible(void)
         if (e->kind == WALK_BASABASA) { if (bb_punch(e, mario->pos, 1)) m_invincible_hit(es); continue; } /* a HitAll: PunchDown */
         if (e->kind == WALK_PACKUN) { if (packun_hit(e, mario->pos, 0)) m_invincible_hit(es); continue; } /* isMsgInvincibleAttack: punchDown */
         if (e->kind == WALK_GESSO) { if (ge_hitall(e, mario->pos)) m_invincible_hit(es); continue; } /* a HitAll: knockOut */
+        if (e->kind == WALK_JELLYFISH) { if (jf_knock(e, mario->pos)) m_invincible_hit(es); continue; } /* a HitAll: knockOut */
         if (e->kind == WALK_MOGU) { if (mg_hitall(e)) m_invincible_hit(es); continue; } /* isMsgInvincibleAttack: tryPunchHitted */
         int took = walker_blow(e, mario->pos);
         if (took > 0 && e->kind == WALK_KMINI) e->item = 1; /* KuriboMini: isMsgInvincibleAttack, setTypeCoin(1) */
@@ -39477,8 +39495,8 @@ static void update_dossuns(void)
         float old[16];
         memcpy(old, in->m, 64);
         if (*n == DS_INIT) { *n = r->sw[SW_A] >= 0 ? DS_READY : DS_UPPER; *t = 0; }
-        else if (*t < 0xFFFF) ++*t;
         V3 at = v3(in->m[12], in->m[13], in->m[14]);
+        int n0 = *n; /* (the step counts from 0 on a nerve's first frame: it was 1, so no first step ran: no sign / land sound, no Land effect, no shake) */
         switch (*n) {
         case DS_READY: if (sw_on(r, SW_A)) { *n = DS_SIGN; *t = 0; } break;
         case DS_UPPER: if (*t >= upper) { *n = DS_SIGN; *t = 0; } break;
@@ -39492,7 +39510,11 @@ static void update_dossuns(void)
             break;
         case DS_GROUND:
             if (*t == 0) {
-                if (vlen(vsub(mario->pos, at)) < 3500.0f) camera_shake(SHAKE_NORMAL_WEAK); /* startRumbleWithShakeCameraNormalWeak */
+                { /* startRumbleWithShakeCameraNormalWeak(中, 弱, sCamShakeDistanceStrong 2000, sCamShakeDistanceWeak 3500) */
+                    float d = vlen(vsub(mario->pos, at));
+                    if (d <= 2000.0f) { pad_rumble(RUMBLE_MIDDLE); camera_shake(SHAKE_NORMAL_WEAK); }
+                    else if (d <= 3500.0f) { pad_rumble(RUMBLE_WEAK); camera_shake(SHAKE_WEAK); }
+                }
                 se_start(SE_OJ_DOSSUN_LAND, &at.x);
                 fx_named("Dossun", "Land", in->m, NULL, NULL);
             }
@@ -39505,6 +39527,7 @@ static void update_dossuns(void)
         }
         dossun_place(in);
         if (mario_ground == i) carry(old, in);
+        if (*n == n0 && *t < 0xFFFF) ++*t;
     }
 }
 
