@@ -891,6 +891,7 @@ static struct {
     Anim *head;
 } sambos[MAX_SAMBOS];
 static int nsambos;
+static Anim *sambo_heads; /* each head's Anim (game_init: row_table) */
 static int ndrings; /* DashRing (update_drings): -1 found again at the next update */
 static const Model *m_sambohead;
 static int test_cross; /* test builds: X held (Bee Mario) */
@@ -1106,6 +1107,7 @@ static u32 seesaw_se(const char *name);
 static int nseesaws;
 #define MAX_BRIDGES 4
 static int nbridges; /* PhantomShipBridge (update_bridges) */
+static struct { int row, nrv, t; Anim anim; } *bridges; /* (game_init: row_table) */
 static int nfollows;
 #define MAX_FOLLOWS 8
 #define FOLLOW_N 16
@@ -1129,7 +1131,7 @@ static struct {
     VPoint info[VINE_PTS], stalk[VINE_PTS];
     struct { float coord, size, spring, sspeed; V3 pos, side, up, front; float m[16]; } leaf[VINE_LEAVES];
     u32 lv; /* SE_OJ_LV_PLANT_GROW */
-} vines[MAX_VINES];
+} *vines; /* (game_init: row_table) */
 static int nvines, vine_ride = -1, vine_test_sq;
 static int dino_cam; /* its damage camera is on (startDamageCamera .. endDamageCamera) */
 #define FOOT_MAX 32
@@ -1851,6 +1853,14 @@ static int count_type(const char *name, int per_row_arg0)
         if (sc->objs[i].type == t)
             n += per_row_arg0 ? (sc->objs[i].arg[0] > 0 ? sc->objs[i].arg[0] : 0) : 1;
     return t < 0 ? 0 : n;
+}
+/* A class's state table from the arena, not the ELF's bss: one entry a row the scene places (at most max), NULL where
+ * it places none (its count stays 0). Only from game_init: what is allocated there lies under main.c's base_mark, so a
+ * zone swap keeps it; a scene change releases the arena and clears the pointer with .gamebss, and game_init runs again */
+static void *row_table(const char *name, int max, u32 size)
+{
+    int n = count_type(name, 0);
+    return n ? mem_alloc(MEM_OBJECTS, (u32)(n < max ? n : max) * size) : NULL;
 }
 
 /* a rail from the PATH chunk: {u16 zone, u16 closed, s32 id, u32 npts, u32 nraw, s32 stop_type, s32 pad, f32
@@ -2748,6 +2758,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     npurple = count_type("PurpleCoin", 0) + count_type("CirclePurpleCoinGroup", 1) + count_type("PurpleRailCoin", 1);
     ngroup_wait = 0; ndone_shown = 0;
     nfats = 0; test_feed = 0; nsambos = 0; ndrings = -1;
+    sambo_heads = row_table("CocoSambo", MAX_SAMBOS, sizeof(Anim));
     for (u32 i = 0; i < s->nobjs; i++) { /* the spin drivers a TicoFat's group brings out */
         const char *tn = s->types + 32 * s->objs[i].type;
         if (strncmp(tn, "SuperSpinDriver", 15) || s->objs[i].group < 0) continue;
@@ -2876,6 +2887,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     norocks = 0;
     nhhps = 0;
     nvines = 0; vine_ride = -1;
+    vines = row_table("Plant", MAX_VINES, sizeof *vines);
     pole_init();
     creeper_init();
     sbp_bva_row = -1;
@@ -2888,6 +2900,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     foot_num = foot_rot = 0;
     nseesaws = 0;
     nbridges = 0;
+    bridges = row_table("PhantomShipBridge", MAX_BRIDGES, sizeof *bridges);
     nfollows = 0;
     nflows = 0;
     kari_cling = 0;
@@ -11967,8 +11980,7 @@ static void update_sambos(void)
             row_axes(r, &x, &z);
             sambos[k].row = in->row; sambos[k].pos = row_pos(r); sambos[k].up = vnorm(vcross(z, x)); sambos[k].front = z;
             sambos[k].s = r->scale[0];
-            static Anim heads[MAX_SAMBOS]; /* not mem_alloc: a zone swap releases what comes after game_init */
-            sambos[k].head = &heads[k]; memset(sambos[k].head, 0, sizeof(Anim));
+            sambos[k].head = &sambo_heads[k]; memset(sambos[k].head, 0, sizeof(Anim));
         }
         typeof(&sambos[0]) q = &sambos[k];
         if (q->nrv == CS_DEAD) continue;
@@ -25645,7 +25657,7 @@ static struct {
     float leaf_m[16];
     CrPoint p[CR_PTS];
     u32 lvu, lvd, upse;
-} creepers[MAX_CREEPERS];
+} *creepers; /* (creeper_init: row_table) */
 static int ncreepers, creeper_ride = -1, creeper_test_sq;
 static Anim *cr_leaf_anim;
 #define CR_G v3(0, -1, 0)
@@ -25690,6 +25702,7 @@ static void cr_bend_point(CrPoint *p, const CrPoint *prev, int bend, V3 dir, flo
 static void creeper_init(void)
 {
     ncreepers = 0; creeper_ride = -1; cr_leaf_anim = NULL;
+    creepers = row_table("Creeper", MAX_CREEPERS, sizeof *creepers);
     int ty = scene_type(sc, "Creeper");
     for (u32 i = 0; ty >= 0 && i < sc->nobjs && ncreepers < MAX_CREEPERS; i++) {
         const Row *r = &sc->objs[i];
@@ -38034,7 +38047,6 @@ static Quat q_lerp(Quat a, Quat b, float t) /* JMAQuatLerp (the nearer of b and 
  * collision follows the Move joint (joint 1); the body's stays. Not a NutShipFleetBridge: its FALL_BRIDGE sounds; the
  * riddle SE plays even with Mario dead. Each its own Anim (a LiveActor's model), not the pose pool's: the Move
  * collision needs its pose wherever the camera is */
-static struct { int row, nrv, t; Anim anim; } bridges[MAX_BRIDGES];
 enum { BR_WAIT, BR_MOVEA, BR_MOVEB };
 static void update_bridges(void)
 {
