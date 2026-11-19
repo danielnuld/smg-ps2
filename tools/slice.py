@@ -1265,6 +1265,13 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                         cols = [flat] * len(used)
                     gtab.append(tables[(info["shape"], info["group"])])
                 blend = tex.material_blend(b, bl[b"MAT3"], mat) if mat is not None else (0, 1, 255)
+                if mat is not None and blend[0] == 1 and not get and clr and 11 in info["at"] and tex.vertex_alpha(b, bl[b"MAT3"], mat):
+                    # an untextured blended material whose alpha is its vertices' (RainCloudCylinder: the rain's shade,
+                    # 0 .. 32 of 255): the group's constant alpha their mean. ponytail: a group has no alpha a vertex
+                    # (its colours' fourth byte is the index), so the gradient is flat
+                    o_a, w_a = info["at"][11]
+                    va = [clr(info["keys"][v][o_a] if w_a == 1 else info["keys"][v][o_a] << 8 | info["keys"][v][o_a + 1])[3] for v in used]
+                    blend = (blend[0], blend[1], blend[2] * round(sum(va) / len(va)) // 255)
                 if sea_add:
                     blend = (2, 0, 255)
                 ind_layer = False

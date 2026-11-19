@@ -876,6 +876,15 @@ def vertex_colour(b, mat3, m):
     return ci != 0xFFFF and b[off(0x28) + 8 * ci] == 0 and b[off(0x28) + 8 * ci + 1] == 1
 
 
+def vertex_alpha(b, mat3, m):
+    """True when material m's alpha channel 0 is unlit and takes the vertex alpha (CLR0) as its material alpha
+    (RainCloudCylinder: its shade's alpha, 0 .. 32). MAT3: channel indices u16 @0x0C (colour 0, alpha 0, ...)."""
+    off = lambda k: mat3 + u32(b, mat3 + k)
+    e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
+    ci = u16(b, e + 0x0E)
+    return ci != 0xFFFF and b[off(0x28) + 8 * ci] == 0 and b[off(0x28) + 8 * ci + 1] == 1
+
+
 def camera_alpha(b, mat3, m):
     """Material m's alpha channel 0 lit by GX_LIGHT2 alone, as Air's (LightFunction::loadActorLightInfo: GX_LIGHT2
     colour (0, 0, 0, Alpha2) at the view origin, no attenuation) -> (diffuse function: 1 SIGN, 2 CLAMP; cull mode:
