@@ -6393,7 +6393,7 @@ static void game_rebind_(void)
         in->ddm = in->breaks ? ddm_model(name, r) : NULL;
         in->collapse = strcmp(name, "CollapsePlane") == 0 ? (r->arg[0] > 0 ? r->arg[0] : 140) : 0;
         class_apply(in, class_of(r->type, name)); /* the class-name tests, once a class a rebind */
-        in->invisible = strncmp(name, "InvisibleWall", 13) == 0 || strcmp(name, "IronCannonLauncherPoint") == 0 || strcmp(name, "ElectricBall") == 0 ||
+        in->invisible = strncmp(name, "InvisibleWall", 13) == 0 || strcmp(name, "IronCannonLauncherPoint") == 0 || strcmp(name, "ElectricBall") == 0 || strcmp(name, "FireBubble") == 0 ||
                         strcmp(name, "StarReturnDemoStarter") == 0 || strcmp(name, "GrandStarReturnDemoStarter") == 0 || /* their stars: srd_draw / gsr_draw */
                         strcmp(name, "AstroDomeDemoStarter") == 0 || /* its SuperSpinDriver: adds_draw */
                         st_flag_class(name) || /* Flag: its cloth (statics.inc st_draw) */
@@ -12355,7 +12355,7 @@ static void update_fbubs(void)
     V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     for (int i = 0; i < nfbubs; i++) {
         typeof(&fbubs[0]) q = &fbubs[i];
-        if ((game_frame + i) % 32 == 0) for (int j = 0; j < ninsts; j++) if (insts[j].row == q->row) insts[j].invisible = 1; /* (its row's still instance: drawn from here) */
+        /* (its row's still instance is invisible from game_rebind: drawn from here) */
         if (!row_shown(q->row)) continue;
         if (q->nrv == FBP_OFF) fbub_appear(i); /* syncStageSwitchAppear */
         int st = ++q->t;
