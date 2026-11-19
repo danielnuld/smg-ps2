@@ -1032,7 +1032,7 @@ static void scene_load(void)
     if (!gd_any_left_supply()) gd_add_miss_point(20);
 #endif
     mem_mark(&base_mark);
-    game_set_piece_follow_limit(!strcmp(scen, "EggStarGalaxy/2"));
+    game_set_piece_follow_limit(game_stage_scenario("EggStarGalaxy", 2)); /* isStageStarPieceFollowGroupLimit */
     { /* CometEventKeeper::sTimeLimitInfoTable: the Red / Black comet scenarios' limits (seconds) */
         static const struct { const char *scen; int secs; } limits[] = {
             {"EggStarGalaxy/4", 240}, {"StarDustGalaxy/4", 240}, {"SandClockGalaxy/4", 270}, {"CannonFleetGalaxy/4", 360},
@@ -1745,6 +1745,12 @@ int main(void)
             if (frame % 10 == 0) printf("dring test f %u: %d\n", frame, st);
         }
 #endif
+#ifdef LAUNCHER_TEST
+        if (frame >= 900 && frame < 4000) { /* MarioLauncher (after the stage start): Mario in, the aim, the shot (or the reject) */
+            int st = game_test_launcher();
+            if (frame % 50 == 0) printf("launcher test f %u: %d\n", frame, st);
+        }
+#endif
 #ifdef BIGBUBBLE_TEST
         if (frame >= 900 && frame < 2400) { /* BigBubble (after the stage start): Mario in, pushed by the pointer, Z out */
             int st = game_test_bigbubble((int)frame);
@@ -1923,6 +1929,23 @@ int main(void)
         if (frame == 300) printf("shoot2 test: shot at Takobo row %d\n", game_test_shoot(6));
         if (frame == 330) printf("shoot2 test: stomp it row %d\n", game_test_enemy(6, 0, 0));
         if (frame == 360) printf("shoot2 test: %d Takobo alive\n", game_kind_alive(6));
+#endif
+#ifdef ASC_KIND /* XF="-DASC_KIND=<walker kind>": Mario held 600 before its first, two star pieces at it (wa_start's log);
+                 * with -DASC_HOW=<n> game_test_enemy's way n each frame of 300-420 instead; walkers unclipped */
+        if (frame == 120) game_test_unclip();
+        static int asc_shots; /* held until the first shot goes (the flight in and the welcome first: -2) */
+        static int asc_kind = ASC_KIND; /* -DASC_KIND=-1: the scene's first of Jellyfish, Mogu, Petari, KoteBug, Unizo (one ELF, a galaxy each by boot.txt) */
+        if (asc_kind < 0 && frame == 120) {
+            static const int ks[5] = {19, 21, 16, 3, 14};
+            for (int i = 0; i < 5 && asc_kind < 0; i++) if (game_kind_alive(ks[i]) > 0) asc_kind = ks[i];
+            printf("asc test: kind %d\n", asc_kind);
+        }
+        if (asc_kind >= 0 && frame >= 120 && frame < 760 && asc_shots < 2) game_test_enemy(asc_kind, 0, 9);
+#ifdef ASC_HOW
+        if (asc_kind >= 0 && frame >= 760 && frame < 880 && game_test_enemy(asc_kind, 0, ASC_HOW) >= 0 && frame % 30 == 0) printf("asc test f %u: way %d\n", frame, ASC_HOW);
+#else
+        if (asc_kind >= 0 && frame >= 300 && frame % 120 == 0 && asc_shots < 2) { int r = game_test_shoot(asc_kind); if (r >= 0) asc_shots++; printf("asc test f %u: shot at row %d\n", frame, r); }
+#endif
 #endif
 #ifdef TSPOT_TEST
         if (frame >= 120 && frame < 300) game_test_tspot_near(); /* the camera settles */
@@ -2114,6 +2137,12 @@ int main(void)
 #endif
 #ifdef SLIDER_TEST
         { extern void game_test_slider_input(int); game_test_slider_input((int)frame); } /* Mario put on a Slider floor */
+#endif
+#ifdef SINK_TEST /* XF=-DSINK_TEST=<floor code 17 / 18 / 25 / 31>: Mario put on a Sink floor (#565) */
+        { extern void game_test_sink_input(int, int); game_test_sink_input((int)frame, SINK_TEST); }
+#endif
+#ifdef STEP_TEST /* XF=-DSTEP_TEST=<k>: Mario walks at the k-th step found (MarioStep) */
+        { extern void game_test_step_input(int); game_test_step_input((int)frame); }
 #endif
 #ifdef SIDESTEP_TEST
         { extern void game_test_sidestep_input(int); game_test_sidestep_input((int)frame); } /* Mario leans on a wall and side steps */
@@ -2427,7 +2456,11 @@ int main(void)
 #ifdef JET_TEST
         { /* Mario onto a JetTurtle (500: after the arrival flight), a spin throws it (600): its reset, Restart */
             if (frame == 500) printf("jet test f %u: row %d\n", frame, game_test_jet(0));
+#ifdef DROP_TEST /* the held shell dropped: 1 damageDropThrowMemoSensor (it vanishes, Restart), 2 rushDropThrowMemoSensor (Drop, reset at 90) */
+            if (frame == 600) game_test_jet(DROP_TEST + 1);
+#else
             if (frame == 600) game_test_jet(1);
+#endif
             if (frame >= 500 && frame < 1100 && frame % 20 == 0) printf("jet test f %u: phase %d\n", frame, game_jet_state());
         }
 #endif
@@ -2578,7 +2611,11 @@ int main(void)
         {
             static int row = -1;
 #ifdef RAIL_TEST
+#ifdef STAGE_ANM /* (XF=-DSTAGE_TEST=0 -DSTAGE_ANM: game.c game_test_rotor) */
+            if (frame >= 120 && frame % 120 == 0 && row < 0) printf("rail test: on row %d\n", row = game_test_rotor(1));
+#else
             if (frame == 120) printf("rail test: on row %d\n", row = game_test_rotor(1));
+#endif
 #else
             if (frame == 120) printf("rotor test: on row %d\n", row = game_test_rotor(0));
 #endif

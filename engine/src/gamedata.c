@@ -104,6 +104,19 @@ int gd_power_star_num(const char *g)
 int gd_scenario_star_mask(const char *g, int sc) { const GScen *s = find_scen(g); return s && sc >= 1 && sc <= s->n ? s->s[sc - 1].star_mask : 0; }
 const char *gd_scenario_comet(const char *g, int sc) { const GScen *s = find_scen(g); return s && sc >= 1 && sc <= s->n ? s->s[sc - 1].comet : ""; }
 int gd_scenario_hidden(const char *g, int sc) { const GScen *s = find_scen(g); return s && sc >= 1 && sc <= s->n ? s->s[sc - 1].hidden : 0; }
+int gd_placed_hidden_star_scenario(const char *g, int star) /* MR::getPlacedHiddenStarScenarioNo (SceneUtil.cpp:263) */
+{
+    int normal = 0;
+    if (!strcmp(g, "HeavenlyBeachGalaxy") && star == 6) return 3; /* cPlacedHiddenStarInfoTable */
+    for (int i = 1; i <= gd_scenario_num(g); i++) normal += !gd_scenario_comet(g, i)[0]; /* getNormalScenarioNum */
+    for (int i = 1; i <= normal; i++)
+        if (gd_scenario_star_mask(g, i) & (1 << (star - 1))) return i; /* getActivePowerStarId */
+    return 1;
+}
+int gd_placed_scenario(const char *g, int sc) /* ScenarioSelectScene::trySetCurrentScenarioNo: the number it plays */
+{
+    return gd_scenario_hidden(g, sc) ? gd_placed_hidden_star_scenario(g, sc) : sc;
+}
 
 /* GameDataAllGalaxyStorage: every galaxy with stars (ScenarioDataIter) */
 void gd_reset(void)

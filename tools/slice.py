@@ -89,9 +89,11 @@ SKINNED_OBJ += ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp")  # TicoShop: NPCDat
 SKINNED_OBJ += ("CircleShell", "CircleStrawberry")  # SmallStone.cpp: WindLoop / WindEnd, CircleShell's Kind BVA (game.c stone_pose)
 SKINNED_OBJ += ("IceMerameraKingShock", "IceMerameraKingBreak")  # IceMerameraKing: its ShockWave's Shock, its break model's Break
 SKINNED_OBJ += ("DashRing",)  # DashRing.cpp: Loop / Start / End / Revival (game.c update_drings)
+SKINNED_OBJ += ("DeadLeaves", "DesertMovingLandSmall")  # DeadLeaves.cpp: Spin (game.c update_givers); DesertMovingLand's small one: Vibration (update_dlands)
 SKINNED_OBJ += ("PrizeRing",)  # PrizeRing.cpp: Start / Loop / End, its Number BVA (game.c syati.inc)
 SKINNED_OBJ += ("JumpGuarder", "JumpGuarderHead")  # JumpGuarder (game.c update_rbeamers: rbeamer 3) and its head
 SKINNED_OBJ += ("SubmarineVolcanoBigColumnBreak",)  # SubmarineVolcanoBigColumn: its break model's Break (statics.inc)
+SKINNED_OBJ += ("LavaObstacleRockShell", "LavaObstacleRockHomeA", "ForestObstacleWoodA")  # HipDropMoveObj / HipDropDemoMoveObj: Move, the collision on the Move joint (game.c update_hipmoves)
 SKINNED_OBJ += ("DinoPackunVs2", "DinoPackunEggShellBreakVs2")  # DinoPackun (getVsCount 2): DinoPackun2's clips, its shell break model's Break (game.c dino)
 SKINNED_OBJ += ("DharmaSambo", "DharmaSamboPartsHead", "DharmaSamboPartsBody")  # DharmaSambo.cpp: its stack, its parts' head / body looks (setHead: "<archive>!<materials>" dropped) (game.c dharma.inc)
 SKINNED_OBJ += ("MarblePlanetCore", "MarblePlanetElectron")  # MarblePlanet: its core's BCK frame by the electrons left, the electrons' own clip (statics.inc st_mp_*)
@@ -233,7 +235,7 @@ EXTRA = {"ConcreteBlock": ("ConcreteBlockBreak",),  # SimpleBreakableObj: its br
          "DinoPackunVs2": ("DinoPackunTailBallVs2", "DinoPackunEggShellVs2", "DinoPackunEggShellVs2#EggBroken", "DinoPackunEggShellBreakVs2", "DinoPackunFireBall"),  # DinoPackun::initBall / initEggShell (getVsCount 2: startBtp Vs2), DinoPackunFireHolder (game.c dino2_*)
          "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell", "DinoPackunEggShell#EggBroken", "DinoPackunEggShellBreak"), "OtaKing": ("CocoNut", "OtaKingFoot", "FireBall", "FireBubble", "OtaKingMagma", "OtaKingLongFoot", "OtaKingMagmaBloom"), "OtaRock": ("CocoNut", "FireBall"), "HammerHeadPackun": ("PackunLeaf",), "Plant": ("PlantTop", "PlantLeaf"), "CocoSambo": ("CocoSamboHead",), "Hanachan": ("HanachanHead", "HanachanBody", "HanachanBodyS"), "PackunPetit": ("PackunPetitHead",),
          "RockCreator": ("RockBreak",), "WanwanRolling": ("WanwanRollingBreak",), "Unizo": ("UnizoBreak",), "UnizoLand": ("UnizoLandBreak",), "UnizoShoal": ("UnizoShoalBreak",),
-         "StringSpider": ("StringSpiderString",), "SpiderCoin": ("SpaceCocoon",), "BegomanSpike": ("BegomanSpikeHead", "BegomanBrokenPiece"), "BegomanSpring": ("BegomanSpringHead",), "BegomanSpringHide": ("BegomanSpringHead",), "BossBegoman": ("BossBegomanHead", "BegomanBaby", "BegomanSpike", "BegomanSpikeHead", "BegomanBrokenPiece"),  # its head (PartsModel), followers
+         "StringSpider": ("StringSpiderString",), "SpiderCoin": ("SpaceCocoon",), "BegomanSpike": ("BegomanSpikeHead", "BegomanBrokenPiece"), "BegomanSpring": ("BegomanSpringHead",), "BegomanSpringHide": ("BegomanSpringHead", "BegomanBaby"), "BossBegoman": ("BossBegomanHead", "BegomanBaby", "BegomanSpike", "BegomanSpikeHead", "BegomanBrokenPiece"),  # its head (PartsModel), followers
          "WoodBox": ("#WoodBox", "WoodBoxBreak"), "KoopaStatue": ("#Break", "KoopaStatueBreak"), "CrystalCageS": ("#CrystalCageS", "CrystalCageSBreak"),
          "CrystalCageM": ("#CrystalCageM", "CrystalCageSBreak"), "CrystalCageL": ("#CrystalCageL:1", "#CrystalCageL", "CrystalCageLBreak"), "RingBeamer": ("JumpBeamerBeam",), "BallBeamer": ("JumpBeamerBeam",), "SubmarineVolcanoBigColumn": ("SubmarineVolcanoBigColumnBreak",), "Mogu": ("MoguStone", "MoguHole"), "Mogucchi": ("MogucchiHole", "MogucchiHillA", "MogucchiHillB", "MogucchiHillC"), "WaterPressure": ("WaterBullet",), "FirePressure": ("FireBullet",), "EyeBeamer": ("EyeBeamerBeam",), "BeamGoRoundPlanet": ("BeamGoRoundBeam",), "FishGroupA": ("FishA",), "FishGroupB": ("FishB",), "FishGroupC": ("FishC",), "FishGroupD": ("FishD",), "FishGroupE": ("FishE",), "FishGroupF": ("FishF",), "SeaGullGroup": ("SeaGull",), "SunakazeKun": ("SunakazeKunTrap",), "ChooChooTrain": ("ChooChooTrainBody",), "BigFan": ("BigFanWind",), "BigFanNoLeg": ("BigFanWind",), "BombHeiLauncher": ("BombHei",), "BombBird": ("BombBirdBomb",), "WaterBazooka": ("WaterBazookaCapsule", "MogucchiShooter", "WaterBazookaBreak", "WaterBullet"), "ElectricBazooka": ("WaterBazookaCapsule", "MogucchiShooter", "ElectricBazookaBreak", "ElectricBullet"), "BombLauncher": ("BombHei",), "JumpBeamer": ("JumpBeamerBeam", "JumpBeamerHead"), "JumpGuarder": ("JumpGuarderHead", "BegomanBaby")}
 # MorphItemObjNeo::makeArchiveList: Mario's (and Luigi's: the packs serve both) model of the power-up, then the container by arg3 (0 ItemBubble, -1 CrystalBox + CrystalBoxBreak; none for BenefitItemInvincible).; IceMarioHandL / R, InvincibleMarioHandL / R (initHand: game.c hands)
@@ -257,6 +259,8 @@ def morph_arcs(o):
     if o["name"] in KINOKO:
         a = [s32(v) for v in o["args"]]
         return () if o["name"] == "WoodBox" and a[4] in (0, -1) or o["name"] == "KoopaStatue" and a[3] != 1 else (KINOKO[o["name"]],)
+    if o["name"] == "Kinopio" and s32(o["args"][2]) == 8:  # mIsSpawnPowerStarMode: its TakeOutStar's star model (game.c kinopio_nerve)
+        return ("PStar",)
     if o["name"] not in MORPH_ARCS:
         return ()
     a3 = s32(o["args"][3])
@@ -322,15 +326,19 @@ HOME_POS = "\u5408\u4f53\u30d6\u30ed\u30c3\u30af\u6545\u90f7\u70b9"  # 合体ブ
 # Flag.cpp: the cloth's texture alone (loadTexFromArc(mObjName): <name>.arc's <name>.bti), a model with one empty group
 # whose texture game.c's statics.inc (Flag) draws the cloth with
 TEX_ONLY = ("Flag", "FlagKoopaA", "FlagKoopaB", "FlagRaceA", "FlagKoopaCastle", "FlagPeachCastleA", "FlagPeachCastleB",
-            "FlagPeachCastleC", "FlagSurfing", "FlagTamakoro")
+            "FlagPeachCastleC", "FlagSurfing", "FlagTamakoro",
+            "TrampleStar",  # TrampleStar::init: TrampleStar.arc's TrampleStar.bti (game.c trample_star.inc)
+            "SwingRope")  # SwingRopeGroup: SwingRope.arc's SwingRope.bti (game.c swing_rope.inc)
 DUMMY_TEX = ("MapDummy",)  # AstroMapBoard: GalaxyMapController::capture's picture (TEXT pad0 1: render_target_capture)
-LOGIC = ("MercatorCube", "MirrorAreaCube", "SnowFloor", "SnowplowSwitch", "FallOutFieldDraw", "ClipFieldSwitch", "RaceRail", "NPCSupportRail", "BallRail", "SphereRailDash", "FluffWind", "Fountain", "SpringJetWater", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "TimerSwitch", "SkeletalFishBossRail", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "KoopaSwitchKeeper", "KoopaPowerUpSwitch", "KoopaViewSwitchKeeper", "KoopaRestarterVs3", "BossKameckMoveRail", "TripodBossBaseJointPosition", "TripodBossStepPoint", "TripodBossStepStartArea", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
-         "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
-         "DeathCylinder", "RestartCube", "StarPieceSpot", "WaterCube", "WaterSphere", "WaterCylinder",
-         "AstroChangeStageCube", "MovieStarter", "RunawayRabbitCollect", "PhantomTorch", "PhantomBonfire", "Hanachan",
+LOGIC = ("SoundEmitterCube", "SoundEmitterSphere", "QuakeEffectAreaCube", "PlayerSeCube", "PlayerSeSphere", "PlayerSeCylinder", "MercatorCube", "MirrorAreaCube", "SnowFloor", "SnowplowSwitch", "FallOutFieldDraw", "ClipFieldSwitch", "RaceRail", "NPCSupportRail", "BallRail", "SphereRailDash", "FluffWind", "Fountain", "SpringJetWater", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "TimerSwitch", "SkeletalFishBossRail", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "KoopaSwitchKeeper", "KoopaPowerUpSwitch", "KoopaViewSwitchKeeper", "KoopaRestarterVs3", "BossKameckMoveRail", "TripodBossBaseJointPosition", "TripodBossStepPoint", "TripodBossStepStartArea", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
+         "ForbidTriangleJumpCube", "HeavySteeringCube", "DashChargeCylinder", "ForbidJumpCube",  # Mario::updateCubeCode
+         "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "CameraRepulsiveCylinder", "CameraRepulsiveSphere", "DeathCube", "DeathSphere",
+         "DeathCylinder", "AreaMoveSphere", "RestartCube", "StarPieceSpot", "WaterCube", "WaterSphere", "WaterCylinder",
+         "ChangeBgmCube", "BgmProhibitArea", "AudioEffectCube", "AudioEffectSphere", "AudioEffectCylinder", "AstroChangeStageCube", "MovieStarter", "RunawayRabbitCollect", "PhantomTorch", "PhantomBonfire", "Hanachan",
          # Mario's areas (MR::getAreaObj: game.c area_obj / foo_sphere)
          "CelestrialSphere", "TowerModeCylinder", "NonSleepCube", "EffectCylinder", "SmokeEffectColorAreaCube",
          "MessageAreaCube", "MessageAreaCylinder", "PullBackCylinder", "PlaneModeCube", "PlaneCircularModeCube",
+         "RasterScrollCube", "DarkMatterCube", "ForbidWaterSearchCube",  # doDarkDamage; MarioSwim::checkUnderWaterFull (#575)
          "PrologueDirector", "PurpleCoinStarter", "ExterminationKuriboKeySwitch", "AstroOverlookObj", "AstroOverlookAreaCylinder", "CoinBox", "GhostPlayer",
          "BigBubbleMoveLimitterPlane", "BigBubbleMoveLimitterCylinder", "DodoryuClosedCylinder")  # BigBubbleMoveLimitter (game.c bgb_limit_pos)  # areas (areaobjinfo) travel as OBJS rows too
 
@@ -393,8 +401,12 @@ def rows(b):
 def map_parts(b, rs):
     """mappartsinfo rows: Obj_arg0-3 as usual, the MapPartsRotator columns in args 4-7: RotateSpeed, RotateAngle,
     RotateAxis, then bit 30 (a map part) | RotateType (bits 0-3, default 1) | RotateAccelType << 4 | MoveConditionType
-    << 8 | RotateStopTime << 12 (unset: Petari's defaults, 0 but the type)."""
+    << 8 | RotateStopTime << 12 (unset: Petari's defaults, 0 but the type). A seesaw's RotateAccelType is its inertia
+    (100-2000, over the four bits): written whole to arg 3, which those classes do not read."""
     n = len(rs)
+    seesaws = {"PhantomShipHandle", "LavaHomeSeesaw", "KoopaShipSeesawStep", "IceVolcanoBalanceStepA", "IceVolcanoBalanceStepB",
+               "IceMountainSeesawSlipA", "IceMountainSeesawSlipB", "IceMountainSeesawSlipC", "IceMountainSeesawSlipD",
+               "IceMountainSeesawNoSlipA"}  # MapPartsSeesaw1AxisRotator / 2AxisRotator / LavaHomeSeesawRotator hosts
     col = {f: int_or(b, f, n, -1) for f in ("RotateSpeed", "RotateAngle", "RotateAxis", "RotateType", "RotateAccelType",
                                            "MoveConditionType", "RotateStopTime")}
     for i, r in enumerate(rs):
@@ -402,6 +414,8 @@ def map_parts(b, rs):
         r["args"][4:8] = [col["RotateSpeed"][i], col["RotateAngle"][i], col["RotateAxis"][i],
                           1 << 30 | g("RotateType", 1) & 15 | (g("RotateAccelType", 0) & 15) << 4 |
                           (g("MoveConditionType", 0) & 15) << 8 | min(g("RotateStopTime", 0), 0x3FFF) << 12]
+        if r["name"] in seesaws:
+            r["args"][3] = col["RotateAccelType"][i]
     return rs
 
 
@@ -2059,6 +2073,8 @@ def declare_stars(keep, scenario, appear, jp):
             k = None if s32(r["args"][0]) in (0, -1) else -1
         elif r["name"] == "PenguinCoach":  # PenguinCoach::init: declarePowerStar for Behavior_Star / Tutorial / Race (arg0 1-3)
             k = None if 1 <= s32(r["args"][0]) <= 3 else -1
+        elif r["name"] == "Kinopio":  # Kinopio::init: declarePowerStar in its power star mode (mBehavior 8)
+            k = None if s32(r["args"][2]) == 8 else -1
         elif r["name"] in ("LuigiNPC", "LuigiEvent"):  # LuigiNPC::isDeclarePowerStarType: Afraid, Event, OnTree, Arrested
             t = s32(r["args"][0]) + (2 if r["name"] == "LuigiEvent" else 0)
             k = None if t == 0 or 2 <= t < 5 else -1
@@ -2138,7 +2154,7 @@ def placement(fs, galaxy, scenario):
     # GalaxyStatusAccessor::getAppearPowerStarObjName: a Purple / Black comet scenario's star is the 100-coin one
     appear = {n: COIN100 if i < len(comet) and comet[i] in ("Purple", "Black") else a
               for i, (n, a) in enumerate(zip(B.bcsv_column(sd, "ScenarioNo"), B.bcsv_column(sd, "AppearPowerStarObj")))}
-    declare_stars(keep, scenario, appear,
+    declare_stars(keep, B.placed_scenario(sd, galaxy, scenario), appear,  # findStarID: getCurrentScenarioNo (placed)
                   dict(zip(B.bcsv_column(names, "en_name"), B.bcsv_column(names, "jp_name"))))
     types = sorted({o["name"] for o in keep} | {s["name"] for s in starts})
     tid = {t: i for i, t in enumerate(types)}
@@ -2173,7 +2189,7 @@ def placement(fs, galaxy, scenario):
     cset = [(i, r["camset"]) for i, r in enumerate(keep) if r.get("camset", -1) >= 0]  # ActorCameraInfo: CameraSetId
     out.append(chunk(b"CSET", struct.pack("<I", len(cset)) + b"".join(struct.pack("<Hh", i, v) for i, v in cset)))
     out.append(demo_chunk(fsp, demos, gpos, keep, jp2en, se_table()))
-    out.append(canm_chunk(Path(fs), set(types), galaxy, scenario))  # after demo_chunk: DEMO_CANM
+    out.append(canm_chunk(Path(fs), set(types), galaxy, B.placed_scenario(sd, galaxy, scenario)))  # after demo_chunk: DEMO_CANM; StartScenario<getCurrentScenarioNo>.canm
     # GHST: GhostPlayer's packets (GhostPlayer::init: <stage>.gst / <stage>Luigi.gst of GhostData<stage>.arc, as on
     # disc, big-endian): {u32 mario size, u32 luigi size, u32 n}, n names (ghost_names), the Mario file, pad 4, the Luigi file
     if any(o["name"] == "GhostPlayer" for o in keep):

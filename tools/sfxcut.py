@@ -36,27 +36,39 @@ GLOBAL_DIRS = {"Player", "Screen", "System", "Scene", "Camera", "Util", "AudioLi
 SE_RE = re.compile(r'"((?:SE|HOMESE)_[A-Z0-9_]+)"')
 
 
+NEW_RE = r"new\s+(?:\([^)]*\)\s*)?([A-Z]\w+)\b"
+# a plain create function (NameObj* MR::createDinoPackunVs2(const char*), KoopaFunction::createKoopaVs3...): its body
+MAKER_RE = re.compile(r"NameObj\s*\*\s+(?:\w+::)?(create\w+)\s*\(\s*const char\s*\*[^)]*\)\s*\{(.*?)\n\s*\}", re.S)
+
+
 def code_index():
-    """-> (sounds per file, files defining each class, classes each file news, StageEffect {object: sounds})."""
-    sounds, defines, news = {}, {}, {}
+    """-> (sounds per file, files defining each class, classes each file news, StageEffect {object: sounds},
+    {plain create function: the class it returns})."""
+    sounds, defines, news, makers = {}, {}, {}, {}
     for f in SRC.rglob("*.cpp"):
         t = f.read_text(encoding="utf-8", errors="replace")
         rel = f.relative_to(SRC).as_posix()
         sounds[rel] = set(SE_RE.findall(t))
         for c in set(re.findall(r"\b([A-Z]\w+)::\1\s*\(", t)):          # constructor definition = class lives here
             defines.setdefault(c, set()).add(rel)
-        news[rel] = set(re.findall(r"\bnew\s+(?:\([^)]*\)\s*)?([A-Z]\w+)\b", t))
+        news[rel] = set(re.findall(r"\b" + NEW_RE, t))
+        for fn, body in MAKER_RE.findall(t):
+            m = re.search(r"return\s+" + NEW_RE, body) or re.search(r"\b" + NEW_RE, body)
+            if m:
+                makers[fn] = m.group(1)
     stage_fx = {}
     t = (SRC / "MapObj/StageEffectDataTable.cpp").read_text(encoding="utf-8")
     body = t[t.index("sStageEffectSeDataTable[]"):]
     body = body[:body.index("};")]
     for name, rest in re.findall(r'\{\s*"([^"]+)",([^}]*)\}', body):
         stage_fx.setdefault(name, set()).update(re.findall(r'"(SE_[A-Z0-9_]+)"', rest))
-    return sounds, defines, news, stage_fx
+    return sounds, defines, news, stage_fx, makers
 
 
-def create_classes():
-    """NameObjFactory cCreateTable -> {placement name lower: class} (template argument of the create function)."""
+def create_classes(makers=()):
+    """NameObjFactory cCreateTable -> {placement name lower: class}: the template argument of the create function,
+    or for a plain function (KoopaVs1-3, DinoPackun, BossKameck, TripodBoss, the coins...: 47 names) the class its
+    body returns (makers, from code_index)."""
     t = (SRC / "NameObj/NameObjFactory.cpp").read_text(encoding="utf-8")
     body = t[t.index("cCreateTable[]"):t.index("cName2ArchiveNamesTable[]")]
     out = {}
@@ -64,6 +76,8 @@ def create_classes():
         m = re.search(r"<\s*([\w:]+)\s*>", func)
         if m:
             out[name.lower()] = m.group(1).split("::")[-1]
+        elif func.strip().split("::")[-1] in makers:
+            out[name.lower()] = makers[func.strip().split("::")[-1]]
     return out
 
 
@@ -86,8 +100,8 @@ def bas_ids(b):
 
 class Cutter:
     def __init__(self):
-        self.sounds, self.defines, self.news, self.stage_fx = code_index()
-        self.classes = create_classes()
+        self.sounds, self.defines, self.news, self.stage_fx, makers = code_index()
+        self.classes = create_classes(makers)
         self.global_names = set().union(*(s for f, s in self.sounds.items() if f.split("/")[0] in GLOBAL_DIRS))
 
     def files_for(self, placed):
@@ -225,6 +239,8 @@ def unknown_bank(fs):
 def selftest():
     c = Cutter()
     assert c.classes["kuribo"] == "Kuribo" and "Enemy/Kuribo.cpp" in c.defines["Kuribo"], c.defines.get("Kuribo")
+    assert c.classes["koopavs3"] == "Koopa" and c.classes["dinopackunvs2"] == "DinoPackun", "plain create functions"
+    assert c.classes["tripod2boss"] == "TripodBoss" and c.classes["bosskameck2"] == "BossKameck"
     se = [("PLAYER_VOICE", ["SE_PV_X"]), ("ENEMY_MOTION", ["SE_EM_KURIBO_FOOTNOTE", "SE_EM_NOT_HERE"]),
           ("HOME_BUTTON_MENU", ["HOMESE_HOME_BUTTON"])]
     k = c.keep({"Kuribo"}, se)

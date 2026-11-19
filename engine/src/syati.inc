@@ -19,8 +19,8 @@
  * Its Head joint turned to Mario on the shore (calcHeadJoint: sy_head_turn); its sensors in the HitSensor list and
  * pushing the walkers' (sendMsgPush); OceanPhantomCave's retry: the stage BGM stopped / MBGM_GALAXY_05.
  * ponytail: no BTK / BRK colours on these models (PrizeRing at Loop's frame 0: slice.py BRK_POSE; the BRK's lengths
- * kept), no flat-model shadow volume (ShadowVolumeOval: no model volume, as Snakehead's), tryPlayerKillTakingActor
- * (the port's damageDropThrowMemoSensor is empty: drop_carried), pushes only to the walkers (their receiveMsgPush) */
+ * kept), no flat-model shadow volume (ShadowVolumeOval: no model volume, as Snakehead's), pushes only to the walkers
+ * (their receiveMsgPush) */
 static int sy_bgm_05(void) /* isPlayingStageBgmName("STM_GALAXY_05") */
 {
     const char *t = bgm_track("STM_GALAXY_05");
@@ -45,7 +45,8 @@ typedef struct {
 static Syati sys[SY_MAX];
 static int nsys;
 static const Scene *sy_scene;
-static PRing sy_rings[5]; /* (one ring mission a scenario: the first Syati's group) */
+static PRing *sy_rings; /* [5] (one ring mission a scenario: the first Syati's group); from the arena, NULL in a scene
+                         * without a Syati (sy_alloc) */
 static int sy_miss_water;
 
 static int sy_took(int row) { for (int i = 0; sy_scene == sc && i < nsys; i++) if (sys[i].row == row) return sys[i].took; return 0; }
@@ -153,13 +154,13 @@ static void prg_exe(PRing *p)
 }
 
 /* --- Syati */
-static void sy_kill_rings(void) { for (int i = 0; i < 5; i++) sy_rings[i].nrv = PR_DEAD; }
-static int sy_rings_alive(void) { int n = 0; for (int i = 0; i < 5; i++) n += sy_rings[i].nrv != PR_DEAD; return n; }
-static PRing *sy_dead_ring(void) { for (int i = 0; i < 5; i++) if (sy_rings[i].nrv == PR_DEAD) return &sy_rings[i]; return NULL; }
+static void sy_kill_rings(void) { for (int i = 0; sy_rings && i < 5; i++) sy_rings[i].nrv = PR_DEAD; }
+static int sy_rings_alive(void) { int n = 0; for (int i = 0; sy_rings && i < 5; i++) n += sy_rings[i].nrv != PR_DEAD; return n; }
+static PRing *sy_dead_ring(void) { for (int i = 0; sy_rings && i < 5; i++) if (sy_rings[i].nrv == PR_DEAD) return &sy_rings[i]; return NULL; }
 static V3 sy_rail_at(const Syati *s, float c, V3 *dir) { V3 d; V3 p = nrail_at(s->rail.pts, s->rail.np, s->rail.cl, c, &d); if (dir) *dir = d; return p; }
 static void sy_sync_numbers(Syati *s) /* syncNumRingLeftToActiveRings */
 {
-    for (int i = 0; i < 5; i++) if (sy_rings[i].nrv != PR_DEAD && !prg_passed(&sy_rings[i])) sy_rings[i].num = s->nrings - s->count;
+    for (int i = 0; sy_rings && i < 5; i++) if (sy_rings[i].nrv != PR_DEAD && !prg_passed(&sy_rings[i])) sy_rings[i].num = s->nrings - s->count;
 }
 static void sy_reset_score(Syati *s) /* resetScore */
 {
@@ -270,6 +271,7 @@ static void sy_exe(Syati *s)
         if (st == 0) {
             s->off = ring ? v3(6.0f, -33.0f, -776.0f) : v3(6.0f, -176.0f, -590.0f); /* sMarioMoveLocalOffsetRing / DeepSea */
             sy_pose_mario(s);
+            drop_damage(); /* tryPlayerKillTakingActor */
             sy_mario_bck("swimwait", s->req_demo);
             s->q = s->q0; /* makeQuatFromRotate */
         }
@@ -442,10 +444,16 @@ static int sy_head_turn(Inst *in) /* calcHeadJoint (the Head joint's delegator) 
     anim_skin(in->anim);
     return 1;
 }
+/* from game_init (sy_init waits for the first update; an allocation there a zone swap would release): the rings are
+ * the Syati's (initRings), a scene of TalkSyatis has none (NULL: as five dead ones) */
+static void sy_alloc(void)
+{
+    sy_rings = scene_type(sc, "Syati") >= 0 ? mem_alloc(MEM_OBJECTS, 5 * sizeof *sy_rings) : NULL;
+}
 static void sy_init(void)
 {
     nsys = 0; sy_scene = sc; sy_miss_water = 0;
-    memset(sy_rings, 0, sizeof sy_rings);
+    if (sy_rings) memset(sy_rings, 0, 5 * sizeof *sy_rings);
     int ts = scene_type(sc, "Syati"), tt = scene_type(sc, "TalkSyati");
     for (u32 i = 0; i < sc->nobjs && nsys < SY_MAX; i++) {
         const Row *r = &sc->objs[i];
@@ -515,7 +523,7 @@ static void update_syati(void)
             in->invisible = !s->shown;
         }
     }
-    for (int i = 0; i < 5; i++) { /* the rings' movement; their sensor on Mario */
+    for (int i = 0; sy_rings && i < 5; i++) { /* the rings' movement; their sensor on Mario */
         PRing *p = &sy_rings[i];
         if (p->nrv == PR_DEAD) continue;
         if (!prg_passed(p) && mario_touch(p->pos, 300.0f)) prg_set(p, PR_READY_PASS); /* attackSensor */
@@ -526,7 +534,7 @@ static void update_syati(void)
 static void draw_syati_rings(void)
 {
     const Model *md = scene_model(sc, "PrizeRing");
-    if (sy_scene != sc || !md || !md->skin) return;
+    if (sy_scene != sc || !sy_rings || !md || !md->skin) return;
     for (int i = 0; i < 5; i++) {
         PRing *p = &sy_rings[i];
         if (p->nrv == PR_DEAD || p->hidden || !p->a.skin) continue;

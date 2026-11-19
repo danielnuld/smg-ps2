@@ -1139,11 +1139,11 @@ static void dd_wait(void) /* DodoryuStateWait */
 {
     int st = ++dd.st[dd.cur];
     if (st == 0) { dd.nostep = 1; dd_act("UnderGroundWalk"); ddh.appear = DD_PIECES / 2; dd_start_hill(); dd_shift_rail(8.0f); /* setHillAppearNumHalf */
-        if (!strcmp(game_stage_name, "CosmosGardenGalaxy/4") && seq_is_retry()) menu_wipe_circle_force(1); } /* isStageSuddenDeathDodoryu */
+        if (game_stage_scenario("CosmosGardenGalaxy", 4) && seq_is_retry()) menu_wipe_circle_force(1); } /* isStageSuddenDeathDodoryu */
     dd_lv(0, SE_BM_LV_DODORYU_MOVE_U_SHALLOW);
     if (dd.on_a) dd.nextCounter++; else dd.nextCounter = 0; /* (isPlayerInBind: ponytail) */
     if (dd.nextCounter > 30) {
-        if (!strcmp(game_stage_name, "CosmosGardenGalaxy/4") && seq_is_retry()) menu_wipe_circle(0, -1);
+        if (game_stage_scenario("CosmosGardenGalaxy", 4) && seq_is_retry()) menu_wipe_circle(0, -1);
         dd_next_state();
     }
 }

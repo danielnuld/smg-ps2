@@ -104,18 +104,49 @@ No interim ISOs: Daniel tests at the end.
   Not kept (by hand): slope-ahead data (_4DC/_4D8/_380), checkStrikePointToMap, Teresa's thick ball, hang camera,
   animated parts (leaves / Move joint) always count as moving. Pending with it: tryDrop's wall branches. SlipUp
   effect added to jpa.py (repack).
-- [ ] Mario statuses not ported (inventory 2026-10-25, checked against game.c 2026-11-18): updateOnSand /
-  updateOnPoison, MarioBump / MarioStep / MarioFrontStep, doCubeWarp, MarioStick, MarioSukekiyo, bodyClap, PlayerEvent
-  FireDown, drawPreWipe, MarioSearchLight; MarioSpin's tornado tilt / wall (the tornado jump's state is in:
-  feat/mario-moves, merged). Done since: MarioSideStep, Mario2D / MarioMove2D, MarioSlider, checkSidePress /
+- [ ] Mario statuses not ported (inventory 2026-10-25, checked against game.c 2026-11-18): doCubeWarp (WarpCube
+  areas), MarioStick, bodyClap (the coin pull's catches in a bind), PlayerEvent FireDown and drawPreWipe (drawn: for
+  an afternoon with the emulator), MarioSearchLight; MarioSpin's tornado tilt / wall (the tornado jump's state is
+  in: feat/mario-moves, merged); the spin hip drop's homing (MatrixControl's table). Nothing to port as decompiled:
+  MarioBump (checkAllWall's _4DC needs diffAngleAbs, radians, over 30) and MarioFrontStep (doFrontStep wants his
+  ground under 30 degrees and his gravity under 0.25 on -_374, the ground's normal when the gravity was set: only a
+  frame in which the ground's normal jumps).
+  Written 2026-11-18, on branches not yet run in PCSX2: updateOnSand / updateOnPoison, MarioBury and the
+  MarioSukekiyo status (#565; Sukekiyo's start needs doLanding's landing type 1: MarioLauncher's endRush, #566),
+  MarioStep with checkAllWall's _4D8 / _4DC (#571), powerAreaMove / powerRailMove (#581), changeGameOverAnimation
+  (#572), map_line through the exact segment test (#563), Mario's missing sounds with the spin hip drop, tryJump's
+  dive, the pull-back landing, MarioDarkDamage and the shell's wall hit (#575), updateCubeCode's HeavySteeringCube /
+  ForbidTriangleJumpCube / ForbidJumpCube / DashChargeCylinder (#579). Done since: MarioSideStep, Mario2D / MarioMove2D, MarioSlider, checkSidePress /
   checkPressDamage, MarioRecovery / doPointWarp, MarioFlow, MarioActorBlackHole (exeGameOverBlackHole2), EventRaceDown
   / EventGhostRaceDown, MarioHang (see above: climb not verified). Before: Faint, Blown (but its checkWallJumpHit
   case), the damages, SwimDamage, Eye, FpView.
 - [x] TreasureBox's KinokoLifeUp pops out (BenefitItemObj: appearKinokoSuper / appearThrowUp).
-- [x] BeeFlowerHover (game.c update_beeflowers: its five nerves). [ ] FountainBig's bee flip: not found in the code.
+- [x] BeeFlowerHover (game.c update_beeflowers: its five nerves). [x] FountainBig's bee flip (update_fountains).
       [ ] MarioStick (no decompiled class sends ATYPE_BEE_FLOWER: nothing sticks).
 
 ## Phase 2: level objects (class_coverage.md, 2026-11-18: 988 placed classes, static 3, missing 0; it was static 222, missing 36)
+- [ ] Classes the coverage counted as ported that have no code (their names were only in game.c's isActionOk table;
+  class_coverage.py now leaves that table out): MarioLauncher, the cannon Mario rides (10 placements, #566), WaterRoad
+  (6, #567), SwingRope (6, #568: only its SwingRopePoint is in). The count says a class is named in the engine, not
+  that it is whole: 233 placed classes are spelled once, most in a type table with their code beside it.
+- [ ] The three static ones: AstroChildRoom (5), TrampleStar (1, TrampleStar.cpp 677 lines), TrickRabbitFreeRunCollect (1).
+- [ ] Areas (not in out/census.json, so no count told of them): of AreaObjContainer's 67 managers 31 were named
+  nowhere in the engine nor in the packs (2026-11-18). Written today, waiting for PCSX2 and a repack (slice.py LOGIC):
+  ChangeBgmCube / BgmProhibitArea (#578), DarkMatterCube / ForbidWaterSearchCube (#575), HeavySteeringCube /
+  ForbidTriangleJumpCube / ForbidJumpCube / DashChargeCylinder (#579), SoundEmitterCube / Sphere and
+  QuakeEffectAreaCube (#580), AreaMoveSphere (#581), RasterScrollCube (#492). Left: ShadeCube, HazeCube
+  (HeatHazeEffect), AudioEffectCube / Sphere / Cylinder (reverb), CameraRepulsiveSphere / Cylinder,
+  ExtraWallCheckArea / Cylinder (Mario's shadow fade), RaceJudgeCube, PlaneCollisionCube, WarpCube,
+  DarkMatterCylinder, the guidance cubes (Wii controls). An area registers with the manager whose name its placed
+  name begins with (IsManagerName), or the one its class names (getManagerName: PlayerSeCube / Sphere / Cylinder ->
+  PlayerSeArea, in #580; CameraRepulsiveSphere / Cylinder, AudioEffect*, HazeCube...): ask the engine's area_obj
+  with the placed names.
+- [ ] Sound (docs/sound-gaps.md, regenerated 2026-11-18 with the .inc files read): 404 of 1316 class SE names
+  missing, each a nerve or reaction the port lacks; Mario's keys done but for the Wii-only ones (#565, #575).
+- [ ] BombBird, BombBirdBomb, Karon, Kuribo, CocoNut carried on AreaMove / RailMove floors
+  (calcVelocityAreaOrRailMoveOnGround): Mario's is #581, theirs not looked at.
+- [ ] DharmaSambo (#524): dharma.inc written (branch feat/dharma-sambo), not yet run in PCSX2; needs SandClockGalaxy
+  and the effect pack repacked.
 - [x] Gateway rabbits (Daniel: "found one, it did not respond"): the opening plays through as a player would
   (GATEWAY_TEST with XF=-DGW_FOLLOW: Mario walks after the bunny, into the bushes / pipes, onto the rabbits; 3 of 3
   caught, the tower demo starts). Fixed on the way, all against Petari: DemoRabbit::updateJump jumps whenever bound

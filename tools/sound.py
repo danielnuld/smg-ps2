@@ -1011,6 +1011,15 @@ def scenario_keep(placed):
         keep |= cut.sounds[f]
     for n in placed:
         keep |= cut.stage_fx.get(n, set())
+    # GameAudio's directors are no placed class: AudCameraWatcher's under water sound where there is water,
+    # AudEffectDirector's atmosphere sounds where its areas (AudioEffectCube / Sphere / Cylinder) are
+    if any(n.startswith(("Water", "Ocean")) for n in placed):
+        keep |= cut.sounds.get("GameAudio/AudCameraWatcher.cpp", set())
+    if any(n.startswith("AudioEffect") for n in placed):
+        keep |= cut.sounds.get("GameAudio/AudEffectDirector.cpp", set())
+    # QuakeEffectArea makes the scene's QuakeEffectGenerator (createSceneObj, no `new`): SE_AT_LV_EARTHQUAKE
+    if any(n.startswith("QuakeEffectArea") for n in placed):
+        keep |= cut.sounds.get("Map/QuakeEffectGenerator.cpp", set())
     known = set().union(*cut.sounds.values())
     return keep, known
 

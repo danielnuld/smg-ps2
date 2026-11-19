@@ -14,7 +14,7 @@
  * ponytail: no TripodBossBreakMovement (the parts stay in place until their arg2 frames, then explode), no
  * CameraTripodBoss / Joint / Planet (camera areas), no leg shadows, no DummyDisplayModel (13) on top, no
  * the cannons' 2ndDemo / Shoot clips not played and the circles' cannons without collision, the
- * core / shell break models and the parts' Warning BRKs not drawn, one 2ndDemo pose for all guard wall parts, isRideMario
+ * core / shell break models and the parts' Warning BRKs not drawn (their marker sounds: tb_marker), one 2ndDemo pose for all guard wall parts, isRideMario
  * by Mario's ground being a part (not the gravity host), end anim cameras without their blends, the gears' rotators
  * at a constant RotateSpeed, the guard wall parts' collision as their KCL's band (tb_wall_part), the killers' shadow
  * on a BREAKABLE_CAGE (processChase's aim at it) */
@@ -24,6 +24,7 @@ enum { TB_NONACTIVE, TB_TRYDEMO, TB_WAIT, TB_STEP, TB_WAITSTEP, TB_DAMAGE, TB_CH
 enum { TBK_NONE, TBK_HIDE, TBK_SHOWDEMO, TBK_READY, TBK_SHOOTSET, TBK_SHOOT, TBK_COOLDOWN, TBK_BREAK, TBK_STOP, TBK_RESTART, TBK_DEAD };
 enum { TP_NONACTIVE, TP_STARTDEMO, TP_WAIT, TP_BREAK, TP_DEAD }; /* TripodBossFixParts (Core / Shell: Wait, Break) */
 typedef struct { V3 pos, nrm, front; int prio, leg, wait, seq; } TbPoint;
+#define TB_MARKERS 16
 typedef struct {
     int nrv, st, mode, demofx, press, dmg;       /* _24C, mDemoEffectTiming, mIsPressPlayer, _254 */
     int p94, p98;                                /* its step points (tb.pt) */
@@ -48,6 +49,7 @@ static struct {
     float f600, f620;
     Anim *anim; const Model *md, *low, *killer, *cannon;
     u32 lv[4];
+    int warn; u32 mark[TB_MARKERS]; /* the parts' _EE (Warning on), their marker sounds (tb_marker) */
     /* parts: by OBJS row, its bone + 1 (0 none); followers' gravity records and their design copies */
     signed char *rbone; unsigned char *rpart;
     Gravity *grav0; int *gidx, ngf;
@@ -57,7 +59,7 @@ static struct {
     TbCannon can[TB_CANNONS]; int ncan;
     int brk_st, attok;                           /* (tb.att made once: the parts placed again in a rebind) */
 } tb = {.row = -1};
-enum { TBP_FIX = 1, TBP_ROTATE, TBP_WARN };     /* rpart: how a part's row moves */
+enum { TBP_FIX = 1, TBP_ROTATE, TBP_WARN };     /* rpart: how a part's row moves (TBP_WARN: a fix part with a Warning BRK) */
 static const signed char tb_conv[41] = {0, 1, 2, 7, 8, 9, 14, 15, 16, 21, 3, 4, 0, 1, 5, 6, 2, -1, -1, -1, 10,
                                         11, 7, 8, 12, 13, 9, -1, -1, -1, 17, 18, 14, 15, 19, 20, 16, -1, -1, -1, 21};
 static int tb_bone(int id) { return id >= 0 && id < 41 ? tb_conv[id] : -1; } /* convertBoneIDToIndex */
@@ -474,6 +476,32 @@ static void tb_ride(void) /* checkRideMario (ponytail: Mario's ground a part, no
     int ss = tb_ss();
     tb.s634 = tb.c630 > 0 ? (ss ? 0 : 1) : (ss ? 3 : 2);
 }
+static Inst *tb_inst_of(int row);
+/* TripodBossFixParts::exeWait: once Mario rides the boss (isRideMario) on the ground the parts start Warning (_EE), and
+ * those that have that BRK (TBP_WARN) sound the marker (mIsPlayingWarning); once he has just left (isLeaveMarioNow)
+ * back to Wait, the marker stopped. Every part runs alike: one flag (tb.warn). ponytail: the BRK is not drawn, the
+ * stop is at once (stopSound over 60 frames: se_stop has no fade) */
+static void tb_marker(void)
+{
+    int brk = tb.nrv == TB_BREAKDOWN || tb.nrv == TB_EXPLOSION || tb.nrv == TB_DEAD; /* Break: the parts die, their sounds with them */
+    if (tb_start_demo_on()) return;
+    if (!brk && tb_ss() && mario->grounded && !tb.warn) {
+        int n = 0;
+        tb.warn = 1;
+        for (u32 i = 0; i < sc->nobjs && n < TB_MARKERS; i++) {
+            Inst *in;
+            if (tb.rpart[i] != TBP_WARN || row_dead[i] || !(in = tb_inst_of((int)i))) continue;
+            if (!tb.mark[n]) tb.mark[n] = se_start(SE_BM_TRIPOD_MARKER, &in->m[12]);
+            n++;
+        }
+        printf("tripod boss: warning on, %d markers%c", n, 10);
+    }
+    if ((tb.s634 == 3 || brk) && tb.warn) {
+        for (int n = 0; n < TB_MARKERS; n++) if (tb.mark[n]) { se_stop(tb.mark[n]); tb.mark[n] = 0; }
+        tb.warn = 0;
+        printf("tripod boss: warning off%s%c", brk ? " (break)" : "", 10);
+    }
+}
 static void tb_bgm_state(void) /* changeBgmState */
 {
     if (tb.f640 && !tb_is_demo()) { if (!bgm_stage_playing()) bgm_boss(3); tb.f640 = 0; } /* BossBgmID_TripodBossB */
@@ -497,7 +525,7 @@ static void tb_update_boss(void)
         if (q < 0 || q >= 32 || !tb.seq[q].on || !tb.seq[q].n) continue;
         if (tb.cur == -1 || tb.cur == q || tb.next == -1) tb.next = q;
     }
-    if (tb.nrv != TB_NONACTIVE) { tb_ride(); tb_bgm_state(); }
+    if (tb.nrv != TB_NONACTIVE) { tb_ride(); tb_bgm_state(); tb_marker(); }
     int s = ++tb.st;
     switch (tb.nrv) {
     case TB_NONACTIVE: break;
@@ -1036,6 +1064,8 @@ static void tb_init(const Scene *s, const unsigned char *blob) /* TripodBoss::in
         int kind = 0;
         for (unsigned k = 0; k < sizeof fixc / sizeof *fixc; k++) if (!strcmp(cn, fixc[k])) kind = TBP_FIX;
         for (unsigned k = 0; k < sizeof rotc / sizeof *rotc; k++) if (!strcmp(cn, rotc[k])) kind = TBP_ROTATE;
+        if (kind == TBP_FIX && (!strncmp(cn + 6, "BossBodyA", 9) || !strncmp(cn + 6, "BossFoot", 8) || !strncmp(cn + 6, "BossLeg2A", 9))) /* (TriPod / Tripod) */
+            kind = TBP_WARN; /* the archives with a Warning.brk: BodyA, Foot, Leg2A and their Bloom models */
         if (kind) { tb.rpart[i] = (unsigned char)kind; tb.rbone[i] = (signed char)(tb_bone(o->arg[0]) + 1); }
         if (!strcmp(cn, "TripodBossShell")) tb.shell = (int)i;
         if (!strcmp(cn, "TripodBossCore")) tb.core = (int)i;
