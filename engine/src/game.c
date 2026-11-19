@@ -814,7 +814,9 @@ static struct { int phase, t, target; V3 vel; float power; } gcap; /* GCapture (
 static int test_r2; /* test builds: R2 held */
 static int test_noclip; /* test builds: the walkers move though clipped (game_test_unclip) */
 static struct { int inst, cool; V3 pt, vel, side, front; } jb = {.inst = -1}; /* JumpBranch (jbranch_update) */
-static struct { int inst, phase, t, drop, row; V3 dir, head, vel; } jet = {.inst = -1}; /* the JetTurtle Mario holds or threw
+static void drop_carried(void), drop_damage(void); /* rushDropThrowMemoSensor / damageDropThrowMemoSensor */
+static int rush_drop(int bound) { if (bound) drop_carried(); return bound; } /* MarioActor::settingRush on a bind */
+static struct { int inst, phase, t, drop, row, dground, dwall; V3 dir, head, vel, dgrav; } jet = {.inst = -1}; /* the JetTurtle Mario holds or threw
                                                                 * (update_jets; row / head / vel kept for a rebind); drop:
                                                                 * MarioSwim::dropJet's releaseThrowMemoSensor asked */
 static int kmj_carry(void);
@@ -7513,6 +7515,8 @@ int game_screw_state(void)
 int game_test_jet(int phase)
 {
     if (phase == 1) { mario->spin_timer = SPIN_TIME; return jet.phase; }
+    if (phase == 2) { drop_damage(); return jet.phase; }  /* XF=-DDROP_TEST=1: damageDropThrowMemoSensor */
+    if (phase == 3) { drop_carried(); return jet.phase; } /* XF=-DDROP_TEST=2: rushDropThrowMemoSensor */
     for (int i = 0; i < ninsts; i++)
         if (insts[i].jet) {
             mario->pos = vsub(insts[i].head, vmul(mario->up, 20.0f));
@@ -14810,6 +14814,23 @@ static void update_jets(void)
             jet.row = in->row; jet.head = in->head; jet.vel = in->hvel;
             continue;
         }
+        if (jet.inst == i && jet.phase == 3) { /* exeDrop (ACTMES_RUSHDROP): up 10 and ahead 10, boundDrop, gravity 1, reset(0) at 90 */
+            V3 gv = vmul(up_at(in->head, vmul(jet.dgrav, -1.0f)), -1.0f); /* calcGravity */
+            jet.dgrav = gv;
+            if (jet.t == 0) in->hvel = vadd(vmul(gv, -10.0f), vmul(vnorm(v3(in->m0[8], in->m0[9], in->m0[10])), 10.0f)); /* calcFrontVec */
+            float vert = vdot(in->hvel, gv); /* boundDrop: vecKillElement on its gravity */
+            V3 hor = vsub(in->hvel, vmul(gv, vert));
+            if (jet.dground && vert > 0.0f) in->hvel = vert < 5.0f ? v3(0, 0, 0) : vsub(vmul(hor, 0.9f), vmul(gv, vert * 0.8f));
+            if (jet.dwall) in->hvel = vadd(vmul(hor, -0.9f), vmul(gv, vert));
+            in->hvel = vadd(in->hvel, gv); /* addVelocityToGravity 1 */
+            if (++jet.t == 91) { in->hvel = v3(0, 0, 0); jet.inst = -1; jet.phase = 0; jet_reset(in, 0); continue; } /* isStep 90 */
+            V3 p = vadd(in->head, in->hvel), gn, wn;
+            jet.dground = collide_n(&p, vmul(gv, -1.0f), 60.0f, &gn, &wn, &jet.dwall);
+            in->head = p;
+            jet_place(in);
+            jet.row = in->row; jet.head = in->head; jet.vel = in->hvel;
+            continue;
+        }
         if (jet.inst == i && jet.phase == 2) { /* Throwing */
             V3 p = vadd(in->head, in->hvel), up = up_at(p, mario->up), gn, wn;
             int wall = 0;
@@ -15010,6 +15031,7 @@ static int fluff_try(Player *m) /* receiveOtherMsg isMsgAutoRushBegin */
         pad_rumble(RUMBLE_WEAK);
         se_start(SE_PV_CATCH, &m->pos.x); se_start(SE_PM_GRAB_OBJ, &m->pos.x);
         if (in->row >= 0) sw_set(&sc->objs[in->row], SW_A, 1);
+        drop_carried(); /* settingRush: rushDropThrowMemoSensor */
         printf("fluff row %d: Mario takes hold" "\n", in->row);
         return 1;
     }
@@ -15989,6 +16011,7 @@ static int mode_rush(const char *cls)
     int v = mode_auto_bind(cls);
     if (v == 0) return 0;
     if (v == 2) set_player_mode(PM_NORMAL, 1);
+    drop_carried(); /* settingRush: rushDropThrowMemoSensor */
     return 1;
 }
 
@@ -16107,6 +16130,7 @@ static void sub_meter_bee(int on);      /* changeLifeMeterModeBee / changeLifeMe
 static int skate_active(void);          /* isStatusActive(MarioStatus_Skate), its closeStatus */
 static void skate_close(void);
 static void drop_carried(void);         /* rushDropThrowMemoSensor */
+static void drop_damage(void);          /* damageDropThrowMemoSensor (MR::tryPlayerKillTakingActor) */
 static int kari_remove;                 /* MR::removeAllClingingKarikari (kari_director) */
 
 static void set_player_mode(int mode, int b) /* MarioActor::setPlayerMode */
@@ -17818,7 +17842,7 @@ static int m_damage(Player *m, V3 dir) /* Mario::damage */
     dmg.d1C = vtangent(dir, m->up); /* MarioDamage::setVec */
     if (vlen(dmg.d1C) > 1e-6f) dmg.d1C = vmul(vnorm(dmg.d1C), MC.mJumpDistDamage);
     m_stop_walk(m);
-    drop_carried(); /* damageDropThrowMemoSensor */
+    drop_damage(); /* damageDropThrowMemoSensor */
     m_release_bomb_teresa(m);
     if (dmg.st == DMS_DAMAGE) { dm_close(m); dmg.st = DMS_NONE; }
     dmg.req_damage = 1;
@@ -17844,7 +17868,7 @@ static int m_faint(Player *m, V3 dir) /* Mario::faint */
     if (vlen(dmg.f18) > 1e-6f) dmg.f18 = vmul(vnorm(dmg.f18), MC.mSlideDistFaint);
     dmg.f_timer = 0; dmg.f16 = 0;
     m_stop_walk(m);
-    drop_carried();
+    drop_damage(); /* damageDropThrowMemoSensor */
     if (dmg.st != DMS_FAINT) { dmg.req_faint = 1; return 1; }
     return dmg.req_faint;
 }
@@ -17903,7 +17927,7 @@ static int m_flip_back_roll(Player *m, V3 dir) /* Mario::doFlipBackRoll */
 static int m_paralyze(Player *m) /* Mario::doParalyze */
 {
     if (player_mode == PM_INVINCIBLE || dmg.st == DMS_PARALYZE || dmg.req_damage || dm_after() || dm_damaging()) return 0;
-    drop_carried();
+    drop_damage(); /* damageDropThrowMemoSensor */
     mode_damage(0); /* resetPlayerModeOnDamage */
     m->jumping = 0;
     m_stop_walk(m);
@@ -17916,14 +17940,14 @@ static int m_freeze(Player *m) /* Mario::doFreeze */
     mode_damage(0);
     m->jumping = 0;
     m_stop_walk(m);
-    drop_carried();
+    drop_damage(); /* damageDropThrowMemoSensor */
     dm_change(m, DMS_FREEZE);
     return 1;
 }
 static int m_try_crush(Player *m) /* Mario::tryCrush */
 {
     if (player_mode == PM_INVINCIBLE || dmg.st == DMS_CRUSH) return 0;
-    drop_carried();
+    drop_damage(); /* MarioDamageCrush: damageDropThrowMemoSensor */
     mode_damage(0);
     m->jumping = 0;
     m_stop_walk(m);
@@ -17936,7 +17960,7 @@ static int m_fire_dance(Player *m, int needle) /* Mario::doFireDance / doNeedle 
     if (!needle && (dmg.st == DMS_PARALYZE || player_mode == PM_ICE)) return 0;
     if (needle && player_mode == PM_TERESA) return 0; /* (doTeresaReflection: the caller's) */
     mode_damage(0);
-    drop_carried();
+    drop_damage(); /* damageDropThrowMemoSensor */
     dmg.fd29 = needle;
     dm_change(m, DMS_FIREDANCE);
     if (!needle) dmg.fdm12 = 120;
@@ -22240,6 +22264,7 @@ static void update_mario(void)
 static void bh_start(Player *m, const Inst *in)
 {
     memset(&bh, 0, sizeof bh);
+    drop_damage(); /* MarioActorBlackHole: damageDropThrowMemoSensor */
     bh.on = 1; bh.scale = 1.0f;
     bh.pos = v3(in->m[12], in->m[13], in->m[14]);
     if (row_camset[in->row] != -1) { /* BlackHole::tryStartDemoCamera: startActorCameraTargetSelf */
@@ -22572,7 +22597,7 @@ static void update_mario_(void)
             return;
         }
     }
-    if (coc.inst >= 0 || (warp.from < 0 && jb.inst < 0 && cocoon_try(m))) {
+    if (coc.inst >= 0 || (warp.from < 0 && jb.inst < 0 && rush_drop(cocoon_try(m)))) {
         if (coc.inst >= 0 && cocoon_update(m)) {
             if (mario_anim) anim_update(mario_anim);
             return;
@@ -22590,19 +22615,19 @@ static void update_mario_(void)
         if (mario_anim) anim_update(mario_anim);
         return;
     }
-    if (pole_ride >= 0 || (warp.from < 0 && jb.inst < 0 && coc.inst < 0 && flf.inst < 0 && vine_ride < 0 && pole_try(m))) { /* Pole */
+    if (pole_ride >= 0 || (warp.from < 0 && jb.inst < 0 && coc.inst < 0 && flf.inst < 0 && vine_ride < 0 && rush_drop(pole_try(m)))) { /* Pole */
         if (pole_hold(m)) {
             if (mario_anim) anim_update(mario_anim);
             return;
         }
     }
-    if (vine_ride >= 0 || (warp.from < 0 && jb.inst < 0 && coc.inst < 0 && flf.inst < 0 && vine_try(m))) { /* Plant */
+    if (vine_ride >= 0 || (warp.from < 0 && jb.inst < 0 && coc.inst < 0 && flf.inst < 0 && rush_drop(vine_try(m)))) { /* Plant */
         if (vine_hold(m)) {
             if (mario_anim) anim_update(mario_anim);
             return;
         }
     }
-    if (creeper_ride >= 0 || (warp.from < 0 && jb.inst < 0 && coc.inst < 0 && flf.inst < 0 && pole_ride < 0 && creeper_try(m))) { /* Creeper */
+    if (creeper_ride >= 0 || (warp.from < 0 && jb.inst < 0 && coc.inst < 0 && flf.inst < 0 && pole_ride < 0 && rush_drop(creeper_try(m)))) { /* Creeper */
         if (creeper_hold(m)) {
             if (mario_anim) anim_update(mario_anim);
             return;
@@ -22612,7 +22637,7 @@ static void update_mario_(void)
         if (mario_anim) anim_update(mario_anim);
         return;
     }
-    if (jb.inst >= 0 || (warp.from < 0 && gcap.phase < 2 && jbranch_try(m))) {
+    if (jb.inst >= 0 || (warp.from < 0 && gcap.phase < 2 && rush_drop(jbranch_try(m)))) {
         if (jb.inst >= 0 && jbranch_update(m)) {
             if (mario_anim) anim_update(mario_anim);
             return;
@@ -23154,6 +23179,7 @@ static void miss(void)
     if (mev.on) return;
     memset(&mev, 0, sizeof mev);
     mev.on = 1;
+    drop_damage(); /* MarioActor::exeGameOver*: damageDropThrowMemoSensor */
     mev.over = lives <= 0; /* MarioActor::exeGameOver: getPlayerLeft() == 0 */
     mev.ghost = miss_ghost && !mev.over;
     mario->hvel = v3(0, 0, 0); mario->vup = 0;
@@ -34910,6 +34936,7 @@ static int sls_try(Player *m) /* Mario's sensor touching its bind sensor: ACTMES
         sth_touch_actor(m->pos, vadd(m->hvel, vmul(m->up, m->vup)));
         sls_start_bind(i);
         m->hip = 0; m->spin_timer = 0;
+        drop_carried(); /* settingRush: rushDropThrowMemoSensor */
         printf("SpiderAttachPoint %d: Mario bound\n", s->row);
         return 1;
     }
@@ -49538,7 +49565,38 @@ static void ice_under_water(Player *m)
     }
 }
 static int sw_dive_ready(void) { return sw.b1B2; }
-static void drop_carried(void) {}
+/* MarioActor::tryReleaseWithMsg to what he holds (the port carries one JetTurtle: jet.phase 1) and its
+ * receiveOtherMsg: DAMAGEDROP resetPositionAndVanish (Restart, its Vanish / VanishRed / VanishGold, killed when _E0
+ * is off), RUSHDROP its Drop nerve; mSwim->resetJet. damageDropThrowMemoSensor also tryReleaseBombTeresa.
+ * ponytail: updateSearchLight (no search light), the throw memo _424 (none: the port's throws send nothing back),
+ * the ひろいクイック upper animation */
+static void jet_vanish(Inst *in) /* JetTurtle::resetPositionAndVanish */
+{
+    const Row *r = &sc->objs[in->row];
+    int st = in->jet == 1 ? (r->arg[0] >= 0 && r->arg[0] <= 2 ? r->arg[0] : 0) : in->jet == 2 && r->arg[0] == 1;
+    if (jet_gold(in)) st = 2;
+    static const char *const vn[3] = {"Vanish", "VanishRed", "VanishGold"};
+    fx_named("JetTurtle", vn[st], in->m, NULL, NULL);
+    in->hvel = v3(0, 0, 0);
+    in->m[12] = 1e9f; /* hideModel */
+    printf("jet turtle row %d: dropped (damage), vanished" "%c", in->row, 10);
+    if (in->jet >= 2) return; /* a NokonokoLand's / a Penguin's: its owner gives it again */
+    if (r->arg[2] == 1) { row_kill(in->row); row_step[in->row] = 0xFFFF; return; } /* _E0 off: kill */
+    row_step[in->row] = 1; /* Restart */
+}
+static void drop_taking(int damage)
+{
+    if (jet.inst >= 0 && jet.phase == 1) {
+        Inst *in = &insts[jet.inst];
+        if (sw.jet_t) { sw.jet_t = 0; if (swimming) m_anim("水泳基本"); } /* resetJet: changeDefault 水泳基本 */
+        jet.drop = 0;
+        if (damage) { jet.inst = -1; jet.phase = 0; jet_vanish(in); }
+        else { jet.phase = 3; jet.t = 0; jet.dground = jet.dwall = 0; jet.dgrav = vmul(mario->up, -1.0f); printf("jet turtle row %d: dropped (rush)" "%c", in->row, 10); }
+    }
+    if (damage) m_release_bomb_teresa(mario);
+}
+static void drop_carried(void) { drop_taking(0); } /* rushDropThrowMemoSensor */
+static void drop_damage(void) { drop_taking(1); }  /* damageDropThrowMemoSensor */
 /* a joint turned about its own axis (0 X, 1 Y, 2 Z) through its origin, its descendants with it (JointController's
  * global matrix) */
 static void anim_joint_rot(Anim *a, int j, int axis, float ang)
@@ -54207,6 +54265,7 @@ static void gh_exe(void)
     case GH_WIN:
         if (st == 0) {
             gh.ctrl_off = 1;
+            drop_damage(); /* tryPlayerKillTakingActor */
             float m[16];
             if (gh_name_pos("負け時マリオ位置", m)) gh_player_at(m, 1);
             m_anim("レース見る");

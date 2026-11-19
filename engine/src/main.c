@@ -2424,7 +2424,11 @@ int main(void)
 #ifdef JET_TEST
         { /* Mario onto a JetTurtle (500: after the arrival flight), a spin throws it (600): its reset, Restart */
             if (frame == 500) printf("jet test f %u: row %d\n", frame, game_test_jet(0));
+#ifdef DROP_TEST /* the held shell dropped: 1 damageDropThrowMemoSensor (it vanishes, Restart), 2 rushDropThrowMemoSensor (Drop, reset at 90) */
+            if (frame == 600) game_test_jet(DROP_TEST + 1);
+#else
             if (frame == 600) game_test_jet(1);
+#endif
             if (frame >= 500 && frame < 1100 && frame % 20 == 0) printf("jet test f %u: phase %d\n", frame, game_jet_state());
         }
 #endif
