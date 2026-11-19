@@ -23970,6 +23970,12 @@ static V3 m_last_safety(void) /* getLastSafetyTrans */
     float cm[16], k;
     return tri_part(&safe.t, cm, &k) && !memcmp(cm, safe.m, 64) ? safe.p : safe.p814;
 }
+static V3 m_last_safety_n(const Player *m) /* its pNormal: the place's ground normal, else his up (-getAirGravityVec) */
+{
+    float cm[16], k;
+    if (tri_part(&safe.t, cm, &k) && !memcmp(cm, safe.m, 64)) return tri_n(&safe.t);
+    return tri_part(&safe.t820, cm, &k) ? tri_n(&safe.t820) : m->up;
+}
 
 /* MarioRecovery: a PullBackCylinder (arg0 not 1) takes Mario back to his last safe place: up its axis at 10 a frame
  * to the place's height (or 600 over and 600 out from its base when the place is under it; 180 frames at most), then
@@ -24217,12 +24223,12 @@ static int pwr_update(Player *m) /* MarioWarp::update (mode 3): 1 while it runs 
     return 0;
 }
 /* Mario::doRecovery: not in MarioFoo, a recovery or a warp; squat and walk stopped; with a PullBackCylinder met (_12)
- * the status on and the jump stopped, else doPointWarpRecovery to 160 up his last safe place.
- * ponytail: the 160 along his up, not the safe ground's normal; MarioActor _934 / _EA4 not checked */
+ * the status on and the jump stopped, else doPointWarpRecovery to 160 up his last safe place's normal.
+ * ponytail: MarioActor _934 / _EA4 not checked */
 static int m_do_recovery(Player *m)
 {
     if (fo.on || rec.on || warp.from >= 0 || pwr.on || pw.on) return 0;
-    if (!rec.s12) { m->squat = 0; m_point_warp_recovery(m, vadd(m_last_safety(), vmul(m->up, 160.0f))); return 1; }
+    if (!rec.s12) { m_stop_walk(m); m_point_warp_recovery(m, vadd(m_last_safety(), vmul(m_last_safety_n(m), 160.0f))); return 1; }
     m_stop_walk(m);
     if (rec_start(m)) { rec.on = 1; camera_event_named("引き戻し", 0); } /* MarioRecovery::start: startGlobalEventCameraNoTarget */
     m_stop_jump(m);
@@ -62565,6 +62571,16 @@ void game_test_pullback(unsigned frame)
         V3 x, z;
         row_axes(r, &x, &z);
         V3 up = vnorm(vcross(z, x)), b = row_pos(r);
+#ifdef PWR_TEST /* -DPWR_TEST with pullback: doPointWarpRecovery (no cylinder met) from 1500 up and 1000 ahead */
+        if (frame == 300) {
+            mario->pos = vadd(vadd(mario->pos, vmul(mario->up, 1500.0f)), vmul(mario->face, 1000.0f)); mario->grounded = 0;
+            rec.s12 = 0; m_do_recovery(mario);
+        }
+        if (frame >= 300 && frame <= 900 && frame % 10 == 0)
+            printf("pwr test f %u: pos %d %d %d on %d rise %d left %d/%d grounded %d anim %s\n", frame, (int)mario->pos.x,
+                   (int)mario->pos.y, (int)mario->pos.z, pwr.on, pwr.rise, pwr.left, pwr.n, mario->grounded, m_jp ? m_jp : "-");
+        return;
+#endif
         if (frame == 300) {
             V3 s = m_last_safety();
             printf("pullback test f %u: safe %d %d %d (start %d %d %d), drop over row %d\n", frame, (int)s.x, (int)s.y, (int)s.z,

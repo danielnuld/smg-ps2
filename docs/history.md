@@ -11,6 +11,15 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Mario's doPointWarpRecovery (feat/mario-marks-6, #772, 2026-11-19): Mario::doRecovery without a PullBackCylinder
+  met (`rec.s12` clear: a PullBackCube, a PullBackCylinder with arg0 1, the PullBack floor code 16) returned without
+  doing anything. Now MarioWarp's mode 3 (`m_point_warp_recovery` / `pwr_update`): 引き戻し in the bubble for 40
+  frames, calcAxis' arc of 0.4 pi each side (max(radius / 25, 120) frames, sine eased) blended into the straight way
+  to 160 up the last safe place's normal (`m_last_safety_n`: getLastSafetyTrans' pNormal), the burst and 落下 at
+  close, the 引き戻し event camera. tools/slice.py packs PullBackCube rows (they were dropped: **repack**, every
+  galaxy). Test: `pullback` with `XF=-DPWR_TEST` (HeavensDoorGalaxy/1: he is put 1500 up and 1000 ahead and
+  doRecovery called; "pwr test" lines, "point warp recovery: done"). Left out: 引き戻し浮遊's volume by the flight's
+  middle (full volume), MarioActor::_A6E and the binder off (_F44), _934 / _EA4.
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /

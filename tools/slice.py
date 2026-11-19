@@ -362,7 +362,7 @@ LOGIC = ("SoundEmitterCube", "SoundEmitterSphere", "QuakeEffectAreaCube", "Playe
          "ViewGroupCtrlCube",  # ViewGroupCtrl (game.c vg_update)
          # Mario's areas (MR::getAreaObj: game.c area_obj / foo_sphere)
          "CelestrialSphere", "TowerModeCylinder", "NonSleepCube", "EffectCylinder", "SmokeEffectColorAreaCube",
-         "MessageAreaCube", "MessageAreaCylinder", "PullBackCylinder", "PlaneModeCube", "PlaneCircularModeCube",
+         "MessageAreaCube", "MessageAreaCylinder", "PullBackCylinder", "PullBackCube", "PlaneModeCube", "PlaneCircularModeCube",
          "RasterScrollCube", "DarkMatterCube", "ForbidWaterSearchCube",  # doDarkDamage; MarioSwim::checkUnderWaterFull (#575)
          "PrologueDirector", "PurpleCoinStarter", "ExterminationKuriboKeySwitch", "AstroOverlookObj", "AstroOverlookAreaCylinder", "CoinBox", "GhostPlayer",
          "BigBubbleMoveLimitterPlane", "BigBubbleMoveLimitterCylinder", "DodoryuClosedCylinder")  # BigBubbleMoveLimitter (game.c bgb_limit_pos)  # areas (areaobjinfo) travel as OBJS rows too
