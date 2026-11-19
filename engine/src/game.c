@@ -864,7 +864,9 @@ static int test_noclip; /* test builds: the walkers move though clipped (game_te
 static struct { int inst, cool; V3 pt, vel, side, front; } jb = {.inst = -1}; /* JumpBranch (jbranch_update) */
 static void drop_carried(void), drop_damage(void); /* rushDropThrowMemoSensor / damageDropThrowMemoSensor */
 static int rush_drop(int bound) { if (bound) drop_carried(); return bound; } /* MarioActor::settingRush on a bind */
-static struct { int inst, phase, t, drop, row, dground, dwall; V3 dir, head, vel, dgrav; } jet = {.inst = -1}; /* the JetTurtle Mario holds or threw
+static struct { int inst, phase, t, drop, row, dground, dwall; V3 dir, head, vel, dgrav;
+                V3 d9c, c0, cc, gn, wn, rn; float s8c, om[16]; int gr, wl, rf, gcode, wcode, rcode, wet, oriented; /* Throwing: _9C, _C0, _CC, its binder's faces and wall codes, _8C, its pose */
+              } jet = {.inst = -1}; /* the JetTurtle Mario holds or threw
                                                                 * (update_jets; row / head / vel kept for a rebind); drop:
                                                                 * MarioSwim::dropJet's releaseThrowMemoSensor asked */
 static int kmj_carry(void);
@@ -15488,6 +15490,14 @@ static int poihana_shock(Kuribo *k);
 static void ge_knock(Kuribo *k, V3 from);
 static void w_nrv(Kuribo *k, int n);
 static int noko_turtle(Kuribo *k, V3 p, V3 v);
+static int blend_sphere(V3 a, V3 b, V3 *o, float t);
+static void jet_bound(void) /* JetTurtle::bound: _9C off the faces it binds (sBoundReductionXZ 0.8 ground / roof, sBoundReductionY 0.9 wall) */
+{
+    float s;
+    if (jet.gr && (s = vdot(jet.d9c, jet.gn)) < 0.0f) jet.d9c = vsub(vsub(jet.d9c, vmul(jet.gn, s)), vmul(jet.gn, s * 0.8f));
+    if (jet.wl && (s = vdot(jet.d9c, jet.wn)) < 0.0f) jet.d9c = vsub(vsub(jet.d9c, vmul(jet.wn, s)), vmul(jet.wn, s * 0.9f));
+    if (jet.rf && (s = vdot(jet.d9c, jet.rn)) < 0.0f) jet.d9c = vsub(vsub(jet.d9c, vmul(jet.rn, s)), vmul(jet.rn, s * 0.8f));
+}
 static void update_jets(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -15512,6 +15522,7 @@ static void update_jets(void)
             }
             if (st == 105) {
                 row_step[in->row] = 0; jet_place(in);
+                obj_play(in, "wait", 1, 0); /* exeWait's first step: startBck Wait */
                 fx_named("JetTurtle", "KouraRevival", in->m, NULL, NULL);
                 se_start(SE_EM_NOKOLAND_REVIVE_APPEAR, &home.x);
                 printf("jet turtle row %d: revived" "\n", in->row);
@@ -15536,8 +15547,18 @@ static void update_jets(void)
                 if (!in_water(in->head, mario->up, &dep)) mario_se(SE_PV_CATCH);
             }
             in->head = vadd(vadd(mario->pos, vmul(mario->face, 70.0f)), vmul(mario->up, 60.0f));
+            /* exeThrowWait: SwimFlutterboard and SwimBubble / SwimBubbleRed in the water mode, else CarryWait */
+            obj_play(in, swimming ? "swimflutterboard" : "carrywait", 1, 0);
+            if (swimming) {
+                int red = in->jet == 1 ? r->arg[0] == 1 && !jet_gold(in) : in->jet == 2 && r->arg[0] == 1;
+                fx_named("JetTurtle", red ? "SwimBubbleRed" : "SwimBubble", in->m, in->anim && in->anim->skin ? (const float (*)[16])in->anim->world : NULL, (const char *)in + 3);
+            }
             if (mario->spin_timer > 0 || jet.drop) { /* thrown (in water: dropJet, along his swim front) */
-                in->hvel = vmul(jet.drop ? jet.dir : mario->face, (const float[]){30, 20, 30}[type]);
+                /* receiveMsgThrow: _9C the player's throw vector, _8C his speed for the plain shell (_92 0), _C0 the place */
+                jet.d9c = vnorm(jet.drop ? jet.dir : mario->face);
+                jet.s8c = type == 0 ? vlen(vadd(mario->hvel, vmul(mario->up, mario->vup))) : 0.0f;
+                jet.c0 = in->head; jet.gr = jet.wl = jet.rf = 0;
+                in->hvel = vmul(jet.d9c, jet.s8c + (const float[]){30, 20, 30}[type]); /* sThrowSpdStraight */
                 jet.drop = 0;
                 jet.phase = 2; jet.t = 0;
                 if (in_water(in->head, mario->up, &dep)) jet_launch = se_start(SE_OJ_TURTLE_JET_LAUNCH_W, &in->head.x); /* exeThrowing's first step */
@@ -15566,15 +15587,64 @@ static void update_jets(void)
             continue;
         }
         if (jet.inst == i && jet.phase == 2) { /* Throwing */
-            V3 p = vadd(in->head, in->hvel), up = up_at(p, mario->up), gn, wn;
-            int wall = 0;
-            collide_n(&p, up, 60.0f, &gn, &wn, &wall);
-            in->head = p;
-            float fh = vlen(vsub(p, v3(in->m0[12], in->m0[13], in->m0[14])));
-            int gone = 0, reason = 0;
-            if (++jet.t >= (const int[]){300, 480, 300}[type]) { gone = 1; reason = fh > 5000.0f; } /* sResetStep */
-            else if (fh > 10000.0f) { gone = 1; reason = 1; }
-            else if (wall) { gone = 1; camera_shake(SHAKE_WEAK); }
+            /* exeThrowing: its speed _8C + sThrowSpdStraight along _9C; a wall or roof resets it unless its wall code
+             * is Rebound (bound(): 0.9 off a wall, 0.8 off a roof or ground); _9C bends to the gravity by
+             * sGravityLevel where the gravity changes; no gravity resets it; its pose its velocity ahead, -gravity
+             * up; reset after sResetStep or 10000 from the throw (reason 1 over 5000). Its binder: 35 at 20 along
+             * its Y. ponytail: no homing (the eye sensor's SearchTurtle target, BulletSearch), JET_TURTLE_ATTACK to
+             * the binded faces' sensors only through the hit list below */
+            static const float grav_lv[3] = {0.017f, 0.01f, 0.0055f}; /* sGravityLevel */
+            static const char *const blur[3] = {"Blur", "BlurRed", "BlurGold"};
+            int st = jet.t++, gone = 0, reason = 0;
+            int shell = jet_gold(in) ? 2 : in->jet == 1 ? (r->arg[0] >= 0 && r->arg[0] <= 2 ? r->arg[0] : 0) : in->jet == 2 && r->arg[0] == 1;
+            float dep, fh = vlen(vsub(in->head, jet.c0));
+            const float (*jw)[16] = in->anim && in->anim->skin ? (const float (*)[16])in->anim->world : NULL;
+            if (st == 0) { /* its first step: Ignition, BulletWater + WaterBlur in water, else Bullet + Blur / BlurRed / BlurGold */
+                jet.wet = in_water(in->head, mario->up, &dep) != 0;
+                fx_named("JetTurtle", "Ignition", in->m, jw, NULL);
+                obj_play(in, jet.wet ? "bulletwater" : "bullet", 0, 0);
+                jet.cc = v3(0, 0, 0);
+            }
+            fx_named("JetTurtle", jet.wet ? "WaterBlur" : blur[shell], in->m, jw, (const char *)in + 2);
+            if (st == (const int[]){300, 480, 300}[type]) { gone = 1; reason = fh > 5000.0f; } /* sResetStep */
+            else {
+                in->hvel = vmul(vlen(jet.d9c) > 1e-6f ? vnorm(jet.d9c) : jet.d9c, jet.s8c + (const float[]){30, 20, 30}[type]);
+                if (fh > 10000.0f) { gone = 1; reason = 1; }
+                else {
+                    if (jet.wl || jet.rf) {
+                        if ((jet.wl && jet.wcode == 6) || (jet.rf && jet.rcode == 6)) jet_bound(); /* isWallCodeRebound */
+                        else { gone = 1; camera_shake(SHAKE_WEAK); }
+                    }
+                    if (!gone && jet.gr && jet.gcode == 6) jet_bound();
+                }
+                V3 gv = vmul(up_at(in->head, v3(0, 0, 0)), -1.0f); /* calcGravityVector */
+                if (!gone && vlen(gv) < 0.001f) { gone = 1; camera_shake(SHAKE_WEAK); }
+                if (!gone) {
+                    if (gv.x != jet.cc.x || gv.y != jet.cc.y || gv.z != jet.cc.z) blend_sphere(jet.d9c, gv, &jet.d9c, grav_lv[type]);
+                    jet.cc = gv;
+                    /* its binder */
+                    V3 y = vnorm(v3(in->m[4], in->m[5], in->m[6])), ctr = vadd(in->head, vmul(y, 20.0f)), to = m_bind(ctr, in->hvel, 35.0f);
+                    float dg = -1.0f, dw = -1.0f, dr = -1.0f;
+                    in->head = vadd(in->head, vsub(to, ctr));
+                    jet.gr = jet.wl = jet.rf = 0;
+                    for (int k = 0; k < b_n; k++) { /* Binder::storeContactPlane */
+                        V3 n = tri_n(&b_tri[k]);
+                        float d = vdot(n, gv);
+                        int code = b_tri[k].prism ? KCL_WALL(tri_attr(&b_tri[k])) : 0;
+                        if (fabsf(d) < 0.34202015f) { if (dw < b_dep[k]) { dw = b_dep[k]; jet.wl = 1; jet.wn = n; jet.wcode = code; } }
+                        else if (d < 0.0f) { if (dg < b_dep[k]) { dg = b_dep[k]; jet.gr = 1; jet.gn = n; jet.gcode = code; } }
+                        else if (dr < b_dep[k]) { dr = b_dep[k]; jet.rf = 1; jet.rn = n; jet.rcode = code; }
+                    }
+                    /* makeMtxFrontUp(velocity, -gravity made square to it) */
+                    V3 f = in->hvel, u = vmul(gv, -1.0f), side = vcross(f, u);
+                    if (vlen(f) > 0.001f && vlen(side) > 1e-4f) {
+                        basis_matrix(jet.om, in->head, vnorm(vcross(side, f)), vnorm(f), 0);
+                        for (int k = 0; k < 12; k++) if (k % 4 != 3) jet.om[k] *= in->s;
+                        jet.oriented = 1;
+                    }
+                }
+            }
+            V3 p = in->head;
             if (bk_jet_hit(p)) gone = 1; /* BossKameck: isMsgJetTurtleAttack (requestDamage) */
             if (!gone && sf_jet_hit(p)) gone = 1; /* SkeletalFishBaby / Boss: isMsgJetTurtleAttack */
             if (!gone && kj_jet_hit(p)) gone = 1; /* KoopaJrShip: receiveMsgJetTurtleAttack */
@@ -15619,13 +15689,17 @@ static void update_jets(void)
                 }
                 if (took) { camera_shake(SHAKE_WEAK); gone = 1; break; } /* shakeCameraWeak, reset(0) */
             }
-            if (gone) { jet.inst = -1; jet.phase = 0; jet_reset(in, reason); continue; } /* (a NokonokoLand's: hidden, its Koopa back) */
+            if (gone) { jet.inst = -1; jet.phase = 0; jet.oriented = 0; jet_reset(in, reason); continue; } /* (a NokonokoLand's: hidden, its Koopa back) */
             jet_place(in);
+            if (jet.oriented) for (int k = 0; k < 12; k++) if (k % 4 != 3) in->m[k] = jet.om[k]; /* (mRotation from its velocity) */
             jet.row = in->row; jet.head = in->head; jet.vel = in->hvel;
             continue;
         }
         if (jet.inst < 0 && vlen(vsub(c, vadd(in->head, vmul(mario->up, 50.0f)))) < 80.0f + HIT_BODY_R) {
-            if (swimming && !sw_start_jet(mario, type == 1)) continue; /* receiveMsgTaken: startJet (ATYPE_JET_TURTLE_SLOW 1) */
+            /* receiveMsgTaken: startJet by its body sensor's type: ATYPE_JET_TURTLE for the red shell (arg0 1:
+             * mShellType RED), ATYPE_JET_TURTLE_SLOW (1) for the green one (becomeSlowType) and the golden one */
+            int slow = in->jet == 1 ? !(r->arg[0] == 1 && !jet_gold(in)) : in->jet == 2 ? r->arg[0] != 1 : type == 1;
+            if (swimming && !sw_start_jet(mario, slow)) continue;
             jet.inst = i; jet.phase = 1; jet.t = 0; jet.row = in->row; jet.head = in->head; jet.vel = v3(0, 0, 0); /* TakenStart */
             printf("jet turtle row %d: taken" "\n", in->row);
         }
