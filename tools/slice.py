@@ -258,6 +258,10 @@ MORPH_SKIN = ("BoneMario", "BoneLuigi", "HopperMario", "HopperLuigi", "BeeMario"
 KINOKO = {"Kanina": "BenefitItemOneUp", "Snakehead": "BenefitItemOneUp", "WoodBox": "BenefitItemOneUp", "KoopaStatue": "BenefitItemOneUp",
           "TreasureBoxKinokoOneUp": "BenefitItemOneUp", "TreasureBoxCrackedKinokoOneUp": "BenefitItemOneUp",
           "TreasureBoxKinokoLifeUp": "BenefitItemLifeUp", "TreasureBoxCrackedKinokoLifeUp": "BenefitItemLifeUp"}
+# TreasureBoxCracked::initItem: the chip (initBlueChip / initYellowChip) or the AirBubble its box holds (game.c
+# update_tbox_items / draw_tbox_items)
+for _box, _item in (("TreasureBoxBlueChip", "BlueChip"), ("TreasureBoxYellowChip", "YellowChip"), ("TreasureBoxCrackedAirBubble", "AirBubble")):
+    EXTRA[_box] = EXTRA.get(_box, ()) + (_item,)
 
 
 def morph_arcs(o):
