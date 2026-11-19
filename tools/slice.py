@@ -274,8 +274,35 @@ SKINNED_OBJ += ("Tsukidashikun",)  # its Sign clip and its face BVAs (game.c tsu
 SKINNED_OBJ += ("SnowMan",)  # SnowMan.cpp: MeltHead / MeltBody / DownHead / DownBody (game.c update_snowmen)
 
 
+# DummyDisplayModel (cDummyDisplayModelInfoTable): what a CrystalCageS / M or a BreakableCage shows inside by its arg7,
+# as static models at their mAnim's pose ("#=<BCK>"; game.c ddm_model). The coin (0) is the scene's own, a PowerStar
+# (7) the event star's; Kinopio (1) at its arg6 ColorChange frame
+DDM = {2: "DdmSpinDriver", 3: "DdmSuperSpinDriver", 4: "DdmStarPiece", 5: "DdmTico", 8: "DdmKinokoOneUp", 9: "DdmKuribo",
+       10: "DdmBlueChip", 11: "DdmYellowChip", 12: "DdmStrayTico", 14: "DdmKinokoLifeUp"}
+MODEL_ARC.update({"DdmSpinDriver": "SpinDriver", "DdmSuperSpinDriver": "SuperSpinDriver#=freeze",
+                  "DdmStarPiece": "StarPieceDummy#=freeze", "DdmStarPieceR": "StarPieceDummy#=rotation", "DdmTico": "Tico", "DdmKinokoOneUp": "KinokoOneUp",
+                  "DdmKuribo": "Kuribo", "DdmBlueChip": "BlueChip", "DdmYellowChip": "YellowChip", "DdmStrayTico": "StrayTico",
+                  "DdmKinokoLifeUp": "KinokoLifeUp",
+                  **{f"DdmKinopio~{k}": f"Kinopio~colorchange:{k}#=freeze" for k in range(5)}})
+
+
+def ddm_arcs(o):
+    """The DummyDisplayModel of a cage row (DDM), () none."""
+    if o["name"] not in ("CrystalCageS", "CrystalCageM", "BreakableCage", "BreakableCageRotate", "BreakableCageL"):
+        return ()
+    k = s32(o["args"][7])
+    if k == 1:
+        return (f"DdmKinopio~{min(max(s32(o['args'][6]), 0), 4)}",)
+    if k == 4 and o["name"][0] == "B":  # BreakableCage::initModel: startBck(mItemModel, Rotation)
+        return ("DdmStarPieceR",)
+    return (DDM[k],) if k in DDM else ()
+
+
 def morph_arcs(o):
-    """The extra models a placed MorphItemObjNeo / BenefitItemInvincible row loads (makeArchiveList), or its KINOKO."""
+    """The extra models a placed MorphItemObjNeo / BenefitItemInvincible row loads (makeArchiveList), or its KINOKO;
+    a cage's DummyDisplayModel (ddm_arcs)."""
+    if ddm_arcs(o):
+        return ddm_arcs(o)
     if o["name"] in KINOKO:
         a = [s32(v) for v in o["args"]]
         return () if o["name"] == "WoodBox" and a[4] in (0, -1) or o["name"] == "KoopaStatue" and a[3] != 1 else (KINOKO[o["name"]],)
@@ -899,14 +926,19 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
             bl = tex.blocks(b)
             hide, gtab_all, drw, posed = set(), {}, [], []
             if not skinned and b"JNT1" in bl:
+                # "<archive>#=<BCK>": the whole model at that BCK's last frame (a DummyDisplayModel's mAnim: DDM)
+                frozen = pose[1:].lower() if pose and pose[0] == "=" else None
+                pose = frozen or pose  # (its BVA of that name too: StarPieceDummy's Freeze)
                 hide = hidden_joints(b, bl, {k.lower(): v for k, v in files.items()}, pose)
                 gtab_all, drw = skin.group_tables(b, bl), skin.draw_entries(b, bl)
                 js = skin.joints(b, bl)
                 wj = skin.world(js)  # bind pose
-                if arc.stem in POSE:  # the BCK's last frame (POSE)
-                    clip = anim_clip({k.lower(): v for k, v in files.items()}[POSE[arc.stem][0].lower() + ".bck"])
+                bcks = {k.lower().rsplit("/", 1)[-1]: v for k, v in files.items()}
+                if arc.stem in POSE or (frozen and frozen + ".bck" in bcks):  # the BCK's last frame (POSE)
+                    clip = anim_clip(bcks[(frozen or POSE[arc.stem][0].lower()) + ".bck"])
                     lp = skin.clip_pose(clip, struct.unpack_from("<H", clip, 0)[0], None)
                     wj = skin.world(js, [skin.local(sc, ro, tr) for sc, ro, tr in lp])
+                if arc.stem in POSE:
                     pose_world = {j["name"]: w for j, w in zip(js, wj)}
                 posed = skin.draw_mtx(drw, wj)  # per DRW1 entry
             # ponytail: models whose draw matrices move vertices are not simplified (the simplifier sees positions
