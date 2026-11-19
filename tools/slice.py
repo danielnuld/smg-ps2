@@ -1873,6 +1873,14 @@ def name32(s):
     return s.encode("ascii", "replace")[:31].ljust(32, b"\0")
 
 
+def type32(t):
+    """A TYPE entry: the name, and in its last byte (names up to 30 characters) MapObjActor::appear's flags
+    (mapobj_flags.py: 1 its Appear effect and start SE, 2 the riddle chime; game.c type_flags). 0 in older packs."""
+    import mapobj_flags
+    b = name32(t)
+    return b[:31] + bytes([mapobj_flags.all_flags().get(t, 0)]) if len(t) <= 30 else b
+
+
 def rot_mtx(rot):
     """R = Rz * Ry * Rx of Euler angles in degrees (the engine's mat_translate_rot_scale), rows."""
     cx, sx, cy, sy, cz, sz = (f(math.radians(a)) for a in (rot[0], rot[1], rot[2]) for f in (math.cos, math.sin))
@@ -2240,7 +2248,7 @@ def placement(fs, galaxy, scenario):
                                   *[a if -2**31 <= a < 2**31 else -1 for a in r["args"]],
                                   *[v if -2**15 <= v < 2**15 else -1 for v in r.get("sw", [-1] * 5)],
                                   r.get("group", -1) if -2**15 <= r.get("group", -1) < 2**15 else -1)
-    out = [chunk(b"TYPE", struct.pack("<I", len(types)) + b"".join(name32(t) for t in types)),
+    out = [chunk(b"TYPE", struct.pack("<I", len(types)) + b"".join(type32(t) for t in types)),
            chunk(b"ZONE", struct.pack("<I", len(zones)) + b"".join(
                name32(z["name"]) + struct.pack("<6f", *t, *mtx_euler(r)) for z, (r, t) in zip(zones, zworld))),
            chunk(b"OBJS", struct.pack("<I", len(keep)) + b"".join(pack_row(r) for r in keep)),

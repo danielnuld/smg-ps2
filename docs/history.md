@@ -206,6 +206,17 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   tryTornadoPull / tryCoinPull: ACTMES_ITEM_PULL while swimming or in his mode 7) is not ported. **Release:
   resident.bin + resident_luigi.bin** (jpa.py NAMED StarPiece: StarPieceGetBlur) **+ sound.py --pack** every galaxy
   (SE_OJ_STAR_PIECE_FLY / _W are new in game.c).
+- MapObjActor::appear (feat/734-appear-se, #734, 2026-11-19): a map object shown by its SW_APPEAR (also when it is on
+  at the start: syncStageSwitchAppear) or by its demo's appear action emits its Appear effect, plays its StageEffect
+  start SE (not DarkHopperRotateStepA) and, with mIsAppearRiddleSE, SE_SY_READ_RIDDLE_S (update_appears; a byte a
+  row from the arena). Which names: tools/mapobj_flags.py reads Petari (the factory's class, its base chain up to
+  MapObjActor with no appear() of its own unless it calls up; an init with setupInitInfoSimpleMapObj / setupSeAppear
+  not undone later, nor by setupInitInfoTypical's cNoAppearRiddleSENameList): 428 names, 309 with the chime
+  (SimpleMapObj, RotateMoveObj, RailMoveObj, SimpleEnvironmentObj, SimpleBreakableObj, SimpleSeesawObj ...).
+  slice.py writes the two bits to the last byte of the name's TYPE entry (names up to 30 characters); a pack sliced
+  before has 0 there and plays nothing, as before. SimpleTimerObj keeps its own effect and SE (st_timer). Test:
+  `XF="-DAPPEAR_TEST -DSE_LOG"` (three hidden rows' switches on at frame 900: "appear: ..." lines). ponytail: a
+  setup made in a helper the init calls is not followed. **Release: slice_all.py every galaxy** (the TYPE flags).
 - RainCloud (feat/692-raincloud, #692, 2026-11-18): 69 placed (OceanRingZone layers C / D, ReverseForestHomeZone),
   generic rail parts before. update_rainclouds after RainCloud.cpp: Wait / Appear / Disappear / End / SoftTouch /
   HardTouch (Mario falls through a cloud for 60 frames unless he is a bee; OnBee under a bee; Disappear at its rail's
