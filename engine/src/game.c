@@ -1185,6 +1185,7 @@ static void pr_joints(Inst *in), draw_wbullets(void), update_pressures(void);
 static int wb_hold(Player *m), tz_hold(Player *m);
 static void tz_place(Inst *in), update_trapezes(void), draw_trapeze_ropes(void);
 static int ntzs, tz_ride = -1; /* the Trapeze Mario holds, -1 none */
+static int swr_hold(Player *m); static float swr_reach(void); static V3 swr_body(void); static void swr_update(void), swr_draw(void), swr_reset(void); /* swing_rope.inc */
 static int nonis, nfprs; static void oni_place(Inst *in), update_onimasu(void), update_lavarocks(void), update_fpressures(void), fpr_joints(Inst *in);
 static int nspms; static void update_spmothers(void);
 static void update_leakpipes(void), leak_joints(Inst *in), st_bell_joints(Inst *in);
@@ -2896,7 +2897,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nfbs = 0; /* FountainBig states */
     nfwind = -1; /* FluffWind rails */
     nrbms = 0;
-    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0; nggs = 0; nsss = 0; ss_ride = -1; ss_reset(); kfires_reset(); nlls = 0; ndls = 0; nebl = 0; nass = 0;
+    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; swr_reset(); nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0; nggs = 0; nsss = 0; ss_ride = -1; ss_reset(); kfires_reset(); nlls = 0; ndls = 0; nebl = 0; nass = 0;
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -5838,7 +5839,8 @@ static void game_rebind_(void)
         in->invisible = strncmp(name, "InvisibleWall", 13) == 0 || strcmp(name, "IronCannonLauncherPoint") == 0 || strcmp(name, "ElectricBall") == 0 ||
                         strcmp(name, "StarReturnDemoStarter") == 0 || strcmp(name, "GrandStarReturnDemoStarter") == 0 || /* their stars: srd_draw / gsr_draw */
                         strcmp(name, "AstroDomeDemoStarter") == 0 || /* its SuperSpinDriver: adds_draw */
-                        st_flag_class(name); /* Flag: its cloth (statics.inc st_draw) */
+                        st_flag_class(name) || /* Flag: its cloth (statics.inc st_draw) */
+                        strcmp(name, "SwingRope") == 0; /* its strips (swing_rope.inc swr_draw) */
         if (in->flip) {
             char v[48];
             snprintf(v, sizeof v, "%s#PanelA", name);
@@ -23374,6 +23376,10 @@ static void update_mario_(void)
         return;
     }
     if (tz_hold(m)) { /* on a Trapeze */
+        if (mario_anim) anim_update(mario_anim);
+        return;
+    }
+    if (swr_hold(m)) { /* on a SwingRope */
         if (mario_anim) anim_update(mario_anim);
         return;
     }
@@ -48888,6 +48894,7 @@ static void collect(Pickup *p, int n, float reach, int *counter, int fx, u32 se)
     if (bgb_reach() > reach) { reach = bgb_reach(); c = bgbs[bgb_ride].pos; } /* in a BigBubble: its ride sensor gets them */
     if (tmk_reach() > reach) { reach = tmk_reach(); c = tmk_body(); } /* on a Tamakoro: its Body sensor's tryGetItem */
     if (sr_reach() > reach) { reach = sr_reach(); c = sr_body(); } /* on a SurfRay: its ride sensor's tryGetItem */
+    if (swr_reach() > reach) { reach = swr_reach(); c = swr_body(); } /* on a SwingRope: its ride sensor's tryGetItem */
     for (int i = 0; i < n; i++)
         if (pickup_on(&p[i], 1) && vlen(vsub(p[i].pos, c)) < reach) {
             p[i].alive = PICK_GONE;
@@ -55125,6 +55132,7 @@ int game_test_bk(int frame)
 #include "polta.inc" /* Polta (Bouldergeist): pol_*, game_test_pol */
 #include "tamakoro.inc" /* Tamakoro (the star ball), TamakoroTutorial: tk_*, game_test_tk */
 #include "mario_launcher.inc" /* MarioLauncher (the cannon Mario rides): ml_*, game_test_launcher */
+#include "swing_rope.inc" /* SwingRope: swr_* */
 #include "snow_floor.inc" /* SnowFloor, SnowplowSwitch: snow_* */
 #include "clip_area.inc" /* ClipArea*, ClipFieldSwitch, FallOutFieldDraw, SimpleClipPartsObj, ClipAreaDropLaser: ca_* */
 #include "statics.inc" /* placed classes once drawn still (Flag ...): st_* */
@@ -56763,6 +56771,7 @@ void game_update(void)
     update_whirls();
     update_pressures();
     update_trapezes();
+    swr_update();
     update_onimasu();
     update_lavarocks();
     update_fpressures();
@@ -58466,6 +58475,7 @@ void game_draw(void)
     draw_wbullets();
     draw_fbullets();
     draw_trapeze_ropes();
+    swr_draw();
     draw_eyebeams();
     draw_beam_go_round();
     draw_fishes();
