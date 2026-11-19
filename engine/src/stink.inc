@@ -122,7 +122,7 @@ static void stink_update(Kuribo *k)
     const Row *r = &sc->objs[k->row];
     float s = sb_s(k);
     if (!k->front.x && !k->front.y && !k->front.z) sb_init(k);
-    int st = k->step;
+    int st = ++k->step; /* (a nerve set by a message below starts at its first step next frame) */
     switch (k->nrv) {
     case SBS_WAIT:
         if (st == 0 && k->SB_B0 == 0.0f && strcmp(k->act, "Search")) w_act(k, "Search"); /* tryStartBck */
@@ -202,7 +202,8 @@ static void stink_update(Kuribo *k)
         break;
     case SBS_PANIC:
         if (st == 0) { w_act(k, "Loss"); k->lvt[1] = 0; }
-        w_se_lv(k, SE_EM_LV_STINKBUG_S_PANIC); /* (and SE_EV_LV_STINKBUG_S_PANIC: one level handle a walker) */
+        w_se_lv(k, SE_EM_LV_STINKBUG_S_PANIC);
+        { float at[3] = {k->pos.x, k->pos.y, k->pos.z}; k->lv2[0] = se_level(SE_EV_LV_STINKBUG_S_PANIC, at, k->lv2[0]); }
         k->vel = v3(0, 0, 0);
         if (!sb_on_player(k)) { w_nrv(k, SBS_RECOVER); break; }
         if (st == 90) w_nrv(k, SBS_SHAKESTART);
@@ -234,7 +235,6 @@ static void stink_update(Kuribo *k)
             if (vlen(f) > 1e-6f) k->front = vnorm(f); /* turnVecToPlane */
         }
     }
-    k->step++;
     k->act_t += k->act_rate;
     {
         int off = kcl_off_row; /* setBinderExceptActor: its own collision left out */
@@ -270,7 +270,7 @@ static void stink_update(Kuribo *k)
 #endif
             (void)ok;
         }
-        else if (k->nrv != SBS_SHAKE) w_nrv(k, SBS_PANIC);
+        else w_nrv(k, SBS_PANIC); /* (in Shake too when he hip-drops: not isShakeChance) */
     }
     /* attackSensor */
     if (k->item && vlen(vsub(ms, body)) < br + HIT_BODY_R) mario_push_out(body, br); /* its body: sendMsgPush */

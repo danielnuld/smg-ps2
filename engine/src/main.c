@@ -1931,11 +1931,17 @@ int main(void)
                  * with -DASC_HOW=<n> game_test_enemy's way n each frame of 300-420 instead; walkers unclipped */
         if (frame == 120) game_test_unclip();
         static int asc_shots; /* held until the first shot goes (the flight in and the welcome first: -2) */
-        if (frame >= 120 && frame < 760 && asc_shots < 2) game_test_enemy(ASC_KIND, 0, 9);
+        static int asc_kind = ASC_KIND; /* -DASC_KIND=-1: the scene's first of Jellyfish, Mogu, Petari, KoteBug, Unizo (one ELF, a galaxy each by boot.txt) */
+        if (asc_kind < 0 && frame == 120) {
+            static const int ks[5] = {19, 21, 16, 3, 14};
+            for (int i = 0; i < 5 && asc_kind < 0; i++) if (game_kind_alive(ks[i]) > 0) asc_kind = ks[i];
+            printf("asc test: kind %d\n", asc_kind);
+        }
+        if (asc_kind >= 0 && frame >= 120 && frame < 760 && asc_shots < 2) game_test_enemy(asc_kind, 0, 9);
 #ifdef ASC_HOW
-        if (frame >= 760 && frame < 880 && game_test_enemy(ASC_KIND, 0, ASC_HOW) >= 0 && frame % 30 == 0) printf("asc test f %u: way %d\n", frame, ASC_HOW);
+        if (asc_kind >= 0 && frame >= 760 && frame < 880 && game_test_enemy(asc_kind, 0, ASC_HOW) >= 0 && frame % 30 == 0) printf("asc test f %u: way %d\n", frame, ASC_HOW);
 #else
-        if (frame >= 300 && frame % 120 == 0 && asc_shots < 2) { int r = game_test_shoot(ASC_KIND); if (r >= 0) asc_shots++; printf("asc test f %u: shot at row %d\n", frame, r); }
+        if (asc_kind >= 0 && frame >= 300 && frame % 120 == 0 && asc_shots < 2) { int r = game_test_shoot(asc_kind); if (r >= 0) asc_shots++; printf("asc test f %u: shot at row %d\n", frame, r); }
 #endif
 #endif
 #ifdef TSPOT_TEST
@@ -2131,6 +2137,9 @@ int main(void)
 #endif
 #ifdef SINK_TEST /* XF=-DSINK_TEST=<floor code 17 / 18 / 25 / 31>: Mario put on a Sink floor (#565) */
         { extern void game_test_sink_input(int, int); game_test_sink_input((int)frame, SINK_TEST); }
+#endif
+#ifdef STEP_TEST /* XF=-DSTEP_TEST=<k>: Mario walks at the k-th step found (MarioStep) */
+        { extern void game_test_step_input(int); game_test_step_input((int)frame); }
 #endif
 #ifdef SIDESTEP_TEST
         { extern void game_test_sidestep_input(int); game_test_sidestep_input((int)frame); } /* Mario leans on a wall and side steps */

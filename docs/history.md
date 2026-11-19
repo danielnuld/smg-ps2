@@ -44,6 +44,135 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   SandCapsulePressGround, #668 Tsukidashikun's clips, #669 effects never spelled, #672 StarPieceGroup's time limit and
   switches, #677 CoinGroup's time limit, #680 PunchBox's other attacks, #681 WaterLeakPipe's Freeze, #683 the chip
   treasure boxes, #684 the Ride classes' marks.
+- GravityLightRoad (feat/651-gravity-light-road, #651, 2026-11-18): MapObj/GravityLightRoad.cpp in
+  `engine/src/gravity_light_road.inc` (glr_*): KoopaBattleVs3Galaxy's five beams. Its body sensor (250 at the foot of
+  Mario's centre on the beam's line, 2500 x scale y long) binds him inside its cylinder (390 round the axis): Fall,
+  Draw (SE_PM_GRAV_LIGHT_DRAWN_ST, + 2 a frame along its up to 20, 2 a frame towards the axis, his up turned to -up by
+  0.2), until its SW_A (the SwitchCube at its top) or 1800 frames: endBindAndPlayerForceJump(up x 2), Disappear, kill
+  after 59. State in MEM_OBJECTS. Test: plain `XF=-DGLR_TEST`, KoopaBattleVs3Galaxy/1: bound at once, drawn 20 a
+  frame onto the axis, its switch at the top, Disappear, dead (seen in PCSX2; no log line seen for its SE). ponytail:
+  the pack carries no joint box (the BDL's read offline) and one BRK track a model: Wait.brk / Disappear.brk are not
+  played; the matrix blend is of his up vector. Cost: about 2.8 KB of the ELF (nm glr_*), its state in MEM_OBJECTS; memcheck on a plain build of main with this and the five classes after it: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB. No repack.
+- HipDropMoveObj / HipDropDemoMoveObj (feat/621-hipdrop-move, #621, 2026-11-18): LavaObstacleRockShell,
+  LavaObstacleRockHomeA and ForestObstacleWoodA (one placed each; still models before) as gap classes (GAP_HIPMOVE /
+  GAP_HIPDEMO, update_hipmove): Wait (no clip: Move's first frame held) until Mario's hip drop lands on its collision
+  within 225 of its Switch joint (each model's last joint), Move (the Move clip, StageEffectDataTable's start SE, the
+  moving shake, its registered demo started, the moving SE up to the stop steps, the stop SE and the riddle chime
+  there), Done at the clip's end with its SW_A on. HipDropDemoMoveObj holds Mario (Wait clip) on the Move joint
+  while the demo runs. slice.py: the three models skinned (SKINNED_OBJ: the Move clip, the collision on the Move
+  joint). GapSt has a third vector (u). Test: `XF=-DHIPMOVE_TEST=k` on a plain build (Mario held over the k-th row,
+  a hip drop at frame 900, then the next row). In the test LavaObstacleRockShell's Move was cut short: the drop
+  lands Mario in a SwitchCylinder that starts the zone's own demo, and the rock is not its cast. ponytail: no Move
+  BRK (the Shell's cracks); a rock whose zone streams out in Move does not finish it. **Release: slice_all.py**
+  HellProminenceGalaxy, HoneyBeeKingdomGalaxy **+ sound.py --pack** for them (SE_OJ_LAVA_OB_ROCK_A / S _ON, _MV,
+  _STOP and SE_OJ_FOREST_OBS_WOOD_* answer `se?` until then).
+- Enemy audit, second batch, and Kiraira (feat/689-enemy-audit-2, #689 / #690, PR #693, 2026-11-18): the table is
+  `docs/class-audit-enemy.md`. PackunPetit: a fire ball / the rainbow attack punchDown (packun_hit), a shell with the
+  scene stop, the stop only for the spin / kick / shell, a failed attack pushes. Unizo: enemy attacks not from a Unizo
+  doBreak (walker_blow), no rainbow kill, doAttack only when taken, UnizoLand's SearchSmoke. KoteBug / Poihana / Gesso /
+  Mogu: their own answers to fire balls, shells, the rainbow attack and explosions (kb_hitall, ge_hitall, mg_hitall).
+  BombHei (#600's leftovers): held at Mario's HandR (MarioActor::updateTakingPosition: _49C, the FixedPosition (1.8,
+  52.51, 39.58) at HandR, + his velocity) with カブ抜き then カブウエイト over his body and 両手投げ at the throw; Thrown
+  rebounds off the enemies it touches (calcReflectionVector 0.8, in walker_push_pass); taken, it has no body sensor.
+  BegomanSpringHide: its BegomanBaby (one hosted walker a Hide row) out in Shake's first step when dead (50 up, 10
+  aside, SE_EM_BEGOMAN_LAUNCH_BABY), only when the pack has the BegomanBaby model (slice.py EXTRA).
+  Kiraira (it was an early stand-in: touch, 480 frames down): update_kiraira after Kiraira.cpp, its nerve in
+  row_turn's low bits with mEyesOpen / mIsForceDetonated above, mFront its matrix's Z: Wait, FaceToMario (2.8 degrees a
+  frame), FaceToMarioAndStare (SE_OJ_KIRAIRA_STARE at step 5), Explode from Mario's touch or spin (an explosion attack
+  he takes), a star piece, a thrown shell (force-detonated: the explosion to Mario within its eye's 600, the walkers,
+  the other Kirairas: BeExploded, 10 frames), the strong rumble / shake within 3000, Dead 300 with the group's alarm
+  (they turn 20 degrees a frame and stare), RecoverSign 120, Recover (60 frames: no clips); down, its body pushes.
+  Its Explosion effect once jpa.py names Kiraira (SpaceMine's until then). Left (#691): the model with its clips.
+  Test: built plain (EggStarGalaxy/1), host tests, the route test, memcheck; NOT run in PCSX2
+  (D:/smg-ps2-wt/unverified-2026-11-18.md). **Release: slice_all.py** the galaxies with a BegomanSpringHide
+  (CannonFleetGalaxy: BegomanBaby) and with a Kiraira / KirairaRail (jpa.py NAMED Kiraira: its effects).
+- Enemy audit against Petari, first batch (feat/676-enemy-audit-1, #676 / PR #688, 2026-11-18): the enemies read class by class
+  against vendor/Petari/src/Game/Enemy (the table: `docs/class-audit-enemy.md`, one row a class with what was fixed and
+  what is left). The cause shared by most: `fireball_hit_walkers`, the thrown shell's loop and `walker_blow`'s callers
+  ended in a generic kill (Kuribo's smoke and a coin) for every walker kind without a case; Petari has no default, and
+  isMsgPlayerHitAll is the spin, the shell, the fire ball, the freeze and the rainbow attack. Now each class read has
+  its own case: Kuribo / KuriboMini requestBlowDown, TakoHei requestPunch, JumpSpider HitBlow (js_blow), Takobo
+  HitPunch (tk_punch), Karikari tryBlowOut (kari_hitall), BasaBasa PunchDown (bb_punch), Karon Broken from a shell
+  (kr_jet) and kill + three pieces from an explosion; Teresa, StinkBugSmall, Meramera, MechanicKoopaMini,
+  IceMerameraKing no longer die from messages they do not answer. Beside that: Kuribo / KuriboMini die on a fire floor
+  (isBindedGroundDamageFire: the walker's ground code 10); JumpSpider's and Takobo's kick while stunned; JumpSpider's
+  EyeLight; Takobo's body pushes Mario (isPlayerExistUp as a direction); Karikari's hip drop release (the landing
+  zeroed kari_cling before kari_director ran, so nothing was thrown off), BlowOutStarPiece's sounds, Touch on every
+  DPDAttacked; Teresa's filterBind was inverted (GhostThrough walls pass only while it drifts) and its appear nerves'
+  endAppear was skipped; StinkBugSmall's step counted so a nerve set by a message starts at its first step (a hip
+  drop in DashSignEnd killed it with no Death clip), Panic from a hip drop in Shake; Karon without clipping in
+  Pursue, dark matter, SinkDown's attackSensor; BasaBasa without clipping out of Wait / AirWait (it froze out of
+  view), Ice Mario against BasaBasaIce; Meramera's and MechanicKoopaMini's push between two done twice, IgnitionForce's
+  setVelocityJump; Onimasu's landing rumble / shake distances and FactoryGalaxy's WaitForStamp before SW_A;
+  SpinHitController's star pieces with SE_OJ_STAR_PIECE_BURST (spin_hit_exec). Test: built plain (EggStarGalaxy/1),
+  host tests, the route test, memcheck; NOT run in PCSX2 class by class (D:/smg-ps2-wt/unverified-2026-11-18.md).
+  No repack.
+- Per-class tables out of bss, 2 (perf/tables-arena-2, #657, 2026-11-18; the rule: the note of #630 below):
+  SpiderThread's `sth.pt` / `.mp` / `.part` (117 KB; sth_init, from game_init's spider_thread_scene with a TombSpider
+  placed; the small header and the hang table stay in bss, so `sth.on` reads as before), the ring Syati's `sy_rings`
+  (121 KB; `sy_alloc`: a scene with a Syati, the rings' loops skip a NULL table as five dead rings, a TalkSyati has
+  none), the Flags' `st_flags` / `st_flag_pts` (113 KB; `st_flag_alloc`: a StFlag and 100 points a placed Flag, the old
+  maxima on top) and draw_oceanspheres' `keep` (72 KB; `os_keep`, os_init with a sphere placed). sy_init and
+  st_flag_init wait for the first update (the zones' models), where an allocation would go with the next zone swap:
+  their `*_alloc` are called from game_init. memcheck: 434048 B of bss gone (_end 12065664, 124032 B before the region loses a step, the region 19200 KB); route EggStarGalaxy/1 f 4281. Arena at boot: StarDustGalaxy/3
+  (`SpiderThread: ... 1101 points`) 3526 KB, OceanRingGalaxy/1 (Syati 8 rings, Flags) 3090 KB, KoopaBattleVs3Galaxy/1
+  (OceanSphere, FlagKoopaCastle) 4615 KB of 5376 KB. Not driven in PCSX2: the web's battle, a ring pass, the flags
+  seen (boots and the "mem:" lines only).
+- Mario leftovers (feat/675-mario-leftovers, #675, 2026-11-18), from the plan's "Mario statuses not ported":
+  Mario::calcTornadoTilt (MarioSpin.cpp; update_tornado_mario: _54C, TornadoMario's up, eased mTornadoTiltSpeed to his
+  head leaning mTornadoTiltAngle to the pad's direction with the stick on in a tornado, back at mTornadoTiltSpeed /
+  mTornadoTiltOffSpeed; _548 is read nowhere); procHipDrop's homing in a spin hip drop (m_hip_homing,
+  MarioJump.cpp:1880: the map faces within his height of his shadow whose host has auto_efx_bitmap's SHD homing bit:
+  PicketSwitch / Big, StinkBugSmall / Parent, Kabokuri, SurfRay, MagnumKiller, SnowMan, PunchBox, JumpStand,
+  SpinningBox, HipDropRock by ObjNameTable; his jump turned to it; a front, side or back wall ends it); the dive's
+  hard landing slides on (startSlidingTask(8, 5, 0x19): his front x 5 for 25 frames); tryWallPunch's 壁ヒット and
+  _EF6 30. Checked, nothing to port: doCubeWarp (no scenario of the 136 places a WarpCube), bodyClap (the star pieces
+  within 100 of him in a bind: collect() takes them within 120, bind or not), forceStopTornado's _40A (set, read
+  nowhere). Left: the homing's other target, MarioActor::_4A8 (the sensor under him his body sensor met: there is no
+  sensor list, each class tests Mario itself); MarioSearchLight (the jet shell's light: SearchLightCone is not in
+  resident.bin, its draw is a light volume through destination alpha (front faces added, back faces subtracted, a box
+  blended by it), its sensor sweeps 2000 ahead for TeresaWater / the SearchTurtle group); MarioStick. Not run in
+  PCSX2 (no test puts him in these); the route's star frame unchanged.
+- MarioStep seen working (fix/673-mario-step, #673, 2026-11-18): #571's step never started. m_check_step asked
+  m_front_wall_norm(), zero unless the front wall is faced (_8), and at a step the floor on the wall turns _8 off
+  (checkAllWall); Mario::checkStep reads mFrontWallTriangle's normal bare: m_front_tri_n, the triangle as checkAllWall
+  last left it. startStep's _4C8 press test added (calcDistToCeil's face). Test: a plain build XF=-DSTEP_TEST=<k>
+  (game_test_step_input: the collision searched for an upright face with a level floor on it 10 to 48 over the level
+  floor before it; Mario put 150 before the k-th and walked at it). PCSX2, HeavensDoorGalaxy 2 (row 39's step of 26;
+  none found in EggStar 1, BattleShip 2, Factory 1, Phantom 1). Before: _15 / _39 on, the place 26 up, no step: his
+  body's collision pushed him up the edge in 12 frames. After: `step: up 24, 10 frames, walk 0.64` when his centre's
+  ball meets the riser, set on the step, the status 14 frames (_14 from 10 down by his walk speed) while his drawn
+  matrix eases, then he walks on.
+- Koopa Vs3's stair meteors (feat/se-koopa-vs3-meteor, #644, 2026-11-18): KoopaParts::initVs3 makes its
+  KoopaFireStairs with mIsKoopaJr (createFireStairs(true)) and the port flew them as Vs1's (a straight line timed to
+  the break, SE_OJ_KOOPA_FIRE_SHOT). koopa.inc kp_fire_stairs / kp_fire_stairs_update (kpfst.jr): no velocity, each
+  Fly frame at the stair's calcTimeRate ((step - mFireAttackStep) / (mTimeToBreak - mFireAttackStep)) between its
+  start (クッパ階段戦の砲弾出現) and the target plus sin(180 x rate) x 1500 along _AC, its front the way it moved;
+  _AC is (0, 1, 0) turned at each launch about Koopa's front by getRandom(0, 45) or (-45, 0) degrees (the side of
+  the stair's gravity the start-to-stair x start-to-target cross points to) and never reset, as the pool's actor
+  keeps it; SE_BM_KOOPAJR_SHIP_METEORSHOT_F at appear, SE_BM_LV_KOOPAJR_SHIP_METEOR every Fly frame. Vs1's are
+  unchanged. Test: `XF=-DKP_TEST` KoopaBattleVs3Galaxy/1 ("koopa: stairs meteor" lines).
+  PCSX2 (SE_LOG): 20 stairs registered, five meteors (157-191 frames, arcs -20 to 34 degrees), `se? 00040174` every
+  frame once one is within the listener's 5000, the breaks' `se? 000501fe`, the fight on to Lv3 as before. No line
+  for SE_BM_KOOPAJR_SHIP_METEORSHOT_F (launched beyond 5000: se_start drops it before the log); the arc not looked at
+  in a picture. **Release: sound.py --pack** KoopaBattleVs3Galaxy (the two names, and SE_OJ_KOOPA_FIRE_EXPLODE which
+  answers `se?` there too). Memory: about 1 KB (320 bytes of it the pool's state).
+- OtaKing's star pieces' burst sound (feat/se-otaking-burst, #643, 2026-11-18): OtaKing::appearStarPiece plays
+  SE_OJ_STAR_PIECE_BURST on its sound object with the pieces of exeDamage / exePowerUp's first step; game.c launched
+  them silent (ota_se now, as its crown's SE_BM_OTAKING_CROWN_FALL). Test: `build.sh ota` (EggStarGalaxy/3).
+  PCSX2 (SE_LOG): `se+ 00050089` after "ota king: hit 1" and "hit 2", the fight still ends with its star. Its
+  other sound calls compared site by site with OtaKing.cpp / OtaKingMagma.cpp: all made. No repack.
+- DinoPackun's star piece reaction (feat/se-dinopackun-star-piece, #642, 2026-11-18): no star piece reached it
+  (dino.react was never set). game.c dino_shot (update_shots): in a battle its head (270) / body (200) take the piece
+  (Vs1: isMsgStarPieceAttack, Vs2Lv1: isMsgStarPieceReflect) and start DinoPackun::startHitReaction:
+  SE_OJ_STAR_PIECE_HIT_STOP, its AnimScaleController's HitReaction (asc_core with DinoPackunParam 0.1 / 0.91 / 0.2 /
+  1.8 / 0.07 / 0.12 / 0.92) scaling Spine1 and its children (dino_scale_joint: hitScaleJoint's (_C.y, _C.z, _C.x) on
+  joints 21-45), the chase held while isHitReaction(15); the egg's sensor (400) in the egg's battle, the tail's parts
+  (1.25 + sJointRadius) and its ball (135) reflect it. appearStarPiece plays SE_OJ_STAR_PIECE_BURST with its 8
+  pieces. Test: `build.sh dino` with `XF=-DDINO_STAR` (a piece on its body 30 frames into each chase).
+  PCSX2 (EggStarGalaxy/1, SE_LOG): `se+ 00050376`, "dino packun: star piece hit reaction", `se+ 00050089` at each
+  battle's start, the fight still ends with its star. Not looked at in a picture: the Spine1 wobble; not run: Vs2
+  (the reflect), a piece on the egg / tail. Memory: about 1.2 KB of code (estimated). No repack.
 - RandomEffectObj (feat/631-random-effect, #631, 2026-11-18): FireworksA (10 placed) and ShootingStarArea (56) played
   as steady SimpleEffectObj ambient effects. Now in ambient_effects (amb_once 2 / 3; row_step mStep + 2, row_turn
   mSeStep + 1): the first emit |repeat(x + y + z, 0, arg1)| frames after its placement (0: never, as Petari), then
