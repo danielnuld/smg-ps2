@@ -11,6 +11,18 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Per-class tables out of bss, 3 (perf/tables-arena-3, #709, 2026-11-19; the rule: the note of #630 below):
+  CoconutTreeLeaf's `lfs` (52 KB; `lf_alloc`, row_table), the FishGroups' `fgs` (29 KB; `fg_alloc`: a group a
+  FishGroupA..F row), the WaterPlants' `wplants` (44 KB; game_init: arg0 or 16 plants a row, `wplants_cap`, at most
+  MAX_WPLANTS) and sth_draw's vertex / index buffers (36 KB; `sth.dpos` / `.didx`, sth_init). memcheck: about 160 KB
+  of bss gone (_end 11907328, 20224 B before the region loses a step, the region 19456 KB: three steps over the
+  11:50 baseline with #630 and #657); route EggStarGalaxy/1 f 4281. Arena at boot: HeavenlyBeachGalaxy/1 (leaves,
+  fish, water plants) 3121 KB, StarDustGalaxy/3 below. Left in bss on purpose (always in use or not a class's):
+  mem.c `arena`, fx.c `pt` / `spr` / `em` (particles), se_seq.c `tr` / `ch`, se.c `upbuf`, render.c `i8_buf` / `quads` /
+  `dcache`, gravity.c `wch` / `g_pool` / `bound_c`, mc.c `buf`, gamedata.c `files`, me.c `tpool`, audio.c `rhy`,
+  game.c `tkq` (the talk's quads), walker_push_pass's `sen`, `hs_buf`. Still per-class and worth a look when memory
+  is short again: `ggs` (20 KB), `onis` (16), `mhills` (15), ocean_ring.inc `or_pos` / `or_uv` / `or_tri` (50),
+  snow_floor.inc `ws` / `xs` / `ys` (32), `notes` (12), and the many under 8 KB.
 - Banekiti (feat/701-banekiti, #701, 2026-11-18): MapObj/Banekiti.cpp in `engine/src/banekiti.inc`
   (update_banekiti): TeresaMario2DGalaxy's four spring bumpers on their rails. Wait (its Wait clip,
   SE_OJ_LV_BANEKITI_MOVE); Boo Mario touching one of its three sensors (80, 100 apart along its X) is reflected and
