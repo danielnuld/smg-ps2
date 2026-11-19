@@ -91,6 +91,7 @@ SKINNED_OBJ += ("BossBegomanHead", "ChildKameck", "BkDemo")  # BkDemo: BossKamec
 SKINNED_OBJ += ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp")  # TicoShop: NPCData TicoShopItem goods on StarPieceR / StarPieceL (Shake)
 SKINNED_OBJ += ("CircleShell", "CircleStrawberry")  # SmallStone.cpp: WindLoop / WindEnd, CircleShell's Kind BVA (game.c stone_pose)
 SKINNED_OBJ += ("IceMerameraKingShock", "IceMerameraKingBreak")  # IceMerameraKing: its ShockWave's Shock, its break model's Break
+SKINNED_OBJ += ("Banekiti",)  # Banekiti.cpp: Wait / Repel (game.c banekiti.inc)
 SKINNED_OBJ += ("DashRing",)  # DashRing.cpp: Loop / Start / End / Revival (game.c update_drings)
 SKINNED_OBJ += ("QuarterRollGravityRoomArrow",)  # its RollGravityA / B (Reverse) clips (game.c statics.inc st_qrarrow)
 SKINNED_OBJ += ("DeadLeaves", "DesertMovingLandSmall")  # DeadLeaves.cpp: Spin (game.c update_givers); DesertMovingLand's small one: Vibration (update_dlands)
