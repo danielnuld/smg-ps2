@@ -48878,8 +48878,8 @@ static float wsh_cylinder(const Row *r, V3 *dir) /* calcCylinderToCenter */
 }
 static void wall_shade_calc(void)
 {
-    static const Scene *at;
-    if (at != sc) { at = sc; wsh.row = -1; wsh.d = 1000.0f; }
+    static u32 at;
+    if (at != scene_seq) { at = scene_seq; wsh.row = -1; wsh.d = 1000.0f; }
     wsh.on = 0;
     if (mario->bee_wall) return;
     V3 dir = v3(0, 0, 0), x;
@@ -49043,13 +49043,13 @@ static void update_collision_areas(void)
  * having been off (mIsValid starts true: none for a light on from the start) */
 static void update_glaring_lights(void)
 {
-    static const Scene *at;
+    static u32 at;
     static short rows[8];
     static unsigned char valid[8];
     static int n;
-    if (at != sc) {
+    if (at != scene_seq) {
         int t = scene_type(sc, "GlaringLightAreaCylinder");
-        at = sc; n = 0;
+        at = scene_seq; n = 0;
         for (u32 i = 0; t >= 0 && i < sc->nobjs && n < 8; i++)
             if ((int)sc->objs[i].type == t && sc->objs[i].sw[SW_A] >= 0) { rows[n] = (short)i; valid[n++] = 1; }
     }
