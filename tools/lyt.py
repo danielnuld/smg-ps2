@@ -415,7 +415,11 @@ COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad
           "Race",  # RaceManagerLayout (GhostPlayer's count and go, lose)
           "HitPointMeter",  # MarioMeter
           "WipeRing",  # SceneWipeHolder's 円ワイプ (menu.c wr_*)
-          "BlueChipCounter", "YellowChipCounter", "CollectCounter")  # ChipHolder's ChipCounter and its CollectCounter
+          "BlueChipCounter", "YellowChipCounter", "CollectCounter",  # ChipHolder's ChipCounter and its CollectCounter
+          "PlayerLeft",  # PlayerMissLeft (its CenterPlayerLeft; the HUD's PlayerLeft is layout.py's)
+          "OneUp",  # OneUpBoard
+          "Sight",  # MarioLauncherLayout
+          "InformationWindow")  # StageResultInformer's DisplayInformationForResult (InformationMessage)
 # ponytail: no DPDPointerSub (the 2P pointer) nor DPDPointerNumber (the player number, shown only with two remotes
 # connected): one pad here
 # the dome's galaxy select's (AstroDomeGalaxySelector): dome.bin, loaded in the AstroDome stages only; GalaxyInfo with
