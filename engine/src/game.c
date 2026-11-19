@@ -41606,7 +41606,7 @@ static void leaf_joints(Inst *in) /* after the pose: the rest from the bind pose
             o->up0[l] = o->ay[l];
             o->pos[l] = vadd(T, vadd(vadd(vmul(X, w[12] * s), vmul(Y, w[13] * s)), vmul(Z, w[14] * s)));
             o->rest[l] = o->tip[l] = vadd(o->pos[l], vmul(o->az[l], 100.0f)); /* sPointInterval */
-            o->wstart[l] = 15 + rand() % 136;
+            o->wstart[l] = 0; /* mWindStartStep 0: every leaf's first wind starts at once (CoconutTreeLeaf.cpp:34) */
             lf_mat(k, l, s);
         }
     }
@@ -42580,19 +42580,25 @@ static void update_eballs(void)
             if (d < bd) { bd = d; best = b; }
             if (ebl[k].moving) { float m[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, p.x, p.y, p.z, 1}; fx_named("ElectricBall", "Electric", m, NULL, (const char *)&ebl[k] + b); }
         }
-        if (!ebl[k].moving) continue;
+        if (!ebl[k].moving) { /* attackSensor in Wait: sendMsgPush */
+            V3 q = eb_ball(in, k, best);
+            if (vlen(vsub(mc, q)) < 75.0f + HIT_BODY_R) mario_push_out(q, 75.0f);
+            continue;
+        }
         ebl[k].ang += (r->arg[2] != -1 ? (float)r->arg[2] : 0.01f) * 0.01f; /* control: setEulerY(mAngularSpeed: arg2, else 0.01, x 0.01) */
         in->lv[0] = se_level(SE_OJ_LV_BIRIKYU_MOVE, &in->m[12], in->lv[0]);
         V3 p = eb_ball(in, k, best);
         float m[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, p.x, p.y, p.z, 1};
         if (ebl[k].attack) { /* exeAttack */
             if (++ebl[k].attack > 90) { fx_named("ElectricBall", "ElectricHit", m, NULL, NULL); ebl[k].attack = 0; }
+            if (vlen(vsub(mc, p)) < 75.0f + HIT_BODY_R) mario_push_out(p, 75.0f); /* attackSensor in Attack: sendMsgPush */
             continue;
         }
-        if (!mario->hurt_timer && vlen(vsub(mc, p)) < 75.0f + HIT_BODY_R) {
-            mario_attack(ATK_ELECTRIC, p); /* sendMsgEnemyAttackElectric */
-            fx_named("ElectricBall", "ElectricHit", m, NULL, NULL);
-            ebl[k].attack = 1;
+        if (vlen(vsub(mc, p)) < 75.0f + HIT_BODY_R) {
+            if (!mario->hurt_timer && mario_attack(ATK_ELECTRIC, p)) { /* sendMsgEnemyAttackElectric: Attack */
+                fx_named("ElectricBall", "ElectricHit", m, NULL, NULL);
+                ebl[k].attack = 1;
+            } else mario_push_out(p, 75.0f); /* the attack not taken: sendMsgPush */
         }
     }
 }
@@ -43033,8 +43039,12 @@ static void update_flips(void)
         int on = mario->grounded && fabsf(vdot(d, mario->up)) < insts[i].reach * 0.5f && /* origin under the top */
                  vlen(vtangent(d, mario->up)) < 0.7f * insts[i].reach;
         if ((*st & FLIP_LOCK) && !on && mario->grounded) *st &= ~FLIP_LOCK;
-        if ((*st & FLIP_LOCK) || !on) { *st &= FLIP_BACK | FLIP_LOCK; continue; }
-        if (*st / FLIP_STEP < 2) { *st += FLIP_STEP; continue; }
+        /* checkPlayerOnTop: Mario rising in a jump after a frame or two on it (_D0 set) flips it too */
+        int jumped = !(*st & FLIP_LOCK) && !on && !mario->grounded && mario->vup > 0.0f && (*st & ~(FLIP_BACK | FLIP_LOCK | FLIP_DONE)) / FLIP_STEP >= 1;
+        if (!jumped) {
+            if ((*st & FLIP_LOCK) || !on) { *st &= FLIP_BACK | FLIP_LOCK; continue; }
+            if (*st / FLIP_STEP < 2) { *st += FLIP_STEP; continue; }
+        }
         *st = ((*st & FLIP_BACK) ^ FLIP_BACK) | FLIP_LOCK;
         if (in->anim && in->md && in->md->skin) obj_play(in, (*st & FLIP_BACK) ? "panela" : "panelb", 0, 0); /* BackLand / FrontLand */
         se_start(SE_OJ_FLIP_PANEL_CHANGE, &in->m[12]); /* exeBackLand / exeFrontLand */
