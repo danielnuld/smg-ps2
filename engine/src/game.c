@@ -1619,6 +1619,7 @@ static void update_syati(void), draw_syati_rings(void); static int sy_took(int r
 static void update_surf(void); static int sr_try(Player *m), sr_hold(Player *m), pcs_talk(int k, Inst *in), pcs_of(int row), pcs_branch(u32 v); static float sr_reach(void); static V3 sr_body(void); /* SurfRay, SurfRayTutorial, the surfing PenguinCoach (surf.inc) */
 static int trs_hold(Player *m); static void trs_update(void), trs_init(void), trs_draw(void); /* TrampleStar (trample_star.inc) */
 static void ljs_init(void), ljs_update(void); /* LavaJamboSunPlanet (lava_jambo_sun.inc) */
+static void lpt_init(void), lpt_update(void); /* LavaProminenceTriple (lava_prominence_triple.inc) */
 static int glr_hold(Player *m); static void glr_update(void), glr_init(void); /* GravityLightRoad (gravity_light_road.inc) */
 static int wrd_hold(Player *m); static void wrd_update(void), draw_water_road(void), wrd_init(void), wrd_cast_hook(int type); /* WaterRoad (water_road.inc) */
 static void or_init(void), or_update(void), draw_oceanrings(void); static int or_in_water(V3 p, V3 up, float *depth), or_row(V3 p); /* OceanRing (ocean_ring.inc) */
@@ -3370,6 +3371,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     or_init();
     wrd_init();
     glr_init();
+    lpt_init();
     ljs_init();
     trs_init();
     bgb_init();
@@ -56445,6 +56447,7 @@ int game_test_bk(int frame)
 #include "ocean_ring.inc" /* OceanRing: or_* */
 #include "water_road.inc" /* WaterRoad: wrd_* */
 #include "gravity_light_road.inc" /* GravityLightRoad: glr_* */
+#include "lava_prominence_triple.inc" /* LavaProminenceTriple / LavaProminenceEnvironment: lpt_* */
 #include "lava_jambo_sun.inc" /* LavaJamboSunPlanet: ljs_* */
 #include "trample_star.inc" /* TrampleStar: trs_* */
 #include "syati.inc" /* Syati / TalkSyati, PrizeRing: sy_*, prg_* */
@@ -58084,6 +58087,7 @@ void game_update(void)
     update_trapezes();
     wrd_update();
     glr_update();
+    lpt_update();
     ljs_update();
     trs_update();
     swr_update();
