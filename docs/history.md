@@ -77,6 +77,49 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   WarpCube, BindEndCube, OnimasuCube. Still unnamed of AreaObjContainer's table: ViewGroupCtrlCube (624 placed:
   ViewGroupCtrl's far clip level 0 and forced LOD for the actors of its ViewGroupId, which the packs' rows do not
   carry) and the guidance cubes (Wii controls).
+- LavaJamboSunPlanet (feat/704-lava-jambo-sun, #704, 2026-11-18): MapObj/LavaJamboSunPlanet.cpp in
+  `engine/src/lava_jambo_sun.inc` (ljs_*): HellShellZone's sun on its rail (HellProminenceGalaxy). Wait (SW_A on:
+  Move), Pause (SW_B on: Move), Move (the current rail point's arg0 x 0.1 a frame, SE_AT_LV_JUMBO_SUN_MOVE; the
+  point's arg1 1: Pause; the goal: Wait). Test: plain `XF=-DLJS_TEST`, HellProminenceGalaxy/1 (its SW_A on at frame 1000): in PCSX2 it leaves Wait and moves down its rail at its points' 0.6 .. 0.8 a frame (the Pause at a point's arg1 and its sound's log line were not seen in the run). ponytail: no bloom model, no LodCtrl. Cost:
+  about 0.9 KB of the ELF (nm ljs_*, one 56 B state); memcheck on a plain build of main with the six classes of this batch: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB. **Release: sound.py --pack HellProminenceGalaxy** (SE_AT_LV_JUMBO_SUN_MOVE was cut).
+- Sound packs: the classes made by plain create functions (fix/sfxcut-create-functions, #698, 2026-11-18):
+  tools/sfxcut.py create_classes took a placement's class from the template argument of its create function; 44 of
+  the 47 placements made by a plain function (KoopaFunction::createKoopaVs1 / 2 / 3, MR::createDinoPackunVs1 / Vs2,
+  createBossKameck1 / 2, createTripodBoss / createTripod2Boss, createExterminationPowerStar / KeySwitch, the
+  SuperSpinDrivers, the coins, TamakoroWithTutorial, the Kameck beams, BigBubbleGenerator...) got no class, so
+  sound.py's scenario_keep dropped every SE only their class names where the placed name starts no file's name:
+  the whole Koopa fight in KoopaBattleVs1 / Vs2 / Vs3Galaxy (31 SE ids answered `se?` in a KP_TEST run of Vs3:
+  SE_BM_KOOPA_*, SE_BV_KOOPA_*, SE_OJ_KOOPA_FIRE_EXPLODE...), DinoPackunVs2's battle files, BossKameck2, Tripod2Boss.
+  code_index now reads each plain function's body (the class of its `return new X`) and create_classes maps the
+  placement to it (selftest: KoopaVs3 -> Koopa, DinoPackunVs2 -> DinoPackun, Tripod2Boss -> TripodBoss, BossKameck2
+  -> BossKameck). tools/sndgaps.py: SE_OJ_TSPIDER_COCOON_BOUND is never played (TombSpiderActionCocoon plays it for
+  a sender that is no ATYPE_SPRING_ATTACKER; SlingShooter's attack sensor, that type, is the only sender);
+  docs/sound-gaps.md regenerated (727 placement names with sound calls, 1482 SE names, 99 not in the port; none of a
+  class under src/Game/Boss; new rows outside the bosses: Coin / PurpleCoin). With the rule every boss scenario of
+  out/packs keeps all the SE names of its boss's files. PCSX2: KoopaBattleVs3Galaxy/1 with its sound.bin packed by
+  this rule into an overlay (XF="-DKP_TEST -DSE_LOG -DPACKS_OVERLAY=wt-seboss"): no `se?` line left in the fight up
+  to Lv3 (31 ids before), `se+ 00040174` / `se+ 000501fe` for the stairs' meteors. Its price: 639 SEs for 493 in the
+  same SPU budget, caps x 0.40 (4379 Hz) for x 0.49. **Release: sound.py --pack** every galaxy (the full repack).
+- TrampleStar (feat/702-trample-star, #702, 2026-11-18): MapObj/TrampleStar.cpp in `engine/src/trample_star.inc`
+  (trs_*): the rubber ball of PhantomNestZone (PhantomGalaxy 3; PoyoPoyoPlanetZone's two are in no galaxy). The
+  shared mesh as Petari makes it (the cube divided three times: 486 vertices, 768 faces, the LOD's 192, the
+  overlaps), the bind on its body sensor (the rate his speed in 30 .. 50, the nearest vertex, not while he moves out
+  of it), BindingCapture (10 / 15 frames: the rate on the vertices within 400, x 0.85), BindingShoot (the springs 0.1
+  / 0.2, the jump at the capture vertex's zero crossing, x 1.5 with A, its sounds, Jump2; step 120), his matrix at
+  the capture vertex, the LOD past 5000. Everything in MEM_OBJECTS (about 24 KB of the scene's arena). Its texture:
+  `tools/slice.py` TEX_ONLY TrampleStar. Test: plain `XF=-DTRAMPLE_TEST`, PhantomGalaxy/3: in PCSX2 (overlay pack) the bind, the capture, the shot (he leaves at 26 up), again on each landing, the ball drawn with its texture; its three sounds answer `se?` until the sound pack is cut again. ponytail: drawn unlit
+  (texture x its material colour; no actor light, no Mario shadow stage); the divide's edge lookup is a list, not
+  Petari's check flag table. Cost: about 6.0 KB of the ELF (nm trs_*); its mesh and state, about 24 KB, in MEM_OBJECTS only where one is placed; memcheck on a plain build of main with the six classes of this batch: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB. **Release: slice_all.py PhantomGalaxy + sound.py --pack PhantomGalaxy**
+  (SE_OJ_TRAMPOLINE_LAND_L / BOUND_S / BOUND_L answer `se?`).
+- GravityLightRoad (feat/651-gravity-light-road, #651, 2026-11-18): MapObj/GravityLightRoad.cpp in
+  `engine/src/gravity_light_road.inc` (glr_*): KoopaBattleVs3Galaxy's five beams. Its body sensor (250 at the foot of
+  Mario's centre on the beam's line, 2500 x scale y long) binds him inside its cylinder (390 round the axis): Fall,
+  Draw (SE_PM_GRAV_LIGHT_DRAWN_ST, + 2 a frame along its up to 20, 2 a frame towards the axis, his up turned to -up by
+  0.2), until its SW_A (the SwitchCube at its top) or 1800 frames: endBindAndPlayerForceJump(up x 2), Disappear, kill
+  after 59. State in MEM_OBJECTS. Test: plain `XF=-DGLR_TEST`, KoopaBattleVs3Galaxy/1: bound at once, drawn 20 a
+  frame onto the axis, its switch at the top, Disappear, dead (seen in PCSX2; no log line seen for its SE). ponytail:
+  the pack carries no joint box (the BDL's read offline) and one BRK track a model: Wait.brk / Disappear.brk are not
+  played; the matrix blend is of his up vector. Cost: about 2.8 KB of the ELF (nm glr_*), its state in MEM_OBJECTS; memcheck on a plain build of main with this and the five classes after it: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB. No repack.
 - HipDropMoveObj / HipDropDemoMoveObj (feat/621-hipdrop-move, #621, 2026-11-18): LavaObstacleRockShell,
   LavaObstacleRockHomeA and ForestObstacleWoodA (one placed each; still models before) as gap classes (GAP_HIPMOVE /
   GAP_HIPDEMO, update_hipmove): Wait (no clip: Move's first frame held) until Mario's hip drop lands on its collision
