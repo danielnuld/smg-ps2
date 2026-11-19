@@ -17,6 +17,33 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   A button; Iab's type moved above SysInfo). SubMeterLayout::control places FlyMeter / AirMeter from getPlayerPos:
   game.c gave menu_submeter_update Mario's centre (MeterLayout's point), so it sat higher. Test: `miss` (the game
   over's save, its done window). Three more IconAButton instances a scene (arena).
+- Per-class tables out of bss, 3 (perf/tables-arena-3, #709, 2026-11-19; the rule: the note of #630 below):
+  CoconutTreeLeaf's `lfs` (52 KB; `lf_alloc`, row_table), the FishGroups' `fgs` (29 KB; `fg_alloc`: a group a
+  FishGroupA..F row), the WaterPlants' `wplants` (44 KB; game_init: arg0 or 16 plants a row, `wplants_cap`, at most
+  MAX_WPLANTS) and sth_draw's vertex / index buffers (36 KB; `sth.dpos` / `.didx`, sth_init). memcheck: about 160 KB
+  of bss gone (_end 11907328, 20224 B before the region loses a step, the region 19456 KB: three steps over the
+  11:50 baseline with #630 and #657); route EggStarGalaxy/1 f 4281. Arena at boot: HeavenlyBeachGalaxy/1 (leaves,
+  fish, water plants) 3121 KB, StarDustGalaxy/3 below. Left in bss on purpose (always in use or not a class's):
+  mem.c `arena`, fx.c `pt` / `spr` / `em` (particles), se_seq.c `tr` / `ch`, se.c `upbuf`, render.c `i8_buf` / `quads` /
+  `dcache`, gravity.c `wch` / `g_pool` / `bound_c`, mc.c `buf`, gamedata.c `files`, me.c `tpool`, audio.c `rhy`,
+  game.c `tkq` (the talk's quads), walker_push_pass's `sen`, `hs_buf`. Still per-class and worth a look when memory
+  is short again: `ggs` (20 KB), `onis` (16), `mhills` (15), ocean_ring.inc `or_pos` / `or_uv` / `or_tri` (50),
+  snow_floor.inc `ws` / `xs` / `ys` (32), `notes` (12), and the many under 8 KB.
+- Banekiti (feat/701-banekiti, #701, 2026-11-18): MapObj/Banekiti.cpp in `engine/src/banekiti.inc`
+  (update_banekiti): TeresaMario2DGalaxy's four spring bumpers on their rails. Wait (its Wait clip,
+  SE_OJ_LV_BANEKITI_MOVE); Boo Mario touching one of its three sensors (80, 100 apart along its X) is reflected and
+  it goes to Repel (a weak rumble and shake, Repel, SE_OJ_BANEKITI_REPEL), Wait at the clip's end. Its nerve in
+  row_turn / row_step. `tools/slice.py` SKINNED_OBJ Banekiti (its clips). Test: plain `XF=-DBANEKITI_TEST`,
+  TeresaMario2DGalaxy/1: its Wait path runs with its clips in the overlay pack, but **the Repel was not seen in PCSX2** (the test's Mario falls out of that scenario's start and its placement by the bumper did not take). ponytail: no DPDSwoon (the 2P pointer), no star piece hit reaction (AnimScaleController).
+  Cost: about 1.0 KB of the ELF (nm update_banekiti), no state of its own; memcheck on a plain build of main with the six classes of this batch: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB; route test with them: star got. **Release: slice_all.py TeresaMario2DGalaxy + sound.py --pack TeresaMario2DGalaxy.**
+- LavaProminenceTriple / LavaProminenceEnvironment (feat/705-lava-prominence-triple, #705, 2026-11-18):
+  MapObj/LavaProminenceTriple.cpp in `engine/src/lava_prominence_triple.inc` (lpt_*): HellPoolAZone's three wheels
+  of fire and HellProminenceGalaxy's seven Environment ones. The appear time (arg1), the turn arg0 / 100 degrees a
+  frame about its Y, SE_OJ_LV_PROMINENCE_T_MOVE, the Drop effects on its Head joints (off while out of the view),
+  the Triple's attack sensor (80 x scale y on the ring of 1900 at Mario's angle, clamped into a head's arc:
+  sNoSensorTable; sendMsgEnemyAttackFireStrong). State in MEM_OBJECTS. `tools/jpa.py` NAMED (the Drop effects).
+  Test: plain `XF=-DLPT_TEST`, HellProminenceGalaxy/3: in PCSX2 the three Triples appear on their switch, turn 0.4 degrees a frame, their Drops go on and off with the view, their sensor follows Mario's angle; **the fire hit and the look of the effects were not seen** (Mario was not on a sensor in the run); its level sound answers `se?` (a sound pack to cut again). ponytail: the Head joints' places read offline from the BDLs; no bloom model. Cost:
+  about 2.2 KB of the ELF (nm lpt_*), its state in MEM_OBJECTS; memcheck on a plain build of main with the six classes of this batch: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB; route test with them: star got. **Release: slice_all.py resident.bin + resident_luigi.bin** (the effects).
 - UI and flow audit, first pass (feat/ui-audit-miss-left, #640 #641 #658 #659, 2026-11-18): Petari's Screen/ classes
   against menu.c / game.c, the table in `docs/ui-audit.md` (ok / fixed / issue / Wii-only / not re-read yet). Fixed:
   PlayerMissLeft (menu.c pms_*: after a miss's wipe the PlayerLeft layout's CenterPlayerLeft over the black screen,
