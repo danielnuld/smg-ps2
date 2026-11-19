@@ -11,6 +11,13 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- UnizoLauncher after Petari (feat/768-unizo-launcher, #768, 2026-11-19): the class had no code and its row was not
+  packed (1 placed: VolcanoPlanetZone, IceVolcanoGalaxy / SkullSharkGalaxy). `update_unizo_launchers`: Wait until its
+  step passes 300, then the first dead one of its four UnizoLand (hosted WALK_UNIZO walkers, `host` -3, dead at
+  first; `walker_cls` UnizoLand) is put at its place (z + its index) and appears; a hosted Unizo's death leaves the
+  row alive. tools/slice.py: LOGIC UnizoLauncher, EXTRA UnizoLand / UnizoLandBreak (**repack** IceVolcanoGalaxy,
+  SkullSharkGalaxy). Test: `walker` with `XF=-DUZL_TEST` ("unizo launcher row", "uzl test" lines). Left out: its
+  Body sensor (100, it attacks nothing).
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /
