@@ -1644,6 +1644,7 @@ int main(void)
                    game_misses());
 #endif
 #ifdef ITEM_TEST
+        pad_force = frame % 150 < 5 ? PAD_CROSS : 0; /* X: the information windows of the first 1-up / life-up mushroom */
         if (frame >= 120 && frame % 60 == 0) { /* every second Mario put on the next item, until none is left */
             static int done;
             int k = done ? 0 : game_test_item();
