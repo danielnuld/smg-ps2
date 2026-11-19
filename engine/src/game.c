@@ -46352,6 +46352,9 @@ static void put_test(void)
         { static const float xyz[3] = {PUT_XYZ}; mario->pos = v3(xyz[0], xyz[1] + PUT_UP, xyz[2]); row = 0; }
 #else
         row = game_test_put_at(PUT_STR(PUT_TEST), PUT_UP);
+#ifdef PUT_TEST2 /* -DPUT_TEST2=<class>: that class when the scene has none of the first (one ELF, two galaxies) */
+        if (row < 0) row = game_test_put_at(PUT_STR(PUT_TEST2), PUT_UP);
+#endif
 #endif
 #ifndef PUT_NOCAM
         if (row >= 0) { camera_start_pos_end(); camera_set_override(1, vadd(mario->pos, v3(0, 1000, 3000)), vadd(mario->pos, v3(0, 1000, 0)), v3(0, 1, 0), 45.0f); }
@@ -46368,6 +46371,7 @@ static void put_test(void)
         for (int i = 0; i < ninsts; i++) if (insts[i].row == row) { in = &insts[i]; break; }
         printf("put test f %d: row %d at %d %d %d, mario %d %d %d" "\n", t, row, in ? (int)in->m[12] : 0, in ? (int)in->m[13] : 0,
                in ? (int)in->m[14] : 0, (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z);
+        printf("put test cube code: heavy %d no tri jump %d forbid jump %d item dash %d" "\n", m_heavy, m_no_tri_jump, m_forbid_jump, m_item_dash);
     }
 }
 #endif
