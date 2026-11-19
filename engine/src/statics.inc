@@ -244,7 +244,7 @@ static void st_flag_test(void)
 }
 #endif
 /* ---- MapObj classes by placed type: their per-row state (StSt, kept across rebinds) ---- */
-enum { ST_NONE = 1, ST_MARBLE, ST_HDSTEP, ST_TURTLE, ST_SWFLOAT, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_WTOWER, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE, ST_FLOATERU, ST_QRARROW }; enum { FU_WAIT = 1, FU_MOVE, FU_DONE }; /* st_floater nerves */
+enum { ST_NONE = 1, ST_MARBLE, ST_HDSTEP, ST_TURTLE, ST_SWFLOAT, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_WTOWER, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE, ST_FLOATERU, ST_QRARROW, ST_SCPRESS }; enum { FU_WAIT = 1, FU_MOVE, FU_DONE }; /* st_floater nerves */
 /* Placed classes whose Petari behaviour is the model drawn with its animations and collision (the engine's generic
  * instance does that): LavaGalaxyParts.cpp (LavaShellTowerStep, LavaStepA / B / C: startBtk / Brk / Bpk / Btp of its
  * name, collision, clipping; ponytail: the steps' DLMakerProjmapEffectMtxSetter lava glow is baked at slice time and
@@ -283,6 +283,7 @@ static int st_kind_name(const char *n)
     if (!strcmp(n, "ItemAppearStoneSpinDriver")) return ST_IASTONE; /* ItemAppearStone */
     if (!strcmp(n, "OceanFloaterTypeU")) return ST_FLOATERU; /* OceanFloaterLandParts */
     if (!strcmp(n, "QuarterRollGravityRoomArrow")) return ST_QRARROW;
+    if (!strcmp(n, "SandCapsulePressGround")) return ST_SCPRESS;
     if (!strcmp(n, "SurprisedGalaxy") || (!strncmp(n, "Surp", 4) && strlen(n) > 10 && !strcmp(n + strlen(n) - 6, "Galaxy"))) return ST_SURP;
     for (u32 k = 0; k < sizeof st_still / sizeof *st_still; k++) if (!strcmp(n, st_still[k])) return ST_STILL;
     return ST_NONE;
@@ -906,6 +907,77 @@ static void st_qrarrow(Inst *in, StSt *g)
     if (g->n && g->st == 0) { obj_play(in, clip[g->n], 0, 0); printf("gravity room arrow %d: %s%c", in->row, clip[g->n], 10); }
     else if (g->n == 2 && in->anim && in->anim->done) g->n = 0; /* isBckStopped */
 }
+/* SandCapsulePressGround.cpp after Petari: a press floor between its place (_C4) and 3600 up its Y (_D0). WaitBottom /
+ * WaitTop: its SW_B on -> MoveStartUp / MoveStartDown (first step: SW_A on, shakeCameraInfinity 0.15 / 1.5, the
+ * FallSand effect at its place, upright to gravity; sStepForMoveStart 120 frames of a weak rumble and
+ * SE_OJ_LV_DESERT_LAND_SIGN, then the shake stopped) -> MoveUp / MoveDown (SE_OJ_DESERT_LAND_MOVE_ST, a strong rumble,
+ * 3 a frame along its up, SE_OJ_LV_DESERT_LAND_MOVE; Mario pressed (isPlayerOnPress): Stop, its velocity kept
+ * sStepToStop 30 frames; at sStepForMove 1200 put on its end, FallSand deleted, SE_OJ_DESERT_LAND_MOVE_ED) ->
+ * MoveUpEnd / MoveDownEnd (SW_A off, sStepForMoveEnd 180) -> WaitTop / WaitBottom. Its demo's action nerve
+ * (st_cast_hook): DisappearDemo (overlayWithPreviousScreen 5, SW_A off, put halfway, the MoveAway clip,
+ * shakeCameraNormal, the move SEs, a weak rumble; killed at the clip's end). It carries Mario.
+ * n: 0 WaitBottom, 1 WaitTop, 2 MoveStartUp, 3 MoveStartDown, 4 MoveUp, 5 MoveDown, 6 MoveUpEnd, 7 MoveDownEnd,
+ * 8 DisappearDemo, 9 Stop; off its place along its up, k its velocity */
+enum { SCP_WAITBOTTOM, SCP_WAITTOP, SCP_STARTUP, SCP_STARTDOWN, SCP_UP, SCP_DOWN, SCP_UPEND, SCP_DOWNEND, SCP_DEMO, SCP_STOP };
+static int st_scpress(Inst *in, StSt *g, int i)
+{
+    const Row *r = &sc->objs[in->row];
+    float one[16], old[16];
+    V3 x, z;
+    row_axes(r, &x, &z);
+    V3 up = vnorm(vcross(z, x));
+    memcpy(old, in->m, 64);
+    int st = g->st, n = g->n, next = -1;
+    if (n == SCP_WAITBOTTOM || n == SCP_WAITTOP) { /* exeWait */
+        if (r->sw[SW_B] >= 0 && sw_on(r, SW_B)) next = n == SCP_WAITBOTTOM ? SCP_STARTUP : SCP_STARTDOWN;
+    } else if (n == SCP_STARTUP || n == SCP_STARTDOWN) { /* exeMoveStart */
+        if (st == 0) { if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1); camera_shake_infinity(g, 0.15f, 1.5f); }
+        if (st < 120) { pad_rumble(RUMBLE_WEAK); g->lv[0] = se_level(SE_OJ_LV_DESERT_LAND_SIGN, &in->m[12], g->lv[0]); }
+        else if (st == 120) { camera_shake_stop(g); next = n == SCP_STARTUP ? SCP_UP : SCP_DOWN; }
+    } else if (n == SCP_UP || n == SCP_DOWN) { /* exeMove */
+        if (st == 0) { se_start(SE_OJ_DESERT_LAND_MOVE_ST, &in->m[12]); pad_rumble(RUMBLE_STRONG); g->k = n == SCP_UP ? 3.0f : -3.0f; } /* calcMoveVelocity */
+        if (mario->press) next = SCP_STOP; /* tryStop */
+        else {
+            g->lv[1] = se_level(SE_OJ_LV_DESERT_LAND_MOVE, &in->m[12], g->lv[1]);
+            if (st == 1200) {
+                g->k = 0.0f; se_start(SE_OJ_DESERT_LAND_MOVE_ED, &in->m[12]);
+                g->off = vmul(up, n == SCP_UP ? 3600.0f : 0.0f);
+                next = n == SCP_UP ? SCP_UPEND : SCP_DOWNEND;
+            }
+        }
+    } else if (n == SCP_UPEND || n == SCP_DOWNEND) { /* exeMoveEnd */
+        if (st == 0 && r->sw[SW_A] >= 0) sw_set(r, SW_A, 0);
+        if (st == 180) next = n == SCP_UPEND ? SCP_WAITTOP : SCP_WAITBOTTOM;
+    } else if (n == SCP_DEMO) { /* exeDisappearDemo */
+        if (st == 0) {
+            render_cover(5);
+            if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 0);
+            g->off = vmul(up, 1800.0f); g->k = 0.0f;
+            obj_play(in, "moveaway", 0, 0);
+            camera_shake_stop(g); camera_shake(SHAKE_NORMAL);
+            se_start(SE_OJ_DESERT_LAND_MOVE_ST, &in->m[12]);
+        }
+        pad_rumble(RUMBLE_WEAK);
+        g->lv[1] = se_level(SE_OJ_LV_DESERT_LAND_MOVE, &in->m[12], g->lv[1]);
+        if (st > 0 && (!in->anim || in->anim->done)) {
+            se_start(SE_OJ_DESERT_LAND_MOVE_ED, &in->m[12]);
+            printf("sand capsule press ground %d: gone%c", in->row, 10);
+            row_kill(in->row); game_rebind();
+            return 1;
+        }
+    } else if (st == 30) g->k = 0.0f; /* exeStop */
+    g->off = vadd(g->off, vmul(up, g->k)); /* mPosition += mVelocity */
+    if (n >= SCP_STARTUP && n <= SCP_DOWN && next != SCP_UPEND && next != SCP_DOWNEND && next != SCP_STOP) { /* FallSand at _DC (makeMtxUpNoSupport, its place) */
+        V3 p = vadd(row_pos(r), g->off), gu = up_at(p, up);
+        basis_matrix(one, p, gu, vlen(vcross(gu, v3(0, 0, 1))) > 0.01f ? vcross(vcross(gu, v3(0, 0, 1)), gu) : v3(1, 0, 0), 0);
+        fx_named("SandCapsulePressGround", "FallSand", one, NULL, g);
+    }
+    mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
+    in->m[12] += g->off.x; in->m[13] += g->off.y; in->m[14] += g->off.z;
+    if (mario_ground == i) carry(old, in);
+    if (next >= 0) { g->n = next; g->st = -1; printf("sand capsule press ground %d: nerve %d%c", in->row, next, 10); }
+    return 0;
+}
 /* TimerMoveWall.cpp after Petari (TrialBubbleTimerMoveWallA): Wait; its SW_B coming on (listenStageSwitchOnB) ->
  * MoveFront: arg0 frames (300) at arg1 / arg0 (1000 / 300) a frame along its front (TRIBBL_T_MVWALL_ST, LV_..MV) ->
  * MoveBack the same way back -> TRIBBL_T_MVWALL_ED, Wait. n: 0 Wait, 1 front, 2 back; off its place's offset */
@@ -1147,6 +1219,11 @@ static int st_cast_hook(int row, int type, int part) /* dx_cast_hook: the demo a
     if (type == 3 && st_kind(sc->objs[row].type) == ST_WTOWER) { /* registerDemoActionNerve: MoveStart */
         StSt *g = st_get(row);
         if (g->n == 0) { g->n = 1; g->t2 = 0; printf("watch tower %d: MoveStart (demo)%c", row, 10); }
+        return 1;
+    }
+    if (type == 3 && st_kind(sc->objs[row].type) == ST_SCPRESS) { /* tryRegisterDemoActionNerve: DisappearDemo */
+        StSt *g = st_get(row);
+        if (g->n != SCP_DEMO) { g->n = SCP_DEMO; g->st = 0; }
         return 1;
     }
     if (type == 3 && st_kind(sc->objs[row].type) == ST_CHAIN) { st_get(row)->n = 1; st_get(row)->st = 0; printf("large chain %d: break%c", row, 10); return 1; }
@@ -1413,6 +1490,7 @@ static void st_objs_update(void)
         case ST_IASTONE: if (st_iastone(in, g)) return; break;
         case ST_FLOATERU: st_floater_u(in, g); break;
         case ST_QRARROW: st_qrarrow(in, g); break;
+        case ST_SCPRESS: if (st_scpress(in, g, i)) return; break;
         case ST_TEXSW: { /* SimpleMapObj::init: TexChange (BTK) at arg1 (setupInitInfoTextureChangeArg1; -1 none),
                           * SimpleTextureSwitchChangeObj::changeTexture on its SW_A's rise: frame 1 for good (slice.py
                           * BRK_STEPS: "<class>~<frame>") */

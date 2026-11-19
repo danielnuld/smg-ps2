@@ -3201,6 +3201,7 @@ typedef struct {
     int scale_goal, scale_step;         /* ScaleController: 1 ToBig, 0 ToSmall, -1 idle */
     int selectable, pointed, rotate_on, front_step, front_n;
     int model, icon;                    /* FI_*: what it shows; its fellow (icon 1..5) */
+    u32 lv;                             /* SE_SY_LV_FILE_SEL_MORPHBLUR's handle */
     Nrv n;
     LytInst *num;                       /* FileSelectNumber */
     int num_on, num_end;
@@ -3434,11 +3435,13 @@ static void fs_item_update(FsItem *it, int slot)
 {
     switch (nrv_begin(&it->n)) {
     case FI_FORMAT: /* format: the fellow vanishes at 40, the planet back */
+        if (it->n.step < 40) it->lv = se_level(SE_SY_LV_FILE_SEL_MORPHBLUR, NULL, it->lv); /* isLessStep(40) */
         if (it->n.step == 40) { se_start(SE_SY_FILE_SEL_MORPH_DUMMY, NULL); it->model = FI_NEW; }
         if (it->n.step >= 40) { it->rot_y = 0; it->speed = 0; }
         if (it->n.step == 60) nrv_set(&it->n, FI_NEW);
         break;
     case FI_CHANGE: /* change: the fellow out of the planet at 40 */
+        if (it->n.step < 40) it->lv = se_level(SE_SY_LV_FILE_SEL_MORPHBLUR, NULL, it->lv);
         if (it->n.step == 40) { se_start(SE_SY_FILE_SEL_MORPH_MARIO, NULL); it->model = FI_EXIST; }
         if (it->n.step >= 40) { it->rot_y = 0; it->speed = 0; }
         if (it->n.step == 150) nrv_set(&it->n, FI_EXIST);
