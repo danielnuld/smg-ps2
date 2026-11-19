@@ -160,7 +160,7 @@ int mk_shot(V3 p); /* IceMerameraKing (ice_meraking.inc) */
 static void ds_update(Kuribo *k), ds_draw(Kuribo *k, const Model *md, Anim *a); /* DharmaSambo (dharma.inc) */
 static void st_mirror_pass(V3 ce, V3 cw, V3 cu);
 static int st_mapboard; /* AstroMapBoard shown: 1 its picture to capture (game_draw), 2 done */
-static int st_flag_class(const char *n), st_cast_hook(int row, int type, int part), st_rail_obj(const char *n), st_star_out(int row); static void st_update(void), st_draw(void), st_init(const Scene *s); static int st_shot(V3 p), st_jet_hit(V3 p); static void st_column_strike(V3 c, float r); /* statics.inc */
+static void st_sstep_blast(V3 at, float rad); static int st_flag_class(const char *n), st_cast_hook(int row, int type, int part), st_rail_obj(const char *n), st_star_out(int row); static void st_update(void), st_draw(void), st_init(const Scene *s); static int st_shot(V3 p), st_jet_hit(V3 p); static void st_column_strike(V3 c, float r); /* statics.inc */
 static void mm_update(Kuribo *k), mm_kill(Kuribo *k), mm_btp(Kuribo *k, const Model *md); /* Meramera (meramera.inc) */
 static void poihana_update(Kuribo *k); /* Poihana (poihana.inc) */
 static void stink_update(Kuribo *k); static int sb_star(Kuribo *k), sb_body_push(const Kuribo *k); /* StinkBugSmall (stink.inc) */
@@ -37916,6 +37916,7 @@ static int woodbox_reached(const Inst *in, V3 at, float rad) /* its body sensor 
  * only explosions reach map objects here, the walkers' attacks only Mario, WoodBox.cpp:202) */
 static int explosion_breaks(V3 at, float rad)
 {
+    st_sstep_blast(at, rad); /* SpaceShipStep: isMsgExplosionAttack (statics.inc) */
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
         if (row_dead[in->row]) continue;

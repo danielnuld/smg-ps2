@@ -284,6 +284,7 @@ static int st_kind_name(const char *n)
     if (!strcmp(n, "OceanFloaterTypeU")) return ST_FLOATERU; /* OceanFloaterLandParts */
     if (!strcmp(n, "QuarterRollGravityRoomArrow")) return ST_QRARROW;
     if (!strcmp(n, "SandCapsulePressGround")) return ST_SCPRESS;
+    if (!strcmp(n, "SpaceShipStep")) return 110; /* ST_SSTEP */
     if (!strcmp(n, "SurprisedGalaxy") || (!strncmp(n, "Surp", 4) && strlen(n) > 10 && !strcmp(n + strlen(n) - 6, "Galaxy"))) return ST_SURP;
     for (u32 k = 0; k < sizeof st_still / sizeof *st_still; k++) if (!strcmp(n, st_still[k])) return ST_STILL;
     return ST_NONE;
@@ -299,6 +300,7 @@ typedef struct { int row, n, st, on, t2, t3; const unsigned char *kcl; u32 lv[3]
 static StSt st_st[128];
 static void st_column(Inst *in, StSt *g); /* SubmarineVolcanoBigColumn (below) */
 static void st_flex(Inst *in, StSt *g, int i); /* FlexibleSphere (below) */
+static void st_sstep(Inst *in, StSt *g, int i); static int st_sstep_rail(int row); /* SpaceShipStep (below) */
 static int nst_st;
 static const Scene *st_st_sc;
 static StSt *st_get(int row)
@@ -1020,6 +1022,7 @@ static int st_rail_obj(const char *n)
 static int st_rail_go(const Inst *in) /* update_railers: may its rail mover run (RailDemoMoveObj: its demo's camera) */
 {
     const char *n = sc->types + 32 * sc->objs[in->row].type;
+    if (!strcmp(n, "SpaceShipStep")) return st_sstep_rail(in->row); /* SpaceShipStep::exeMove: startAllMapPartsFunctions */
     if (st_rail_obj(n) != 2) return 1;
     StSt *g = st_get(in->row);
     if (g->n == 0) { /* tryStartMove: DemoCtrlBase::tryStart */
@@ -1491,6 +1494,7 @@ static void st_objs_update(void)
         case ST_FLOATERU: st_floater_u(in, g); break;
         case ST_QRARROW: st_qrarrow(in, g); break;
         case ST_SCPRESS: if (st_scpress(in, g, i)) return; break;
+        case 110: st_sstep(in, g, i); break; /* ST_SSTEP */
         case ST_TEXSW: { /* SimpleMapObj::init: TexChange (BTK) at arg1 (setupInitInfoTextureChangeArg1; -1 none),
                           * SimpleTextureSwitchChangeObj::changeTexture on its SW_A's rise: frame 1 for good (slice.py
                           * BRK_STEPS: "<class>~<frame>") */
@@ -1738,6 +1742,64 @@ static void st_columns_draw(void)
         if (st_kind(sc->objs[in->row].type) != ST_BIGCOL || st_get(in->row)->n != 1) continue;
         Anim *a = obj_anim(16 * (int)sc->nobjs + in->row, md, "SubmarineVolcanoBigColumnBreak");
         if (a) draw_skin(md, in->m, a); /* (its base matrix, the column's) */
+    }
+}
+
+/* SpaceShipStep.cpp after Petari (6 placed: VsHugeBattleShipLv2Zone; it was a still model on a rail that ran from the
+ * start). Wait (its Wait clip) until Mario stands on it: MoveSign (OnMario, SE_OJ_SPACE_SHIP_STEP_ST) until that clip
+ * stops: Move (Wait again, startAllMapPartsFunctions: its rail mover from here on, SE_OJ_LV_SPACE_SHIP_STEP_MV). An
+ * explosion on it: Break (its Break clip, SE_OJ_SPACE_SHIP_STEP_BREAK and ..._ED; the mover goes on).
+ * updateResetToInitPosCheck: once it has been in view (700), out of Wait and out of the view for 240 frames:
+ * resetRailMoverToInitPos; back in view there with Mario within 3000 the Appear effect and SE_OJ_SPACE_SHIP_STEP_RESET;
+ * Wait with Mario within 1000, else Move. StSt: n 0 Wait / 1 MoveSign / 2 Move / 3 Break, st its step, on _D4 (seen),
+ * t2 _D0, t3 its map parts started. Its clips need the class skinned (slice.py SKINNED_OBJ).
+ * ponytail: an explosion reaches it within its model's radius (it has no sensor of its own here) */
+enum { ST_SSTEP = 110 }; /* (its own line: the list above is edited by every new class) */
+static int st_sstep_rail(int row) { return st_get(row)->t3; } /* update_railers: its mover runs once Move started it */
+static void st_sstep(Inst *in, StSt *g, int i)
+{
+    int st = g->st++;
+    switch (g->n) {
+    case 0: /* exeWait */
+        if (st == 0) obj_play(in, "wait", 1, 0);
+        if (mario_ground == i) { g->n = 1; g->st = 0; }
+        break;
+    case 1: /* exeMoveSign */
+        if (st == 0) { obj_play(in, "onmario", 0, 0); se_start(SE_OJ_SPACE_SHIP_STEP_ST, &in->m[12]); }
+        else if (!in->anim || in->anim->done) { g->n = 2; g->st = 0; }
+        break;
+    case 2: /* exeMove */
+        if (st == 0) { obj_play(in, "wait", 1, 0); g->t3 = 1; }
+        g->lv[0] = se_level(SE_OJ_LV_SPACE_SHIP_STEP_MV, &in->m[12], g->lv[0]);
+        break;
+    case 3: /* exeBreak */
+        if (st == 0) { obj_play(in, "break", 0, 0); se_start(SE_OJ_SPACE_SHIP_STEP_BREAK, &in->m[12]); se_start(SE_OJ_SPACE_SHIP_STEP_ED, &in->m[12]); }
+        break;
+    }
+    int clipped = render_clip_judge(&in->m[12], 700.0f, 1e9f); /* updateResetToInitPosCheck */
+    if (!g->on) g->on = !clipped;
+    else if (g->n == 0 || !clipped) g->t2 = 0;
+    else if (g->t2 < 240) g->t2++;
+    else {
+        int row = in->row;
+        row_coord[row] = 0.0f; row_rdir[row] = 0; row_rstep[row] = 0; row_rhold[row] = 0; row_mp_a[row] &= 1; /* resetRailMoverToInitPos */
+        if (in->railer) railer_place(in);
+        float d = vlen(vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14])));
+        if (!render_clip_judge(&in->m[12], 700.0f, 1e9f) && d < 3000.0f) { fx_named("SpaceShipStep", "Appear", in->m, NULL, NULL); se_start(SE_OJ_SPACE_SHIP_STEP_RESET, &in->m[12]); }
+        g->n = d < 1000.0f ? 0 : 2; g->st = 0;
+        g->t2 = 0; g->on = 0; g->t3 = 0;
+        printf("space ship step %d: back at its first place, nerve %d%c", row, g->n, 10);
+    }
+}
+static void st_sstep_blast(V3 at, float rad) /* receiveMsgEnemyAttack: isMsgExplosionAttack: Break */
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (st_kind(sc->objs[in->row].type) != ST_SSTEP || !row_shown(in->row)) continue;
+        StSt *g = st_get(in->row);
+        if (g->n == 3 || vlen(vsub(at, v3(in->m[12], in->m[13], in->m[14]))) > rad + in->reach) continue;
+        g->n = 3; g->st = 0;
+        printf("space ship step %d: break%c", in->row, 10);
     }
 }
 

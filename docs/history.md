@@ -11,6 +11,14 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- SpaceShipStep after Petari, part of #15 (feat/15-space-ship-step, 2026-11-19; written without the emulator: **not
+  run in PCSX2** until its PR says so): the six steps of VsHugeBattleShipLv2Zone were still models whose rail mover
+  ran from the start. statics.inc `st_sstep` (ST_SSTEP): Wait until Mario stands on it, MoveSign (OnMario,
+  SE_OJ_SPACE_SHIP_STEP_ST), Move (its rail mover from here: `st_sstep_rail` in st_rail_go;
+  SE_OJ_LV_SPACE_SHIP_STEP_MV), Break at an explosion (`st_sstep_blast` from explosion_breaks: its Break clip,
+  ..._BREAK, ..._ED), and updateResetToInitPosCheck (out of the view 240 frames: back to its first place, Appear and
+  ..._RESET when seen with Mario within 3000). tools/slice.py SKINNED_OBJ SpaceShipStep (**repack** the galaxy with
+  VsHugeBattleShipLv2Zone: CannonFleetGalaxy). Its five sounds were the class's whole line in docs/sound-gaps.md.
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /

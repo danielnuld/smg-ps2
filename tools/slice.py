@@ -96,6 +96,7 @@ SKINNED_OBJ += ("DashRing",)  # DashRing.cpp: Loop / Start / End / Revival (game
 SKINNED_OBJ += ("QuarterRollGravityRoomArrow",)  # its RollGravityA / B (Reverse) clips (game.c statics.inc st_qrarrow)
 SKINNED_OBJ += ("DeadLeaves", "DesertMovingLandSmall")  # DeadLeaves.cpp: Spin (game.c update_givers); DesertMovingLand's small one: Vibration (update_dlands)
 SKINNED_OBJ += ("PrizeRing",)  # PrizeRing.cpp: Start / Loop / End, its Number BVA (game.c syati.inc)
+SKINNED_OBJ += ("SpaceShipStep",)  # Wait / OnMario / Break, its Appear effect (statics.inc st_sstep)
 SKINNED_OBJ += ("JumpGuarder", "JumpGuarderHead")  # JumpGuarder (game.c update_rbeamers: rbeamer 3) and its head
 SKINNED_OBJ += ("SubmarineVolcanoBigColumnBreak",)  # SubmarineVolcanoBigColumn: its break model's Break (statics.inc)
 SKINNED_OBJ += ("LavaObstacleRockShell", "LavaObstacleRockHomeA", "ForestObstacleWoodA")  # HipDropMoveObj / HipDropDemoMoveObj: Move, the collision on the Move joint (game.c update_hipmoves)
