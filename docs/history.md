@@ -11,6 +11,26 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- SwingRope (feat/568-swing-rope, #568, 2026-11-18): Ride/SwingRope.cpp and SledRopePoint.cpp in
+  `engine/src/swing_rope.inc` (swr_*): the vine of HeavenlyBeachZone (one placement, scale y 14: 28 points). Its
+  nerves Stop / Free / FreeInvalid / BindSlideDownStart / BindSlideDown / BindStretch / BindLoose with Petari's
+  constants (gravity 1, frictions 0.8 .. 0.92 free and 0.7 .. 0.8 bound, the hang point's 0.995, its gravity 0.8 /
+  0.6 and stick 0.5 / 0.8, the slack's 5 / 1, the slide 0.5 a frame to 10 between 100 and length - 200), the bind on
+  its binder sensor (200 at the foot of Mario's place on the rope's line; not on the ground, not swimming, Stop /
+  Free only; SE_PV_CATCH, SE_PM_GRAB_OBJ, its actor camera, mode_rush), the SledRopePoint's binder (50) and its 0.7
+  rebound off the map, Mario's matrix the hang point's, the upper points loose or laid straight (eased over 10), the
+  lower ones from his FootL joint, tryJump (25 .. 50 along the gravity, at most 35 across it, the stick x 5 under 5;
+  SwingRopeSpin, SE_PV_JUMP_S, SE_PM_JUMP_M), its clips (SwingRopeSlideDownStart / SlideDown / Accel / SwingWait /
+  Wait), SE_OJ_LV_ROPE_SWING_WIND_1 and SE_OJ_ROPE_CREAK_H, its ride sensor's items (150), its shadow (50), its
+  three strips (30 / 40 wide, v 0.13 a point) with SwingRope.bti: `tools/slice.py` TEX_ONLY (the texture comes in the
+  galaxy's own pack as an empty model's, not in the effects' textures: no cost outside HeavenlyBeachGalaxy).
+  As Petari: mAccelTime is not cleared by a bind, so a grab after a jump made with the stick held plays
+  SwingRopeWait over SwingRopeSlideDownStart. Test: plain `XF=-DSWINGROPE_TEST` (=2: the camera on the rope from its
+  side; `-DSWR_TEST_A=1500`: a long ride) in HeavenlyBeachGalaxy/1: Mario dropped by the rope, the stick from 200
+  frames, A at 500, again after each jump. ponytail: one SwingRope a scene; the binder is one push out of the faces
+  met, not Binder::bind's stepped move; the wind's level parameter is not passed (se_level has none); no RushCancel
+  (the port's binds have none). Cost: about 12 KB of the ELF (nm: 9.8 KB of swr_* code, 2.2 KB of state; memcheck after it: 76416 B left before the packs' region loses 256 KB). **Release: slice_all.py HeavenlyBeachGalaxy** (the texture; until
+  then the rope works and is not drawn).
 - NPC demo sounds (feat/620-npc-demo-sounds, #620, 2026-11-18): the Gateway's spin demo and Kinopio. gw_update:
   TicoDemoGetPower::exeDemo's sounds on the baby Luma by the demo's part steps (デモ3: SE_SM_TICO_OP_APPEAR 110, _END
   140, SE_SV_TICO_OP_APPEAR 180; デモ4: SE_SM_LV_TICO_WAIT to 65, SE_SM_TICO_FLASH_SPIN 72, _FLASH_LIGHT 170,
