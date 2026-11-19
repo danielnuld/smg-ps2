@@ -161,7 +161,7 @@ int mk_shot(V3 p); /* IceMerameraKing (ice_meraking.inc) */
 static void ds_update(Kuribo *k), ds_draw(Kuribo *k, const Model *md, Anim *a); /* DharmaSambo (dharma.inc) */
 static void st_mirror_pass(V3 ce, V3 cw, V3 cu);
 static int st_mapboard; /* AstroMapBoard shown: 1 its picture to capture (game_draw), 2 done */
-static int st_flag_class(const char *n), st_cast_hook(int row, int type, int part), st_rail_obj(const char *n), st_star_out(int row); static void st_update(void), st_draw(void), st_init(const Scene *s); static int st_shot(V3 p), st_jet_hit(V3 p); static void st_column_strike(V3 c, float r); /* statics.inc */
+static int st_float_class(const char *n); static int st_flag_class(const char *n), st_cast_hook(int row, int type, int part), st_rail_obj(const char *n), st_star_out(int row); static void st_update(void), st_draw(void), st_init(const Scene *s); static int st_shot(V3 p), st_jet_hit(V3 p); static void st_column_strike(V3 c, float r); /* statics.inc */
 static void mm_update(Kuribo *k), mm_kill(Kuribo *k), mm_btp(Kuribo *k, const Model *md); /* Meramera (meramera.inc) */
 static void poihana_update(Kuribo *k); /* Poihana (poihana.inc) */
 static void stink_update(Kuribo *k); static int sb_star(Kuribo *k), sb_body_push(const Kuribo *k); /* StinkBugSmall (stink.inc) */
@@ -6438,7 +6438,7 @@ static void game_rebind_(void)
                     find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->plant = strcmp(name, "FlowerGroup") == 0 || strcmp(name, "FlowerBlueGroup") == 0 || strcmp(name, "CutBushGroup") == 0 ||
                     stone_row(r);
-        in->rotor = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->arg[4] != -1 && r->arg[4] != 0; /* -1: not a map part */
+        in->rotor = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->arg[4] != -1 && r->arg[4] != 0 && !st_float_class(name); /* -1: not a map part; a floater's columns are its floating force's (statics.inc) */
         in->stage = (u8)(stage_se_of(name) + 1);
         in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
                     strcmp(name, "ReverseGravityRoomPressGroundB") == 0 || in->dossun || in->onimasu ||

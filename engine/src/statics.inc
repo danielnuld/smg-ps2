@@ -257,8 +257,10 @@ static const char *const st_still[] = {"LavaShellTowerStep", "LavaStepA", "LavaS
                                        "CoconutTree"};
 static signed char st_kinds[1024];
 static const Scene *st_kinds_sc;
+static int st_float_class(const char *n); /* the floaters (below) */
 static int st_kind_name(const char *n)
 {
+    if (st_float_class(n)) return st_float_class(n); /* LavaFloater, OceanWaveFloater, PhantomShipBoxFloater */
     if (!strcmp(n, "InvisibleWaterfallTwinFallLake") || !strcmp(n, "StatusFloor")) return ST_TWALL; /* TransparentWall */
     if (!strcmp(n, "OceanSmallTurtle")) return ST_TURTLE;
     if (!strcmp(n, "HeavensDoorAppearStepA")) return ST_HDSTEP; /* HeavensDoorDemoObj */
@@ -304,6 +306,8 @@ static void st_column(Inst *in, StSt *g); /* SubmarineVolcanoBigColumn (below) *
 static void st_flex(Inst *in, StSt *g, int i); /* FlexibleSphere (below) */
 static int st_ccm(Inst *in, StSt *g), st_ccm_rail(int row); static void st_ccm_action(int row); /* CrystalCageMoving (below) */
 static void st_qbox(Inst *in, StSt *g); /* QuestionBoxGalleryObj (below) */
+enum { ST_FLOAT = 101, ST_WFLOAT, ST_BFLOAT }; /* (their own line: the list above is edited by every new class) */
+static void st_float(Inst *in, int i, int kind), st_float_alloc(const Scene *s); /* the floaters (below) */
 static int nst_st;
 static const Scene *st_st_sc;
 static StSt *st_get(int row)
@@ -357,6 +361,7 @@ static void st_init(const Scene *s)
 {
     st_mapboard = 0;
     st_nbtk = 0;
+    st_float_alloc(s);
     for (u32 i = 0; i < s->nobjs; i++) {
         const char *n = s->types + 32 * s->objs[i].type;
         if (st_kind_name(n) == ST_SURP && s->objs[i].sw[SW_APPEAR] < 0) { /* SurprisedGalaxy::init */
@@ -1503,6 +1508,7 @@ static void st_objs_update(void)
         case ST_SCPRESS: if (st_scpress(in, g, i)) return; break;
         case ST_CCM: if (st_ccm(in, g)) return; break;
         case ST_QBOX: st_qbox(in, g); break;
+        case ST_FLOAT: case ST_WFLOAT: case ST_BFLOAT: st_float(in, i, k); break;
         case ST_TEXSW: { /* SimpleMapObj::init: TexChange (BTK) at arg1 (setupInitInfoTextureChangeArg1; -1 none),
                           * SimpleTextureSwitchChangeObj::changeTexture on its SW_A's rise: frame 1 for good (slice.py
                           * BRK_STEPS: "<class>~<frame>") */
@@ -1934,6 +1940,230 @@ static void st_qbox(Inst *in, StSt *g)
     if (st == 0) { if (in->anim) { obj_play(in, g->n == 3 ? "on" : "off", 0, 0); in->anim->speed = 1.0f; } }
     else if (!in->anim || in->anim->done) { g->n = g->n == 3 ? 1 : 2; g->st = 0; } /* isBckStopped */
 }
+
+/* The floaters after Petari. They were map parts the generic rotator turned (their RotateSpeed / RotateAngle /
+ * RotateAxis / MoveConditionType columns are the floating force's numbers, not a rotator's).
+ * LavaFloater.cpp (ST_FLOAT: LavaHomeFloaterB, LavaFloatingStepA .. D, FloaterOtakingFloaterA, IceVolcanoFloaterA /
+ * B) on FloaterFloatingForceTypeNormal: _40 the depth sunk along its first Y (_28) from its first place (_1C), up to
+ * mMoveConditionType; _44 its speed: with Mario on it and its SW_A off + RotateSpeed x 0.0001 a frame (at the bottom
+ * it converges to 0 by 0.05), else - RotateAngle x 0.0001 (at the top to 0); x 0.98, within 50. Stepped on at the
+ * top: MoveFirst for 8 steps (its ground-on sound; the lava ones shake the camera weakly and go 10 down for 6 steps
+ * then 10 up: isExistImpactOnRide); FloaterOtakingFloaterA instead sinks (7 - step) x 0.8 faster in MoveOnPlayer's
+ * first 7 steps (isExistSpeedUpLanding). Its level sounds going down / up past 0.1. The host: Float / Sink by its
+ * depth against _A8 (its first place's signed distance to the map along its gravity within 1000: _9C), LavaBubble
+ * at _9C while in Sink.
+ * OceanWaveFloater.cpp (ST_WFLOAT: OceanPierFloaterA 30 / 300 / 140 / 120, OceanHexagonFloater 50 / 330 / 150 / 100:
+ * amplitude, steps, sink depth, ripple height) and PhantomShipBoxFloater.cpp (ST_BFLOAT: A / B / C) on
+ * FloaterFloatingForceTypeSpring: a SpringValue (accel RotateSpeed x 0.001, damping RotateAngle x 0.001) whose
+ * velocity moves the host along _28 (x 3 with its SW_A on): Wait; Mario on it (SW_A off): Move, the spring's rest
+ * -mMoveConditionType, its value 0, kicked by -RotateAxis x 0.1; Mario off (or SW_A on): MoveReturn, the rest its
+ * distance from _1C, until it is back and still (Wait). The pier also rides WaveFloatingForce (drawn amplitude x
+ * sin(step) against its gravity; with Mario on it the step runs to 3 pi / 2, the trough, and stays), its Ripple at
+ * its first place off while it is deeper than its sink depth, SE_OJ_PIER_FLOATER_WAVE every 60 .. 120 frames. The
+ * box: Wait until the force moves over 0.1, Move (SE_OJ_BOX_FLOATER_BOUND, Ripple, SE_OJ_BOX_FLOATER_RIPPLE every
+ * 20 .. 90 frames; with Mario on it deeper than 580 / 380 / 180: MoveUnderWater, the Ripple off, back under 575 /
+ * 375 / 175 once he is off; still without him: Wait).
+ * mMoveConditionType comes whole in arg 3 (slice.py map_parts: its four bits in arg 7 do not hold it); a pack cut
+ * before that has -1 there: the floater stays put.
+ * ponytail: _9C's second way (calcMapGroundUpper, when no map lies under it within 1000) is its own place; no
+ * DLMakerProjmapEffectMtxSetter (the lava glow is baked), no LodCtrlPlanet; SimpleFloaterObj (IceMountainFloaterA,
+ * MapPartsFloatingForce) is not ported */
+enum { FFN_MOVEFIRST = 1, FFN_MOVEOFF, FFN_MOVEON };
+enum { FFS_WAIT, FFS_MOVE, FFS_RETURN };
+typedef struct {
+    int row, set;
+    int fn, fstep;         /* the force's nerve, its step */
+    int n, st;             /* the host's nerve (0 Float / Wait, 1 Sink / Move, 2 MoveUnderWater), its step */
+    float d40, v44;        /* FloaterFloatingForceTypeNormal _40, _44 */
+    float sval, svel, srest; /* SpringValue mSpringValue, mVelocity, mRestValue */
+    float wave, a8;        /* WaveFloatingForce mStep; LavaFloater _A8 */
+    int se_t, ripple_off;  /* mSoundDelay / mRippleSeCounter; mCanRipple */
+    u32 lv;
+    V3 base, up, surf, pos; /* _1C, _28, _9C / mRipplePos / mFloaterOffset, mPosition */
+} StFloat;
+static StFloat *st_floats; /* [st_floats_cap], from the arena (st_float_alloc) */
+static int st_nfloats, st_floats_cap;
+static int st_float_class(const char *n) /* its ST_ kind, 0 not a floater */
+{
+    static const char *const lava[] = {"LavaHomeFloaterB", "LavaFloatingStepA", "LavaFloatingStepB", "LavaFloatingStepC", "LavaFloatingStepD",
+                                       "FloaterOtakingFloaterA", "IceVolcanoFloaterA", "IceVolcanoFloaterB"};
+    for (u32 k = 0; k < sizeof lava / sizeof *lava; k++) if (!strcmp(n, lava[k])) return ST_FLOAT;
+    if (!strcmp(n, "OceanPierFloaterA") || !strcmp(n, "OceanHexagonFloater")) return ST_WFLOAT;
+    if (!strncmp(n, "PhantomShipBoxFloater", 21) && n[21] >= 'A' && n[21] <= 'C' && !n[22]) return ST_BFLOAT;
+    return 0;
+}
+static void st_float_alloc(const Scene *s) /* from st_init (game_init) */
+{
+    int n = 0;
+    for (u32 i = 0; i < s->nobjs; i++) n += st_float_class(s->types + 32 * s->objs[i].type) != 0;
+    st_nfloats = 0; st_floats_cap = n;
+    st_floats = n ? mem_alloc(MEM_OBJECTS, (u32)n * sizeof *st_floats) : NULL;
+}
+static StFloat *st_float_get(int row)
+{
+    for (int k = 0; k < st_nfloats; k++) if (st_floats[k].row == row) return &st_floats[k];
+    if (st_nfloats >= st_floats_cap) return NULL;
+    memset(&st_floats[st_nfloats], 0, sizeof st_floats[0]); st_floats[st_nfloats].row = row;
+    return &st_floats[st_nfloats++];
+}
+static float st_float_depth(const StFloat *f, V3 at) /* getCurrentSinkDepth: how far `at` is under f->surf along its Y */
+{
+    V3 d = vsub(f->surf, at);
+    return (vdot(f->up, d) < 0.0f ? -1.0f : 1.0f) * vlen(d);
+}
+static void st_float_normal(Inst *in, StFloat *f, const Row *r, const char *name, int on) /* FloaterFloatingForceTypeNormal::movement */
+{
+    /* FloaterFunction: its sounds, isExistImpactOnRide, isExistSpeedUpLanding */
+    int ice = !strncmp(name, "IceVolcanoFloater", 17), otaking = !strcmp(name, "FloaterOtakingFloaterA");
+    int impact = !otaking && !ice, sw = r->sw[SW_A] >= 0 && sw_on(r, SW_A);
+    u32 se_on = ice ? SE_OJ_LAVA_FLOATER_ON : SE_OJ_LAVA_FLOATER_ON_METAL;
+    float maxd = r->arg[3] > 0 ? (float)r->arg[3] : 0.0f; /* mMoveConditionType */
+    int st = ++f->fstep, exe = f->fn;
+    if (exe == FFN_MOVEFIRST) {
+        if (st == 0) { se_start(se_on, &in->m[12]); if (impact) camera_shake(SHAKE_WEAK); }
+    } else if (on && fabsf(f->d40) < 0.001f && !otaking) { f->fn = FFN_MOVEFIRST; f->fstep = -1; st = -1; } /* exeMove */
+    /* updateVelocity */
+    if (on && !sw) {
+        if (maxd <= f->d40) f->v44 = converge(f->v44, 0.0f, 0.05f); else f->v44 += (float)r->arg[4] * 0.0001f; /* mRotateSpeed */
+    } else if (f->d40 <= 0.0f) f->v44 = converge(f->v44, 0.0f, 0.05f);
+    else f->v44 -= (float)r->arg[5] * 0.0001f; /* mRotateAngle */
+    f->v44 *= 0.98f;
+    f->v44 = f->v44 < -50.0f ? -50.0f : f->v44 > 50.0f ? 50.0f : f->v44;
+    float v = f->v44;
+    if (impact && f->fn == FFN_MOVEFIRST) v = st > 5 ? -10.0f : 10.0f;
+    if (otaking && !sw && f->fn == FFN_MOVEON && st < 7) v += (float)(7 - st) * 0.8f;
+    f->d40 += v;
+    f->d40 = f->d40 < 0.0f ? 0.0f : f->d40 > maxd ? maxd : f->d40;
+    /* soundMoveSE */
+    if (f->v44 > 0.1f) f->lv = se_level(SE_OJ_LV_LAVA_FLOATER_DOWN, &in->m[12], f->lv);
+    else if (f->v44 < -0.1f) f->lv = se_level(SE_OJ_LV_LAVA_FLOATER_UP, &in->m[12], f->lv);
+    if (exe == FFN_MOVEFIRST ? st == 8 : f->fn != FFN_MOVEFIRST && ((!on && exe == FFN_MOVEON && st >= 7) || (on && exe == FFN_MOVEOFF))) {
+        f->fn = on ? FFN_MOVEON : FFN_MOVEOFF; f->fstep = -1; /* setStateMove */
+    }
+    f->pos = vsub(f->base, vmul(f->up, f->d40)); /* updateHostTrans */
+}
+static float st_float_spring(StFloat *f, const Row *r, int on) /* FloaterFloatingForceTypeSpring::movement: the host's speed along _28 */
+{
+    int sw = r->sw[SW_A] >= 0 && sw_on(r, SW_A), st = ++f->fstep, exe = f->fn;
+    float maxd = r->arg[3] > 0 ? (float)r->arg[3] : 0.0f, speed = 0.0f;
+    if (exe == FFS_MOVE && st == 0) { f->srest = -maxd; f->sval = 0.0f; f->svel = -(float)(r->arg[6] > 0 ? r->arg[6] : 0) * 0.1f; } /* setSpringBaseValue, addSpringVelocity(-_48) */
+    if (exe == FFS_RETURN && st == 0) { f->srest = vlen(vsub(f->pos, f->base)); f->sval = 0.0f; f->svel = 0.0f; }
+    if (exe != FFS_WAIT) { /* updateVelocity */
+        speed = f->svel * (sw ? 3.0f : 1.0f);
+        if (fabsf(speed) < 0.001f) speed = 0.0f;
+        f->sval += f->svel; /* SpringValue::update */
+        f->svel += (float)r->arg[4] * 0.001f * (f->srest - f->sval);
+        f->svel *= (float)r->arg[5] * 0.001f;
+    }
+    if (exe == FFS_RETURN && vlen(vsub(f->base, f->pos)) < 0.001f && fabsf(f->svel) < 0.1f) { /* back and still: Wait */
+        f->pos = f->base; f->fn = FFS_WAIT; f->fstep = -1;
+        return 0.0f;
+    }
+    if (exe == FFS_MOVE) { if (sw || !on) { f->fn = FFS_RETURN; f->fstep = -1; } } /* tryReturn */
+    else if (!sw && on) { f->fn = FFS_MOVE; f->fstep = -1; } /* tryOn (Wait, MoveReturn) */
+    return speed;
+}
+static void st_float_fx(const StFloat *f, const Row *r, const char *cls, const char *name, const void *key) /* its effect at _9C (setEffectHostSRT: the place, its rotation) */
+{
+    float m[16], at[3] = {f->surf.x, f->surf.y, f->surf.z}, one[3] = {1, 1, 1};
+    mat_translate_rot_scale(m, at, r->rot, one);
+    fx_named(cls, name, m, NULL, key);
+}
+static void st_float(Inst *in, int i, int kind)
+{
+    const Row *r = &sc->objs[in->row];
+    const char *name = sc->types + 32 * r->type;
+    StFloat *f = st_float_get(in->row);
+    if (!f) return;
+    int on = mario_ground == i; /* isOnPlayer */
+    float old[16];
+    memcpy(old, in->m, 64);
+    if (!f->set) { /* FloaterFloatingForce::start; the hosts' init / initAfterPlacement */
+        f->set = 1;
+        f->base = f->pos = v3(in->m[12], in->m[13], in->m[14]);
+        f->up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+        f->surf = f->base;
+        if (kind == ST_FLOAT) {
+            V3 g = vmul(up_at(f->base, f->up), -1.0f), hp;
+            int keep = kcl_off_row;
+            kcl_off_row = in->row;
+            if (map_poly(f->base, vmul(g, 1000.0f), &hp, NULL)) f->surf = hp;
+            kcl_off_row = keep;
+            f->a8 = vlen(vsub(f->base, f->surf));
+            if (vdot(vsub(f->base, f->surf), g) < 0.0f) f->a8 = -f->a8;
+            f->fn = on ? FFN_MOVEON : FFN_MOVEOFF; f->fstep = -1; /* start: setStateMove */
+        } else {
+            f->fn = FFS_WAIT; f->fstep = -1;
+            f->wave = 6.2831853f * (float)(rand() % 1000) * 0.001f; /* WaveFloatingForce: 2 pi x getRandom() */
+            f->se_t = kind == ST_WFLOAT ? 60 + rand() % 60 : 20 + rand() % 70;
+        }
+        f->n = 0; f->st = 0;
+        printf("floater row %d (%s): depth %d, speed %d / %d, axis %d, a8 %.0f%c", in->row, name, (int)r->arg[3], (int)r->arg[4], (int)r->arg[5], (int)r->arg[6], f->a8, 10);
+    }
+    int st = f->st++;
+    V3 draw_at;
+    if (kind == ST_FLOAT) {
+        st_float_normal(in, f, r, name, on);
+        draw_at = f->pos;
+        float depth = st_float_depth(f, f->pos);
+        if (f->n == 0) { if (f->a8 < depth) { f->n = 1; f->st = 0; } } /* exeFloat */
+        else { /* exeSink */
+            st_float_fx(f, r, name, "LavaBubble", f);
+            if (fabsf(depth - f->a8) < 1.0f) { f->n = 0; f->st = 0; }
+        }
+    } else {
+        float speed = st_float_spring(f, r, on);
+        f->pos = vadd(f->pos, vmul(f->up, speed)); /* updateHostVelocity: mVelocity */
+        draw_at = f->pos;
+        if (kind == ST_WFLOAT) {
+            int pier = !strcmp(name, "OceanPierFloaterA");
+            float steps = pier ? 300.0f : 330.0f, amp = pier ? 30.0f : 50.0f, d = 6.2831853f / steps;
+            if (on) { /* WaveFloatingForce::updateOnPlayer */
+                f->wave += f->wave > 1.5707963f && f->wave < 4.712389f ? d : -d;
+                f->wave = f->wave < 0.0f ? f->wave + 6.2831853f : f->wave >= 6.2831853f ? f->wave - 6.2831853f : f->wave;
+                if (fabsf(fabsf(f->wave) - 4.712389f) < 2.0f * d) f->wave = 4.712389f;
+            } else { f->wave += d; if (f->wave >= 6.2831853f) f->wave -= 6.2831853f; } /* updateNormal */
+            draw_at = vadd(f->pos, vmul(up_at(f->pos, f->up), amp * sinf(f->wave))); /* calcAndSetBaseMtx: mPosition - mGravity x getCurrentValue */
+            float depth = st_float_depth(f, draw_at); /* controlEffect */
+            if ((pier ? 140.0f : 150.0f) < depth && !f->ripple_off) f->ripple_off = 1;
+            else if (depth < (pier ? 120.0f : 100.0f) && f->ripple_off) f->ripple_off = 0;
+            if (!f->ripple_off) st_float_fx(f, r, name, "Ripple", f);
+            if (--f->se_t <= 0) { se_start(SE_OJ_PIER_FLOATER_WAVE, &in->m[12]); f->se_t = 60 + rand() % 60; } /* sWaveSeStepsMin / Max */
+        } else { /* PhantomShipBoxFloater's nerves */
+            float depth = st_float_depth(f, f->pos), deep = name[21] == 'A' ? 580.0f : name[21] == 'B' ? 380.0f : 180.0f;
+            int moving = fabsf(speed) > 0.1f; /* floaterIsMoving */
+            if (f->n == 0) { if (moving) { f->n = 1; f->st = 0; } } /* exeWait */
+            else if (f->n == 1) { /* exeMove */
+                if (st == 0) se_start(SE_OJ_BOX_FLOATER_BOUND, &in->m[12]);
+                st_float_fx(f, r, name, "Ripple", f);
+                if (--f->se_t <= 0) { se_start(SE_OJ_BOX_FLOATER_RIPPLE, &in->m[12]); f->se_t = 20 + rand() % 70; } /* playRippleSe */
+                if (on) { if (deep < depth) { f->n = 2; f->st = 0; } }
+                else if (!moving) { f->n = 0; f->st = 0; }
+            } else if (!on && depth < deep - 5.0f) { f->n = 1; f->st = 0; } /* exeMoveUnderWater: back in Move */
+        }
+    }
+    in->m[12] = draw_at.x; in->m[13] = draw_at.y; in->m[14] = draw_at.z;
+    if (on) carry(old, in);
+}
+
+#ifdef ST_FLOAT_TEST /* plain build XF=-DST_FLOAT_TEST: from frame 300 Mario dropped 250 over the first floater row
+                      * (again every 600 frames: he may slip off; its zone streams in meanwhile); a line every 30 frames */
+static void st_float_test(void)
+{
+    if (game_frame < 300) return;
+    int row = -1;
+    for (u32 i = 0; row < 0 && i < sc->nobjs; i++) if (st_float_class(sc->types + 32 * sc->objs[i].type)) row = (int)i;
+    if (row < 0) { if (game_frame == 300) printf("float test: no floater row%c", 10); return; }
+    const StFloat *f = NULL;
+    for (int k = 0; k < st_nfloats; k++) if (st_floats[k].row == row) f = &st_floats[k];
+    V3 x, z, p = f ? f->base : row_pos(&sc->objs[row]);
+    row_axes(&sc->objs[row], &x, &z);
+    if (game_frame % 600 == 300 || !f) { mario->pos = vadd(p, vmul(vnorm(vcross(z, x)), 250.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; test_nolost = 1; }
+    if (f && game_frame % 30 == 0)
+        printf("float test f %u: row %d force %d/%d host %d, sunk %.1f (v44 %.2f, spring %.1f %.2f), mario on %d%c", game_frame, row, f->fn, f->fstep, f->n,
+               vdot(vsub(f->base, f->pos), f->up), f->v44, f->sval, f->svel, mario_ground >= 0 && insts[mario_ground].row == row, 10);
+}
+#endif
 
 /* FlexibleSphere.cpp after Petari (FlexibleSandPlanetPartsA): idle until its SW_A is on (Wind effect), or without
  * one until Mario stands on it; then it grows by arg2 / 10000 (0.002) a frame up to arg0 / 10000 (1) and shrinks to
@@ -2658,6 +2888,8 @@ static void st_update(void)
 #endif
 #ifdef ST_CCM_TEST
     st_ccm_test();
+#ifdef ST_FLOAT_TEST
+    st_float_test();
 #endif
 #ifdef ST_BB_TEST
     st_bb_test();
