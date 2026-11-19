@@ -300,13 +300,13 @@ static float or_pos[2048][3], or_uv[2048][2];
 static u8 or_al[2048];
 static u16 or_tri[3 * 2 * 14 * 64];
 /* loadMaterial's colour C1 x the frame behind (stage 3) as the frame less (1 - C1) x the vertex alpha (GX 76 D7 FF: 89 28 00
- * off, in GS units 44 14 00), then the texture added (T x T / 2, stages 0 and 1) at the vertex alpha */
-static void or_mesh(int nv, int nt, int tex)
+ * off, in GS units 44 14 00: `less`, 0xBBGGRR), then the texture added (T x T / 2, stages 0 and 1) at the vertex alpha */
+static void or_mesh(int nv, int nt, int tex, u32 less)
 {
     static u32 c1[2048], c2[2048];
     for (int v = 0; v < nv; v++) {
         u32 a = or_al[v];
-        c1[v] = 0x80000000u | (0x14u * a / 255u) << 8 | 0x44u * a / 255u;
+        c1[v] = 0x80000000u | ((less >> 16 & 0xFF) * a / 255u) << 16 | ((less >> 8 & 0xFF) * a / 255u) << 8 | (less & 0xFF) * a / 255u;
         c2[v] = (a * 0x80u / 255u) << 24 | 0x808080u;
     }
     render_mesh_vc((const float (*)[3])or_pos, (const float (*)[2])or_uv, c1, nv, or_tri, nt, NO_TEX, 0x200 | 0x80);
@@ -336,7 +336,7 @@ static void draw_oceanrings(void)
                 }
                 nv += 2;
             }
-            or_mesh(nv, nt, tex);
+            or_mesh(nv, nt, tex, 0x001444u);
             continue;
         }
         for (int p = 0; p < o->npart; p++) { /* OceanRingPartDrawer::draw: drawDynamic near the player, the flat list else */
@@ -367,7 +367,7 @@ static void draw_oceanrings(void)
                     nv++;
                 }
             }
-            or_mesh(nv, nt, tex);
+            or_mesh(nv, nt, tex, 0x001444u);
         }
     }
 }

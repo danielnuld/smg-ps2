@@ -11,6 +11,116 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- RandomEffectObj (feat/631-random-effect, #631, 2026-11-18): FireworksA (10 placed) and ShootingStarArea (56) played
+  as steady SimpleEffectObj ambient effects. Now in ambient_effects (amb_once 2 / 3; row_step mStep + 2, row_turn
+  mSeStep + 1): the first emit |repeat(x + y + z, 0, arg1)| frames after its placement (0: never, as Petari), then
+  one every arg0 (600) +- arg1 (180) frames while in Move (no SW_A, or it on); FireworksA's
+  SE_OJ_FIREWORK_SEA_SHOOT at the emit and _EXPLODE 40 frames on. Seen in the log of a plain build with
+  `XF=-DSE_LOG` (StarDustGalaxy 1: its ShootingStarArea rows emit in turn); FireworksA not run (its rows wait for
+  SW_A 17 in OceanRingGalaxy). ponytail: no clipping (far 400, radius 1500), appear()'s new first time. **Release:
+  sound.py --pack** OceanRingGalaxy (the two firework SEs are new in game.c).
+- WaterRoad (feat/567-water-road, #567, 2026-11-18): Map/WaterRoad.cpp in `engine/src/water_road.inc` (wrd_*): the
+  tube of water of OceanRingGalaxy (one placement; its demo ウォーターロード出現デモ[ブッシュポンプ], sheet
+  WaterRoadAppear, starts on SW 1003, the ValveSwitch of scenarios 3 and 6). A demo cast, dead until the sheet's
+  appear (dx_cast_hook): SW_A on, DemoStart (SE_OJ_LV_WATER_ROAD_APPEAR, SE_AT_LV_EARTHQUAKE through part 0),
+  DemoGrowUp (the Top effect, SE_OJ_WATER_ROAD_GROW_START, a strong shake and rumble, the rail coord eased out over
+  part 1 with SE_OJ_LV_WATER_ROAD_GROW, the part's camera on its tip), the End effect and DemoWaitEnd, Wait. The bind
+  on its Binder sensor (its radius 500 at the rail's nearest place to Mario, not under 300 above the rail's start;
+  mode_rush), its バインド中 camera on the player, RideStart (WaterRoadIn, SE_OJ_WATER_ROAD_BIND_IN) / RideWait
+  (SwimFlutter) / RideSpin (a swing: SwimSpin, SE_PM_TORNADE_IN_WATER_ST, SE_PM_LV_TORNADE_IN_WATER, + 50 for 30
+  frames), the speed x 0.99 within 100 .. 150, SE_OJ_LV_WATER_ROAD_BIND, Mario's matrix up the rail; at the goal
+  SE_OJ_WATER_ROAD_BIND_END, SE_PV_JUMP_M, endBindAndPlayerJump(0), Disappear (alpha to 0 over 30, kill).
+  SE_AT_LV_WATER_ROAD at the rail's nearest place to the camera. WaterRoadModelInfo: the high and low models' line
+  points as Petari makes them (a ring where the rail's direction left the last by 0.998 / 0.99, tested every 100),
+  u 0.05 a loop point and v the coord x 0.0001, the low one past 10000 of its box, drawn up to the rail coord while
+  it grows. `tools/jpa.py` NAMED WaterRoad (Top, End). Test: plain `XF=-DWATERROAD_TEST` in OceanRingGalaxy/3 (the
+  demo's switch on at frame 1000, Mario put in its foot 120 frames after it waits, a swing 60 frames into the ride).
+  ponytail: a line point keeps its rail place and axes (40 B, MEM_OBJECTS), the 12 loop points are made at the draw;
+  the water as OceanRing's (ocean_ring.inc or_mesh: Water.bti's two stages one sample scrolled as stage 0, the
+  screen term C1 55 96 BE as the frame less 1 - C1), no indirect warp, no EnvMap.bti stage, no R8_EQ stage; its box
+  from the rail's polyline; the rail is the pack's polyline (15 points: both models get 15 rings; Petari's Bezier turns all along). In PCSX2 (overlay
+  packs): the demo, the growth under its camera with Top, End, the ride, the spin, the jump out, Disappear; `se+` for
+  GROW, BIND, BIND_END, EARTHQUAKE, AT_LV_WATER_ROAD, TORNADE, JUMP_M once the sound pack was cut again (`se?`
+  before); no log line seen for APPEAR, GROW_START and BIND_IN. Route test: star got. Cost: about 8 KB of the ELF
+  (nm wrd_*; the line points, 2 x 15 x 40 B, in MEM_OBJECTS); memcheck after it: 36864 B left before the packs'
+  region loses 256 KB. **Release: slice_all.py resident.bin + resident_luigi.bin** (its two effects, +5 KB) **and
+  sound.py --pack OceanRingGalaxy** (its SEs).
+- Class audit A, MapObj/ A-M (fix/645-audit-a-small, #645 / PR #670, 2026-11-18, agent audit-a): every placed class of
+  `src/Game/MapObj/[A-M]*.cpp` read against the port, the table in `docs/class-audit-a.md` (102 classes: 67 ok, 12
+  fixed here, 23 in issues #646-#653). Fixed, all read from Petari and **not run in PCSX2**: DeadLeaves (update_givers:
+  every spin sets Spin: the Spin clip, SE_OJ_LEAVES_SWING, the pieces' SE_OJ_STAR_PIECE_BURST; the item once, dsinit
+  bit 1); Candlestand (update_candles: SE_OJ_FIRE_STAND_IGNIT, SE_OJ_LV_PHANTOM_TOACH_BURN through Fire / Burn / Attack,
+  SE_OJ_PHANTOM_TOACH_OFF, the Attack nerve of 30 frames after a burn (row_turn 6), the burn within 50 x scale, the
+  Flicker's Extinguish and TeresaMansion's Extinguish02 (fx_named: jpa.py NAMED_ONLY), offSwitchA and the item at
+  Extinguish's step 15, the item 220 up the world's y and the coin turned -5 degrees for TeresaMansion); LavaSteam
+  (SW_A only starts it: a later Wait is row_turn 4; the Sign effect shrunk from step 82); LavaStrangeRock (the break
+  SEs' fall-through S + L + M, the hit point Mario's centre); DesertMovingLand (DesertMovingLandSmall run too,
+  SE_OJ_LV_DESERT_LAND_SIGN); DesertLandMoveSwitch (no timer SE with Mario dead / the star get demo); the placed
+  KeySwitch (SE_OJ_KEY_SWITCH_GET, SE_SY_READ_RIDDLE_S, Get), the placed 1-up / life mushroom (Get / GetLifeUp,
+  SE_SY_1UP); MiniatureGalaxy (SE_SY_KOOPA_LAUGH at Open's step 150 for a grand star's galaxy); HeavensDoorDemoObj
+  (Vanish's tryStageEffectStart / Stop: SE_OJ_HD_INSIDE_CAGE_BREAK, SE_OJ_HD_INSIDE_SUN_OFF); LargeChain (the fixed
+  points' own Break + SE). One sub-audit claim was false and is noted in the table (ClipFieldSwitch's margin: Petari's
+  shapes ignore it). **Release: slice_all.py for the galaxies with DeadLeaves / DesertMovingLandSmall (slice.py
+  SKINNED_OBJ: their Spin / Vibration clips) and jpa for TeresaMansionCandlestand / CandlestandIceVolcano (NAMED_ONLY
+  Extinguish02 / Extinguish): covered by the full repack**; until then the clips and those two effects do not show,
+  the rest works on the old packs.
+- SwingRope (feat/568-swing-rope, #568, 2026-11-18): Ride/SwingRope.cpp and SledRopePoint.cpp in
+  `engine/src/swing_rope.inc` (swr_*): the vine of HeavenlyBeachZone (one placement, scale y 14: 28 points). Its
+  nerves Stop / Free / FreeInvalid / BindSlideDownStart / BindSlideDown / BindStretch / BindLoose with Petari's
+  constants (gravity 1, frictions 0.8 .. 0.92 free and 0.7 .. 0.8 bound, the hang point's 0.995, its gravity 0.8 /
+  0.6 and stick 0.5 / 0.8, the slack's 5 / 1, the slide 0.5 a frame to 10 between 100 and length - 200), the bind on
+  its binder sensor (200 at the foot of Mario's place on the rope's line; not on the ground, not swimming, Stop /
+  Free only; SE_PV_CATCH, SE_PM_GRAB_OBJ, its actor camera, mode_rush), the SledRopePoint's binder (50) and its 0.7
+  rebound off the map, Mario's matrix the hang point's, the upper points loose or laid straight (eased over 10), the
+  lower ones from his FootL joint, tryJump (25 .. 50 along the gravity, at most 35 across it, the stick x 5 under 5;
+  SwingRopeSpin, SE_PV_JUMP_S, SE_PM_JUMP_M), its clips (SwingRopeSlideDownStart / SlideDown / Accel / SwingWait /
+  Wait), SE_OJ_LV_ROPE_SWING_WIND_1 and SE_OJ_ROPE_CREAK_H, its ride sensor's items (150), its shadow (50), its
+  three strips (30 / 40 wide, v 0.13 a point) with SwingRope.bti: `tools/slice.py` TEX_ONLY (the texture comes in the
+  galaxy's own pack as an empty model's, not in the effects' textures: no cost outside HeavenlyBeachGalaxy).
+  As Petari: mAccelTime is not cleared by a bind, so a grab after a jump made with the stick held plays
+  SwingRopeWait over SwingRopeSlideDownStart. Test: plain `XF=-DSWINGROPE_TEST` (=2: the camera on the rope from its
+  side; `-DSWR_TEST_A=1500`: a long ride) in HeavenlyBeachGalaxy/1: Mario dropped by the rope, the stick from 200
+  frames, A at 500, again after each jump. ponytail: one SwingRope a scene; the binder is one push out of the faces
+  met, not Binder::bind's stepped move; the wind's level parameter is not passed (se_level has none); no RushCancel
+  (the port's binds have none). Cost: about 12 KB of the ELF (nm: 9.8 KB of swr_* code, 2.2 KB of state; memcheck after it: 76416 B left before the packs' region loses 256 KB). **Release: slice_all.py HeavenlyBeachGalaxy** (the texture; until
+  then the rope works and is not drawn).
+- NPC demo sounds (feat/620-npc-demo-sounds, #620, 2026-11-18): the Gateway's spin demo and Kinopio. gw_update:
+  TicoDemoGetPower::exeDemo's sounds on the baby Luma by the demo's part steps (デモ3: SE_SM_TICO_OP_APPEAR 110, _END
+  140, SE_SV_TICO_OP_APPEAR 180; デモ4: SE_SM_LV_TICO_WAIT to 65, SE_SM_TICO_FLASH_SPIN 72, _FLASH_LIGHT 170,
+  SE_SM_TICO_FUSION 255, SE_PV_POWER_STAR_GET 420); ro_update: RosettaDemoHeavensDoor1::exeDemo's (デモ3:
+  SE_SV_ROSETTA_SWING 70, SE_SM_ROSETTA_OP_SWING 80; SE_SM_LV_TICO_OP_WAIT through 会話1 .. 4, デモ1 .. 5 and デモ6's
+  first 10 steps, then SE_SM_LV_ROSETTA_OP_HIDE). Kinopio (kinopio_nerve, from update_npc_turn): its Escape nerve (a
+  Kinopio that reads an appear switch with arg4 0: its Escape action once, SE_SV_KINOPIO_PUHA, SE_SM_NPC_FLY_OUT) and
+  its power star mode (arg2 8: StarWait's MBGM_KINOPIO_TANKEN_B at its first talk, its eventFunc the TakeOutStar, then
+  startLastStageBGM unless in FishTunnelGalaxy; kino_took lets its star out, slice.py declares it and gives it the
+  PStar model). The star was shown from the start before (no declarer). Not ported: Kinopio's Appear nerve (arg4 not
+  0: the fall to the ground, the NPCs have no binder), Caretaker's BGM calls (BGM_MINIGAME_START, MBGM_RACE_01: its
+  tidy-up mission CareTaker.cpp:113-546 is not ported); "Penguin's turtle jet sounds" are JetTurtle's (SE_OJ_ /
+  SE_SY_GET_TURTLE_JET: on main since #608), TalkBalloon's volume on main since #597. Test: `talk` with
+  XF=-DTALK_CLS=3 on FishTunnelGalaxy/1 (the Kinopio appears: Escape, the talk, the BGM, TakeOutStar, "its star
+  out"); `gateway` for the spin demo. **Release: slice_all.py FishTunnelGalaxy, HoneyBeeKingdomGalaxy** (the declarer
+  and PStar of the two arg2 8 Kinopios).
+- NPC reactions run (verify/npc-react, #619, 2026-11-18): what #604 / #615 merged without a run. `talk` with
+  XF="-DTALK_CLS=0 -DREACT_TEST" picks an NPC of npc_reaction's classes by name (PenguinCoach, Penguin, Caretaker,
+  HoneyBee, a Kinopio with its body sensor, Rabbit: the first of that order with one shown), so one ELF runs every
+  galaxy through out/boot.txt. Seen in PCSX2, each with its four reaction lines (trampled, spun, pointed, star piece)
+  and its SE lines (`se?` for the voices the packs lack until the repack): Rabbit (HeavenlyBeachGalaxy/1), HoneyBee
+  (HoneyBeeKingdomGalaxy/1), Caretaker (FactoryGalaxy/1), Kinopio (BeltConveyerExGalaxy/1), Penguin
+  (OceanRingGalaxy/1); PenguinCoach (HeavenlyBeachGalaxy/1) pointed and star piece only (his talk opens with Mario
+  before him and holds Mario through the test's drop and spin); the Gateway rabbits' hop (SE_SM_RABBIT_JUMP each Run loop,
+  `gateway` with XF=-DSE_LOG). Nothing to fix in the engine.
+- Per-class tables out of bss, 1 (perf/tables-arena-1, #630, 2026-11-18): the ELF reserved every class's worst-case
+  table in every galaxy. `creepers` (128 KB), `vines` (120 KB), `bridges` (96 KB) and CocoSambo's heads (96 KB, the
+  function static of update_sambos, now `sambo_heads`) are pointers filled by game.c `row_table(class, max, size)`:
+  from the arena, one entry a row the scene places (at most the old maximum), NULL where it places none (the count
+  stays 0, nothing reads the table). The rule for the next ones: allocate only from game_init (what it allocates lies
+  under main.c's base_mark: a zone swap keeps it; scene_switch releases the arena to boot_mark and clears .gamebss, so
+  the pointer is NULL again and game_init fills it again); a table whose init waits for the first update needs its
+  allocation called from game_init. memcheck: _end -366208 B against the 11:50 baseline (which main had passed by
+  about 78 KB: 440 KB of tables gone), 251904 B left before the region loses a step, the region one step up
+  (18688 KB). Arena at boot: HoneyBeeKingdomGalaxy/1 (2 Creepers, Plants) 3409 KB, EggStarGalaxy/3 (bridge,
+  CocoSambo) 3602 KB of 5376 KB. The sambos and the bridge were not driven in PCSX2 (their zones not reached at
+  boot); route EggStarGalaxy/1 as before.
 - Enemies on AreaMove / RailMove floors (feat/611-area-move-walkers, #611, 2026-11-18):
   MR::calcVelocityAreaOrRailMoveOnGround as game.c area_rail_vel (an AreaMove floor, code 28: MR::calcAreaMoveVelocity,
   the AreaMoveSphere holding the place: its up less the part towards its centre x arg0 (10); a RailMove floor, 27: the
