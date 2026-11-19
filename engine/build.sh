@@ -26,6 +26,10 @@
 # camwalk: with packs (PeachCastleGardenGalaxy 1), Mario walked down the road to the plaza, camera changes logged (-DCAMWALK_TEST)
 # XF=-DCAMROLL_TEST=1500 (plain, EggStarGalaxy/1): Mario dropped on DiskGardenPlanet's top, then its underside: the camera's roll (#555)
 # XF=-DGROOM_TEST=1 (plain, EggStarGalaxy/2): Mario walked over MysteryGravityRoomPlanet's corner bridge onto its wall (#557)
+# XF=-DSWINGROPE_TEST (plain, HeavenlyBeachGalaxy/1): Mario dropped by the SwingRope at frame 1000, the stick 200 frames into
+#   the ride, A at 500 (-DSWR_TEST_A=n), again after each jump; =2: the camera on the rope from its side (#568)
+# XF=-DWATERROAD_TEST (plain, OceanRingGalaxy/3): the WaterRoad's demo started at frame 1000, the whole road shown 300 frames
+#   once it waits, then Mario put in its foot: the ride, a swing 60 frames in (#567)
 # overview: with packs, the camera orbits the whole galaxy (-DOVERVIEW_TEST; for pictures and videos)
 # rail: with packs, Mario dropped onto the first rail-moving map part at frame 120 (-DRAIL_TEST)
 # rotor: with packs, Mario dropped onto the first rotating map part at frame 120 (-DROTOR_TEST)
@@ -65,7 +69,8 @@
 # ota: with packs, Mario spins OtaKing's coconuts back until it goes down and takes its star (-DOTA_TEST)
 # tomb: StarDustGalaxy/3, TombSpider's SpiderThread appeared, Mario before it, touched every 120 frames (-DTOMB_TEST)
 # bsb: HoneyBeeKingdomGalaxy/3, BossStinkBug started and hip dropped through its three phases until its star (-DBSB_TEST)
-# dino: with packs, Mario punches DinoPackun's tail ball until it goes down and takes its star (-DDINO_TEST)
+# dino: with packs, Mario punches DinoPackun's tail ball until it goes down and takes its star (-DDINO_TEST);
+#       XF=-DDINO_STAR: a star piece on its body 30 frames into each chase (the hit reaction)
 # bubble: with packs, Mario over an AirBubbleGenerator with little oxygen (-DBUBBLE_TEST)
 # swim: with packs, Mario dropped in a water area (-DSWIM_TEST)
 # sidestep: with packs, Mario walks into the nearest wall, leans on it and side steps both ways, then jumps off (-DSIDESTEP_TEST)

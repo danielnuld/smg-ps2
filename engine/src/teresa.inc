@@ -131,8 +131,7 @@ static void ts_normal_vel(Kuribo *k) /* updateNormalVelocity */
 }
 static int ts_ascension(Kuribo *k) /* tryAscension: GlaringLightArea (or out of the sun's shade: ponytail, never) */
 {
-    int a = area_obj("GlaringLightAreaCylinder", k->pos);
-    if (a < 0 || (sc->objs[a].sw[SW_A] >= 0 && !sw_on(&sc->objs[a], SW_A))) return 0; /* GlaringLightArea::movement: valid on its SW_A */
+    if (!in_glaring_light(k->pos)) return 0;
     ts_set_nrv(k, TS_ASCENSION);
     return 1;
 }

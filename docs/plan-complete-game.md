@@ -134,10 +134,13 @@ No interim ISOs: Daniel tests at the end.
   nowhere in the engine nor in the packs (2026-11-18). Written today, waiting for PCSX2 and a repack (slice.py LOGIC):
   ChangeBgmCube / BgmProhibitArea (#578), DarkMatterCube / ForbidWaterSearchCube (#575), HeavySteeringCube /
   ForbidTriangleJumpCube / ForbidJumpCube / DashChargeCylinder (#579), SoundEmitterCube / Sphere and
-  QuakeEffectAreaCube (#580), AreaMoveSphere (#581), RasterScrollCube (#492). Left: ShadeCube, HazeCube
-  (HeatHazeEffect), AudioEffectCube / Sphere / Cylinder (reverb), CameraRepulsiveSphere / Cylinder,
-  ExtraWallCheckArea / Cylinder (Mario's shadow fade), RaceJudgeCube, PlaneCollisionCube, WarpCube,
-  DarkMatterCylinder, the guidance cubes (Wii controls). An area registers with the manager whose name its placed
+  QuakeEffectAreaCube (#580), AreaMoveSphere (#581), RasterScrollCube (#492), PlaneCollisionCube /
+  BeeWallShortDistArea / GlaringLightArea / DarkMatterCylinder (#638), ExtraWallCheckArea / Cylinder (#639),
+  HazeCube (#655), CollisionArea (#656: 163 placed, its AreaPolygon left). Left: ViewGroupCtrlCube (624 placed:
+  ViewGroupCtrl's far clip level and forced LOD by ViewGroupId, which the packs' rows do not carry), CollisionArea's
+  AreaPolygon, the guidance cubes (Wii controls). Placed in no stage: ShadeCube, RaceJudgeCube,
+  CameraRepulsiveSphere / Cylinder, SunLightArea, PipeModeCube, NinForceWindCube, NinAbyssCube, BigBubbleGoalArea,
+  WarpCube. An area registers with the manager whose name its placed
   name begins with (IsManagerName), or the one its class names (getManagerName: PlayerSeCube / Sphere / Cylinder ->
   PlayerSeArea, in #580; CameraRepulsiveSphere / Cylinder, AudioEffect*, HazeCube...): ask the engine's area_obj
   with the placed names.

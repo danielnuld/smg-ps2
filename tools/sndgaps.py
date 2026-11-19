@@ -33,6 +33,8 @@ NOT_PLAYED = {
     "SE_BV_BOSS_BUG_ANGRY_TAKEOFF": "BossStinkBugActionFlyHigh's ToFly nerve is never set",
     "SE_BV_POLTA_SHOUT": "an unused string (PoltaActionBase.cpp poltaShoutUnused)",
     "SE_EM_BOMBTERE_BOUND": "BombTeresa's BallAppear nerve is never set",
+    "SE_OJ_TSPIDER_COCOON_BOUND": "TombSpiderActionCocoon: only for a sender that is no ATYPE_SPRING_ATTACKER, and "
+                                  "SlingShooter's attack sensor (that type) is the only sender of the message",
     "SE_EM_FIRE_BUBBLE_REFLECT": "the second player's pointer (FireBubble / FireBall Reflect, KoopaFireShort Erase2P)",
 }
 
