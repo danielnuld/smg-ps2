@@ -1411,12 +1411,16 @@ static void row_kill(int i)
 /* CoinReplica.cpp: its coin appears NonActive (drawn, no sensor) and is Fix (taken at a touch) while its SW_A is on;
  * its SW_B removes it. ponytail: arg0 (activeCoinWithGravity: the coin hops 30 and falls) is taken as plain Fix */
 static int t_replica = -1;
+static int coin_group_blink(int row), pgroup_kind(int type); /* update_pickup_groups */
 static int pickup_on(const Pickup *p, int take)
 {
     if (p->alive == PICK_GONE || p->alive == (take ? PICK_POP_NEW : PICK_POP_BLINK)) return 0;
     if (p->row >= 0 && take && sc->objs[p->row].type == t_replica && !sw_on(&sc->objs[p->row], SW_A)) /* appearNonActive; only SW_A
                                                                           * activates it (none: never) */
         return 0;
+    if (p->row >= 0 && coin_group_blink(p->row)) return 0;
+    if (p->row >= 0 && pgroup_kind(sc->objs[p->row].type) >= 1 && pgroup_kind(sc->objs[p->row].type) <= 2) return row_shown(p->row); /* (a star
+        * piece group's SW_B makes its pieces fall: update_pickup_groups) */
     return p->row < 0 || (row_shown(p->row) && !sw_on(&sc->objs[p->row], SW_B));
 }
 #define pickup_shown(p) pickup_on(p, 0)
@@ -1973,8 +1977,8 @@ static int place_on_rail(Pickup *out, const float *pts, u32 np, int closed, int 
 }
 
 /* CoinGroup (Petari CoinGroup.cpp, CircleCoinGroup.cpp, RailCoin.cpp): arg0 coins; on a rail spread by length, else a
- * circle of radius arg2 (default 200) in the placement's X / Z plane. ponytail: no Mercator rails, no time limit
- * (arg1), every group is out from the start (no appear switch / demo) */
+ * circle of radius arg2 (default 200) in the placement's X / Z plane; its appear switch and SW_B: pickup_on; its
+ * appear SE and time limit (arg1): update_pickup_groups. ponytail: no Mercator rails */
 static int coin_group(Pickup *out, const Row *r, const unsigned char *blob)
 {
     if (r->arg[0] <= 0) return 0;
@@ -4403,6 +4407,103 @@ static void update_killers(void)
             walker_explosion(k->pos);
             needle_attacked(k->pos, 250.0f);
             *ph = 3; *t = 0; k->freeze = 0;
+        }
+    }
+}
+
+/* The pickups' groups, a frame (their rows have no instance).
+ * StarPieceGroup.cpp (StarPieceGroup / StarPieceFlow): arg5 (_A4; a group only) counts down from the frame the group
+ * is out (control), at 0 kill(): forceKillStarPieceAll(true) (every piece still in its place gone, each with
+ * SE_OJ_STAR_PIECE_BREAK), its dead switch; its SW_B coming on (onSwitchB): every piece setFall (Fall: a launched
+ * piece from where it was); its appear switch going off after it was out (makeActorDead): the pieces killed the same
+ * way. Its SW_A off keeps the pieces from the pointer (mFlags._1: piece_pointer_ok).
+ * CoinGroup.cpp (RailCoin, CircleCoinGroup and the purple ones): exeAppear, sAppearDelayTime 3 frames after its appear
+ * switch: SE_SY_COIN_APPEAR (purple: SE_SY_PURPLE_COIN_APPEAR), appearCoinAll; with arg1 (mTimeLimit) each coin
+ * appearFixTimer(arg1): FlashingCtrl::start(arg1), flashing its last 180 frames (10-frame blinks, 5 under 90), killed
+ * at its end (pickup_on reads coin_group_blink).
+ * row_turn: 0 not out yet, 1 out (a coin group: counting to the SE), 2 a coin group out, 3 over; row_hold the frames
+ * left (arg5 / arg1), row_step a coin group's frames since its switch, a star piece group's SW_B as last seen.
+ * ponytail: the coins are out with their switch, not 3 frames on; no Appear effect on a killed piece; the コイン出現
+ * demo and DemoAppear's camera (no coin group has an actor camera row here) */
+static void piece_break(V3 p);
+static int pgroup_kind(int type) /* 1 StarPieceGroup, 2 StarPieceFlow, 3 a coin group, 4 a purple coin group; 0 no */
+{
+    static const Scene *seen;
+    static signed char kind[1024];
+    if (seen != sc) {
+        static const char *const n[6] = {"StarPieceGroup", "StarPieceFlow", "RailCoin", "CircleCoinGroup", "PurpleRailCoin", "CirclePurpleCoinGroup"};
+        seen = sc;
+        memset(kind, 0, sizeof kind);
+        for (int k = 0; k < 6; k++) { int t = scene_type(sc, n[k]); if (t >= 0 && t < 1024) kind[t] = (signed char)(k < 2 ? k + 1 : k < 4 ? 3 : 4); }
+    }
+    return type >= 0 && type < 1024 ? kind[type] : 0;
+}
+static int coin_group_blink(int row) /* a timed coin group's coins in the dark half of a blink (FlashingCtrl) */
+{
+    if (row_turn[row] != 2 || pgroup_kind(sc->objs[row].type) < 3) return 0;
+    int left = row_hold[row];
+    return left > 0 && left < 180 && (left / (left < 90 ? 5 : 10)) % 2;
+}
+static int piece_pointer_ok(const Pickup *p) /* StarPiece::tryGotJudge's mFlags._1: its group's SW_A, where it has one */
+{
+    if (p->row < 0 || !pgroup_kind(sc->objs[p->row].type) || pgroup_kind(sc->objs[p->row].type) > 2) return 1;
+    return sc->objs[p->row].sw[SW_A] < 0 || sw_on(&sc->objs[p->row], SW_A);
+}
+static void pgroup_kill_pieces(int row) /* forceKillStarPieceAll(true) */
+{
+    for (int k = 0; k < npieces; k++) {
+        if (pieces[k].row != row || pieces[k].alive != PICK_ON) continue;
+        pieces[k].alive = PICK_GONE;
+        piece_break(pieces[k].pos);
+    }
+}
+static void update_pickup_groups(void)
+{
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        int kind = pgroup_kind(r->type);
+        if (!kind || row_dead[i]) continue;
+        int shown = row_shown((int)i);
+        if (kind <= 2) { /* StarPieceGroup / StarPieceFlow */
+            int b = r->sw[SW_B] >= 0 && sw_on(r, SW_B);
+            if (b && !(row_step[i] & 1)) { /* onSwitchB: setFall */
+                for (int k = 0; k < npieces; k++) {
+                    if (pieces[k].row != (int)i || pieces[k].alive != PICK_ON) continue;
+                    pieces[k].alive = PICK_GONE;
+                    launch_pieces(pieces[k].pos, up_at(pieces[k].pos, mario->up), 1, 0.0f, 0.0f);
+                }
+                printf("star piece group %u: its pieces fall%c", i, 10);
+            }
+            row_step[i] = (unsigned short)b;
+            if (r->sw[SW_APPEAR] >= 0 && !shown) {
+                if (row_turn[i] == 1) { pgroup_kill_pieces((int)i); row_turn[i] = 3; } /* makeActorDead */
+                continue;
+            }
+            if (r->sw[SW_APPEAR] < 0 && !row_turn[i]) row_turn[i] = 1;
+            if (kind == 1 && r->arg[5] != -1 && row_turn[i] == 1) { /* control: _A4 */
+                if (!(row_hold[i] & 0x8000)) row_hold[i] = (unsigned short)(0x8000 | (r->arg[5] > 0 ? (r->arg[5] > 0x7FFF ? 0x7FFF : r->arg[5]) : 0));
+                int left = (row_hold[i] & 0x7FFF) - 1;
+                row_hold[i] = (unsigned short)(0x8000 | (left > 0 ? left : 0));
+                if (left <= 0) { pgroup_kill_pieces((int)i); row_turn[i] = 3; row_kill((int)i); printf("star piece group %u: its time is over%c", i, 10); }
+            }
+            continue;
+        }
+        if (r->sw[SW_APPEAR] < 0 || !shown) continue; /* (appearCoinFix at init: no nerve) */
+        if (row_turn[i] == 0) { row_turn[i] = 1; row_step[i] = 0; }
+        if (row_turn[i] == 1 && row_step[i]++ == 3) { /* exeAppear: sAppearDelayTime */
+            se_start(kind == 4 ? SE_SY_PURPLE_COIN_APPEAR : SE_SY_COIN_APPEAR, NULL);
+            row_turn[i] = 2;
+            row_hold[i] = (unsigned short)(r->arg[1] >= 0 ? (r->arg[1] > 0xFFFF ? 0xFFFF : r->arg[1]) : 0); /* appearCoinAllTimer */
+            if (r->arg[1] >= 0) printf("coin group %u: %d frames%c", i, r->arg[1], 10);
+        }
+        if (row_turn[i] == 2 && r->arg[1] >= 0) { /* Coin::exeFixTimer: FlashingCtrl's end kills it */
+            if (row_hold[i]) row_hold[i]--;
+            if (row_hold[i] <= 1) {
+                Pickup *arr = kind == 4 ? purple : coins;
+                for (int k = 0, n = kind == 4 ? npurple : ncoins; k < n; k++) if (arr[k].row == (int)i) arr[k].alive = PICK_GONE;
+                row_turn[i] = 3;
+                printf("coin group %u: its time is over%c", i, 10);
+            }
         }
     }
 }
@@ -46965,7 +47066,7 @@ static void update_cursor(void)
     cur_y = cur_y < 0 ? 0 : cur_y > 447 ? 447 : cur_y;
     cur_vx = cur_x - px; cur_vy = cur_y - py;
     for (int i = 0; i < npieces && cur_idle < 300; i++)
-        if (pickup_on(&pieces[i], 1) && cursor_sees(pieces[i].pos, 24.0f)) {
+        if (pickup_on(&pieces[i], 1) && piece_pointer_ok(&pieces[i]) && cursor_sees(pieces[i].pos, 24.0f)) {
             pieces[i].alive = PICK_GONE;
             got_pieces++;
             fx_at(FX_STARPIECE_STARPIECEGET, pieces[i].pos, up_at(pieces[i].pos, mario->up));
@@ -58780,6 +58881,7 @@ void game_update(void)
     LQ(39, update_meteor());
     LQ(40, update_killers());
     LQ(41, update_flows());
+    update_pickup_groups();
     LQ(42, update_prom());
     LQ(43, update_beeflowers());
     LQ(44, update_ticorails());
