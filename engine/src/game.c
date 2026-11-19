@@ -1520,6 +1520,7 @@ static int gw_puppet(void);
 static int gw_talk_continue(int t);
 static int gw_pipe_switch(void);
 static void gw_init(void), gw_update(void), gw_draw(void);
+static void trk_init(void), trk_update(void); static int trk_star_out(int row), trk_puppet(void); /* trick.inc: TrickRabbitFreeRun */
 static void pro_init(void), pro_start(void), pro_update(void), pro_draw(void); /* the new game's opening (its section) */
 static int pro_puppet(void);
 typedef struct { u16 total; u8 suspend, talk; } DxPart;           /* talk: MR::isDemoPartTalk */
@@ -3051,6 +3052,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         render_target_reserve(st_mapboard || scene_type(s, "MirrorAreaCube") >= 0 || raster);
     }
     gw_init();
+    trk_init();
     pro_init();
     mi_init();
     story_scene_start();
@@ -23806,7 +23808,7 @@ static void update_mario_(void)
             else if (pro_puppet() || tsp_puppet() || gh_puppet()) ; /* the prologue's DemoPeachCastleGate (pro_update); GhostPlayer's startBckPlayerJ */
             else if (rm_bck()) { int mode = 0; if (!m_clip_is(rm_bck())) { anim_clip_info(rm_bck(), &mode); mario_play(rm_bck(), 1.0f, mode == 2 || mode == 4); } } /* the race's startBckPlayer */
             else if (bsb_demo() || bk_demo() || tb_demo() || kp_demo() || pol_demo()) { if (!m_clip_is("battlewait")) mario_play("battlewait", 1.0f, 1); } /* BossStinkBug's demos: startBckPlayer BattleWait */
-            else if (!star_demo && !gw_puppet()) mario_play("wait", 1.0f, 1);
+            else if (!star_demo && !gw_puppet() && !trk_puppet()) mario_play("wait", 1.0f, 1);
             else if (mario_anim->clip_id < 0 || strcmp(sc->clips[mario_anim->clip_id].name, "powerstarget")) mario_play("powerstarget", 1.0f, 0);
             anim_update(mario_anim);
         }
@@ -45502,7 +45504,7 @@ static V3 star_pos(const Inst *in, int *state)
             *state = row_dead[w - 1];
             return vadd(from, v3(0.0f, 100.0f, 0.0f));
         }
-        if ((!row_dead[w - 1] && !st_star_out(w - 1) && !tbox_star_out(w - 1) && !flip_star_out(w - 1) && !coach_took(w - 1) && !kino_took(w - 1) && !race_took(w - 1) && !sy_took(w - 1)) || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
+        if ((!row_dead[w - 1] && !st_star_out(w - 1) && !tbox_star_out(w - 1) && !flip_star_out(w - 1) && !coach_took(w - 1) && !kino_took(w - 1) && !trk_star_out(w - 1) && !race_took(w - 1) && !sy_took(w - 1)) || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
                                                                                                        * here: no star) */
     } else if (got_coins < 100 && got_purple < 100) { /* ScenePlayingResult: 100 coins, or 100 purple coins */
         *state = 0;
@@ -46427,6 +46429,7 @@ static void shoot_piece(void)
 
 static int butler_shot(V3 p);
 static int gw_shot(V3 p);
+static int trk_shot(V3 p);
 static int npc_shot(V3 p);
 static int npc_nsens;
 static int km_guard(Kuribo *k, V3 shot_vel);
@@ -46528,6 +46531,7 @@ static void update_shots(void)
         if (!hit && hhp_reflects(s->pos, 30.0f)) hit = 2; /* HammerHeadPackun: isMsgStarPieceReflect */
         if (!hit && butler_shot(s->pos)) hit = 1;
         if (!hit && gw_shot(s->pos)) hit = 1; /* RunawayRabbit: isMsgStarPieceAttack */
+        if (!hit && trk_shot(s->pos)) hit = 1; /* TrickRabbitFreeRun: receiveMsgBlowDamage */
         if (!hit) hit = npc_shot(s->pos); /* NPCActor::receiveMsgPlayerAttack: isMsgStarPieceReflect (Tico: isMsgStarPieceAttack) */
         if (!hit && hana_shot(s->pos)) hit = 1;
         if (!hit) hit = dino_shot(s->pos);             /* DinoPackun: the hit reaction; its egg and tail reflect */
@@ -53714,6 +53718,8 @@ static void gw_caught(GwRabbit *r) /* attackSensor: RunawayRabbitCollect::notice
     w_nrv(&r->k, RR_CAUGHT);
 }
 
+#include "trick.inc"
+
 /* RunawayTico's comments (appearHole / Pipe / BushComment, appearMamaComment) after a catch */
 static void rt_appear(int c, V3 at)
 {
@@ -57935,6 +57941,7 @@ void game_update(void)
 
     LQ(5, update_talk_director());
     gw_update();
+    trk_update();
     miss_event_update();
     if (lives != gd_player_left()) gd_add_player_left(lives - gd_player_left()); /* GameDataPlayerStatus: kept over scenes */
     dome_update();

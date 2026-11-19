@@ -217,7 +217,7 @@ def sky_sea(b, mat3, m):
 EXTRA = {"ConcreteBlock": ("ConcreteBlockBreak",),  # SimpleBreakableObj: its break ModelObj (game.c break_inst)
          "WaterfallCaveCover": ("WaterfallCaveCoverBreak",),  # MapObjActor::tryCreateBreakModel (statics.inc st_wcc)
          "Syati": ("PrizeRing",),  # Syati::initRings: its five PrizeRings (game.c syati.inc)
-         "TeresaRacer": ("PStar",), "PenguinRacerLeader": ("PStar",), "PenguinCoach": ("PStar",), "LuigiNPC": ("PStar",), "LuigiEvent": ("PStar",),  # TakeOutStar's mStarModel (game.c tos_*)
+         "TeresaRacer": ("PStar",), "PenguinRacerLeader": ("PStar",), "PenguinCoach": ("PStar",), "LuigiNPC": ("PStar",), "LuigiEvent": ("PStar",), "TrickRabbit": ("PStar",), "TrickRabbitFreeRun": ("PStar",),  # TakeOutStar's mStarModel (game.c tos_*); RabbitStateCaught's mPowerStarModel (trick.inc)
          "WatchTowerRotateStep": ("WatchTowerRotateStepLift",),  # its four PartsModels (statics.inc st_wtower)
          "UFOKinokoUnderConstruction": ("UFOKinokoLandingAstro",), "LargeChain": ("LargeChainFixPoint",),  # LargeChain: its fixed points
          "TicoGalaxy": ("TicoFatGoodsStarPiece", "Tico~5"),  # TicoFat's goods; its TicoStarRing (Tico::initBase(5): ColorChange 5)  # its init: that model once isUFOKinokoUnderConstruction is over (statics.inc)
@@ -507,7 +507,8 @@ def scene(fs, galaxy, scenario):
                               stop=int_or(info, "path_arg1", len(ids), -1)[i], parg0=int_or(info, "path_arg0", len(ids), -1)[i], arg0=int_or(pts, "point_arg0", npt, -1),
                               arg5=rail_arg5(int_or(pts, "point_arg5", npt, -1), int_or(pts, "point_arg7", npt, -1), int_or(info, "path_arg4", len(ids), -1)[i]),
                               arg1=int_or(pts, "point_arg1", npt, -1),
-                              arg2=int_or(pts, "point_arg2", npt, -1)))
+                              arg2=int_or(pts, "point_arg2", npt, -1), arg3=int_or(pts, "point_arg3", npt, -1),
+                              arg7=int_or(pts, "point_arg7", npt, -1), link=int_or(info, "Path_ID", len(ids), -1)[i]))
     for o in objs:
         if o["name"].startswith("AssemblyBlock") and (o["zone"], o["l_id"]) in homes:
             o["home"] = homes[(o["zone"], o["l_id"])]
@@ -1916,6 +1917,43 @@ def path_entry(p):
             b"".join(struct.pack("<ii", a1[i], a2[i]) for i in range(n)))
 
 
+def rgph_chunk(keep, paths):
+    """'RGPH': TrickRabbit's rail graph (MR::createRailGraphFromJMap, RailGraphUtil.cpp addRailToGraph): its rail and
+    the rails linked from it by Path_ID; a point within 100 of a node is that node (the nearest), consecutive points
+    are joined by an edge with the earlier point's args, a closed rail's last to its first. u32 n, n x {s32 row,
+    u32 nnodes, u32 nedges, f32 nodes[nnodes][3], nedges x {u16 a, u16 b, s16 arg0, arg1, arg2, arg3, arg7, pad}}."""
+    out = []
+    s16 = lambda v: max(-0x8000, min(0x7FFF, s32(v) if v >= 0 else v))
+    for row, o in enumerate(keep):
+        if o["name"] != "TrickRabbit" or o["path"] < 0:
+            continue
+        by_id = {p["id"]: p for p in paths if p["zone"] == o["zone"]}
+        nodes, edges, rid, seen = [], [], o["path"], set()
+        while rid in by_id and rid not in seen:
+            seen.add(rid)
+            p = by_id[rid]
+            prev = first = -1
+            args = (-1,) * 5
+            for i, pt in enumerate(p["pts"]):
+                near = min(range(len(nodes)), key=lambda k: math.dist(nodes[k], pt), default=-1)
+                if near < 0 or math.dist(nodes[near], pt) >= 100.0:
+                    nodes.append(pt)
+                    near = len(nodes) - 1
+                if prev != -1 and near != prev:
+                    edges.append((prev, near) + args)
+                if i == 0:
+                    first = near
+                prev = near
+                args = tuple(s16(p[k][i]) for k in ("arg0", "arg1", "arg2", "arg3", "arg7"))
+            if p["closed"] and prev != -1 and first != prev:
+                edges.append((prev, first) + args)
+            rid = p.get("link", -1)
+            rid = -1 if rid in (-1, 0xFFFF) else rid
+        out.append(struct.pack("<iII", row, len(nodes), len(edges)) + b"".join(struct.pack("<3f", *n) for n in nodes) +
+                   b"".join(struct.pack("<HH5hH", *e, 0) for e in edges))
+    return chunk(b"RGPH", struct.pack("<I", len(out)) + b"".join(out)) if out else b""
+
+
 def to_world(zones, up_ids, items):
     """Zone-local rows (pos, rot) -> world, in place: world = zone placement composed up its chain of parents.
     Returns each zone's world (rotation rows, translation)."""
@@ -2094,6 +2132,8 @@ def declare_stars(keep, scenario, appear, jp):
             k = None if 1 <= s32(r["args"][0]) <= 3 else -1
         elif r["name"] == "Kinopio":  # Kinopio::init: declarePowerStar in its power star mode (mBehavior 8)
             k = None if s32(r["args"][2]) == 8 else -1
+        elif r["name"] in ("TrickRabbit", "TrickRabbitFreeRun"):  # their init: declarePowerStar
+            k = None
         elif r["name"] in ("LuigiNPC", "LuigiEvent"):  # LuigiNPC::isDeclarePowerStarType: Afraid, Event, OnTree, Arrested
             t = s32(r["args"][0]) + (2 if r["name"] == "LuigiEvent" else 0)
             k = None if t == 0 or 2 <= t < 5 else -1
@@ -2200,6 +2240,7 @@ def placement(fs, galaxy, scenario):
     fol = [(i, o["oid"]) for i, o in enumerate(keep) if 0 <= o.get("oid", -1) < 0x8000 and ("Gravity" in o["name"] or o["name"] in ("SwitchCube", "SwitchArea"))]
     if fol:
         out.append(chunk(b"FOLW", struct.pack(f"<I{2 * len(fol)}h", len(fol), *[x for f in fol for x in f])))
+    out.append(rgph_chunk(keep, paths))
     out.append(chunk(b"ZPAR", struct.pack(f"<I{len(zones)}i", len(zones),
                                           *[-1 if i == 0 else up_ids.get(i, 0) for i in range(len(zones))])))
     jp2en = dict(zip(B.bcsv_column(names, "jp_name"), B.bcsv_column(names, "en_name")))
