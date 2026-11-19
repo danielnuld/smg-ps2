@@ -19,6 +19,18 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   WinDemo); rush: the mode changes, settingRush (mode_rush's binds, Fluff, SpiderAttachPoint). Test `jet` XF
   -DDROP_TEST=1 / 2 OceanRingGalaxy/1: taken, dropped at 600 (vanished, revived / Drop, reset at 90, revived).
   (Pole, the plants, Creeper, SpaceCocoon, JumpBranch: rush_drop.) Left: JumpStand, SwingRope, Sandstorm binds.
+- #578 ChangeBgmCube, RestartCube's BGM change, BgmProhibitArea (2026-11-18, agent bgm): game.c update_bgm_cubes after
+  AreaObj/ChangeBgmCube.cpp (arg0 0: the stage's BGM number arg1 of AudStageBgmTable's sStageBgmSet = stage_bgm_set,
+  nothing when it already plays, else its mute state number arg2; 1: stopStageBGM over arg1 with BGM number arg2 next;
+  2: the mute state number arg1 over arg2), stage_bgm_change shared with RestartCube::changeBgm (its arg1 / arg2: 55
+  placements name a BGM). cube_bgm_invalid is AudSceneMgr::_1D (setCubeBgmChangeInvalid: every miss, startAfterBossBGM,
+  three boss BGMs), cleared at each scene; MR::clearBgmQueue (bgm_last / bgm_next) with it. BgmProhibitArea is written
+  but no stage places one (its table names OceanPhantomCaveGalaxy and a test map). Plain build XF=-DBGMCUBE_TEST
+  (overlay wt-bgm): BattleShipGalaxy/3: a type 1 cube stops the BGM over 150, type 0 cubes start MBGM_GALAXY_13 and
+  MBGM_GALAXY_01_TOMB, the cubes of the BGM that plays do nothing, none after the miss. The cubes around the start fire
+  once before the scene's own start of the stage BGM (the starter's), which then restarts it: left as it is.
+  ponytail: setNextIdStageBgm as bgm_next (started once the stream stopped). Repack: every galaxy with a ChangeBgmCube
+  (slice.py LOGIC; they were dropped from the packs): 110 cubes in 14 galaxies and 6 zones.
 - #9 (issue #3) EE performance: Good Egg bench, EE time a frame (render_begin's flip / VIF / clear wait now printed
   apart: ~3.4 ms of the old "draw" was that wait): start view 19.9 -> 12.5 ms (logic 6.7 -> 5.1, draw 12.7 -> 7.0),
   path 16.4 -> 11.5, worst 38-42 -> 26. Clip cache sized per clip (inflates 8300-15000 -> 7-22 a bench), skinned
