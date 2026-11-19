@@ -518,6 +518,15 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   Move), Pause (SW_B on: Move), Move (the current rail point's arg0 x 0.1 a frame, SE_AT_LV_JUMBO_SUN_MOVE; the
   point's arg1 1: Pause; the goal: Wait). Test: plain `XF=-DLJS_TEST`, HellProminenceGalaxy/1 (its SW_A on at frame 1000): in PCSX2 it leaves Wait and moves down its rail at its points' 0.6 .. 0.8 a frame (the Pause at a point's arg1 and its sound's log line were not seen in the run). ponytail: no bloom model, no LodCtrl. Cost:
   about 0.9 KB of the ELF (nm ljs_*, one 56 B state); memcheck on a plain build of main with the six classes of this batch: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB. **Release: sound.py --pack HellProminenceGalaxy** (SE_AT_LV_JUMBO_SUN_MOVE was cut).
+- DharmaSambo after Petari (feat/dharma-sambo, #524, 2026-11-19): engine/src/dharma.inc (ds_*), SandClockGalaxy's
+  stack of four parts (one placed, SandStormJumpZone, scenarios 2 / 4 / 7, behind SW_APPEAR): WaitUnderGround /
+  Appear / AppearImmediately / Pursue / Attack / Hide / HideAppear, SpinHitted (a part blown off), Killed by the
+  head, the escape with the head alone, TrampleDeath; slice.py DharmaSamboPartsHead / Body looks, jpa.py NAMED
+  DharmaSamboParts. ponytail: the 2P pointer's bind, the parts' BTKs, their shadows. Test
+  XF='-DDS_TEST -DTEST_SHOWN=\"DharmaSambo\"' (SandClockGalaxy/2, packs sliced again: overlay): PCSX2, the nerves
+  cycle HideAppear -> WaitUnderGround -> Appear -> Pursue -> Hide with 4 parts, no missing clip or effect; Mario's
+  spin beside it: "part blown, 3 left", "2 left", then its attack downs Mario. Not seen: the head blown or
+  trampled, the escape. Needs SandClockGalaxy and resident.bin repacked (slice_all.py).
 - Sound packs: the classes made by plain create functions (fix/sfxcut-create-functions, #698, 2026-11-18):
   tools/sfxcut.py create_classes took a placement's class from the template argument of its create function; 44 of
   the 47 placements made by a plain function (KoopaFunction::createKoopaVs1 / 2 / 3, MR::createDinoPackunVs1 / Vs2,

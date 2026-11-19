@@ -134,14 +134,14 @@ static struct { int on, nrv, t, owner, bnd, gnd, gattr, ginst; V3 pos, vel, n; f
 static struct { int row, nrv, step, star; V3 last; } exts[MAX_EXTS]; /* star: ExterminationCheckerKuribo (_A0) */
 static int nexts;
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_BEGOSPRING, WALK_KCHIEF, WALK_BEGOBABY, WALK_BBEGO, WALK_KAMECK, WALK_NOKO, WALK_SAMBOHEAD, WALK_BOMBTERESA, WALK_JELEC, WALK_BEGOLAUNCH, WALK_MERAKING, WALK_BOMBBIRD, WALK_KINDS };
+       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_BEGOSPRING, WALK_KCHIEF, WALK_BEGOBABY, WALK_BBEGO, WALK_KAMECK, WALK_NOKO, WALK_SAMBOHEAD, WALK_BOMBTERESA, WALK_JELEC, WALK_BEGOLAUNCH, WALK_MERAKING, WALK_BOMBBIRD, WALK_DHARMA, WALK_KINDS };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
 static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH},
                                                                     {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"BombBird", WALK_BOMBBIRD}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}, {"Metbo", WALK_METBO}, {"TeresaWater", WALK_TERESAW},
                                                                     {"Snakehead", WALK_SNAKEHEAD}, {"SnakeheadSmall", WALK_SNAKEHEAD}, {"Kabokuri", WALK_KABOKURI}, {"Pukupuku", WALK_PUKUPUKU},
                                                                     {"BombHei", WALK_BOMBHEI}, {"BombHeiLauncher", WALK_BOMBHEI}, {"BombLauncher", WALK_BOMBHEI},
                                                                     {"StringSpider", WALK_STRSPIDER}, {"BegomanSpike", WALK_BEGOSPIKE}, {"BegomanSpring", WALK_BEGOSPRING}, {"BegomanSpringHide", WALK_BEGOSPRING},
-                                                                    {"KuriboChief", WALK_KCHIEF}, {"ChildKuribo", WALK_KURIBO}, {"BegomanBaby", WALK_BEGOBABY}, {"BossBegoman", WALK_BBEGO}, {"FireBallBeamKameck", WALK_KAMECK}, {"ChildKameck", WALK_KAMECK}, {"NokonokoLand", WALK_NOKO}, {"SamboHead", WALK_SAMBOHEAD}, {"BombTeresa", WALK_BOMBTERESA}, {"JellyfishElectric", WALK_JELEC}, {"BegomanBabyLauncher", WALK_BEGOLAUNCH}, {"IceMerameraKing", WALK_MERAKING}, {"ChildIceMeramera", WALK_MERAMERA}, {"TeresaChief", WALK_TERESA}}; /* ChildKuribo: createNoItemKuriboActor */
+                                                                    {"KuriboChief", WALK_KCHIEF}, {"ChildKuribo", WALK_KURIBO}, {"BegomanBaby", WALK_BEGOBABY}, {"BossBegoman", WALK_BBEGO}, {"FireBallBeamKameck", WALK_KAMECK}, {"ChildKameck", WALK_KAMECK}, {"NokonokoLand", WALK_NOKO}, {"SamboHead", WALK_SAMBOHEAD}, {"BombTeresa", WALK_BOMBTERESA}, {"JellyfishElectric", WALK_JELEC}, {"BegomanBabyLauncher", WALK_BEGOLAUNCH}, {"IceMerameraKing", WALK_MERAKING}, {"ChildIceMeramera", WALK_MERAMERA}, {"TeresaChief", WALK_TERESA}, {"DharmaSambo", WALK_DHARMA}}; /* ChildKuribo: createNoItemKuriboActor */
 #define NEW_WALKERS ((int)(sizeof new_walkers / sizeof new_walkers[0]))
 #define POL_GROCKS 16 /* PoltaGroundRockHolder sMaxPoltaGroundRock (polta.inc) */
 #define POL_BOMBS 6 /* Polta's BombTeresaHolder: sBombTeresaBufferSize */
@@ -157,6 +157,7 @@ static const Model *walker_new_model(int row);
 static void mk_update(Kuribo *k), mk_demo_update(void), mk_draw(Kuribo *k, const Model *md, Anim *a), mk_draw_extras(void), mk_begin_demo(int row);
 static int mk_noclip(const Kuribo *k);
 int mk_shot(V3 p); /* IceMerameraKing (ice_meraking.inc) */
+static void ds_update(Kuribo *k), ds_draw(Kuribo *k, const Model *md, Anim *a); /* DharmaSambo (dharma.inc) */
 static void st_mirror_pass(V3 ce, V3 cw, V3 cu);
 static int st_mapboard; /* AstroMapBoard shown: 1 its picture to capture (game_draw), 2 done */
 static int st_flag_class(const char *n), st_cast_hook(int row, int type, int part), st_rail_obj(const char *n), st_star_out(int row); static void st_update(void), st_draw(void), st_init(const Scene *s); static int st_shot(V3 p), st_jet_hit(V3 p); static void st_column_strike(V3 c, float r); /* statics.inc */
@@ -36374,6 +36375,7 @@ static void update_kuribo_one(Kuribo *k)
             else if (k->kind == WALK_BOMBTERESA) bt_update(k);
             else if (k->kind == WALK_MERAKING) mk_update(k);
             else if (k->kind == WALK_BOMBBIRD) bbd_update(k);
+            else if (k->kind == WALK_DHARMA) ds_update(k);
             return;
         }
         if (k->kind == WALK_PETARI) {
@@ -58303,6 +58305,7 @@ int game_test_bk(int frame)
 #include "swing_rope.inc" /* SwingRope: swr_* */
 #include "snow_floor.inc" /* SnowFloor, SnowplowSwitch: snow_* */
 #include "clip_area.inc" /* ClipArea*, ClipFieldSwitch, FallOutFieldDraw, SimpleClipPartsObj, ClipAreaDropLaser: ca_* */
+#include "dharma.inc" /* DharmaSambo: ds_*, game_test_ds */
 #include "statics.inc" /* placed classes once drawn still (Flag ...): st_* */
 
 /* MapObjActor::appear (MapObjActor.cpp:69): a MapObjActor shown by its SW_APPEAR (syncStageSwitchAppear: also when it
@@ -61349,6 +61352,7 @@ void game_draw(void)
                 a->speed = k->act_rate; /* setBckRate */
                 if (!wvis) { anim_advance(a); continue; }
                 if (k->kind == WALK_MERAKING) { mk_draw(k, md, a); continue; }
+                if (k->kind == WALK_DHARMA) { ds_draw(k, md, a); continue; }
                 if (k->kind == WALK_BEGOSPIKE && k->nrv == BG_BROKENPIECE) { /* hideModel; mBrokenModel's Broken01 */
                     const Model *bm = scene_model(sc, "BegomanBrokenPiece");
                     Anim *ba = bm && bm->skin ? obj_anim((int)sc->nobjs * 2 + w_akey(k), bm, "BegomanBrokenPiece") : NULL;

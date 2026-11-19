@@ -100,6 +100,7 @@ SKINNED_OBJ += ("JumpGuarder", "JumpGuarderHead")  # JumpGuarder (game.c update_
 SKINNED_OBJ += ("SubmarineVolcanoBigColumnBreak",)  # SubmarineVolcanoBigColumn: its break model's Break (statics.inc)
 SKINNED_OBJ += ("LavaObstacleRockShell", "LavaObstacleRockHomeA", "ForestObstacleWoodA")  # HipDropMoveObj / HipDropDemoMoveObj: Move, the collision on the Move joint (game.c update_hipmoves)
 SKINNED_OBJ += ("DinoPackunVs2", "DinoPackunEggShellBreakVs2")  # DinoPackun (getVsCount 2): DinoPackun2's clips, its shell break model's Break (game.c dino)
+SKINNED_OBJ += ("DharmaSambo", "DharmaSamboPartsHead", "DharmaSamboPartsBody")  # DharmaSambo.cpp: its stack, its parts' head / body looks (setHead: "<archive>!<materials>" dropped) (game.c dharma.inc)
 SKINNED_OBJ += ("MarblePlanetCore", "MarblePlanetElectron")  # MarblePlanet: its core's BCK frame by the electrons left, the electrons' own clip (statics.inc st_mp_*)
 SKINNED_OBJ += ("TicoFatGoodsStarPiece",)  # TicoFat: NPCData TicoFatItem goods on StarPieceL / StarPieceR (TicoFatGoodsStarPiece / ..Far clips)
 # Koopa (Petari Boss/Koopa*.cpp, game.c koopa.inc): the clips of KoopaParts / KoopaFireStairs / KoopaShockWave / KoopaFireShort
@@ -144,7 +145,7 @@ def auto_anim(fsp, arc):
 ANIM_ARC = {"TamakoroWithTutorial": "Tamakoro", "TamakoroTutorial": "SignBoard", "DemoKoopaJrShip": "KoopaJrShip", "BegomanBabyLauncher": "BegomanLauncher", "KeySwitchOwned": "KeySwitch", "ChildKameck": "Kameck", "BkDemo": "BossKameckBattleDemo", "ChildKuribo": "Kuribo", "ChildIceMeramera": "IceMeramera", "MorphBubble": "ItemBubble", "MorphItemNeoHopper": "PowerUpHopper", "MorphItemNeoBee": "PowerUpBee", "MorphItemNeoTeresa": "PowerUpTeresa", "MorphItemNeoIce": "PowerUpIce", "MorphItemNeoFire": "PowerUpFire", "MorphItemNeoFoo": "PowerUpFoo", "RunawayRabbit": "TrickRabbit", "DemoRabbit": "TrickRabbit", "RunawayTico": "Tico", "LuigiEvent": "LuigiNPC", "TicoDomeLecture": "Tico", "ButlerExplain": "Butler", "ButlerMap": "Butler", "PStar": "PowerStar", "GStar": "GrandStar", "CocoSambo": "CocoSamboBody", "Karikari": "Karipon", "BenefitItemOneUp": "KinokoOneUp",
             "BenefitItemLifeUp": "KinokoLifeUp", "HammerHeadPackun": "PackunFlower", "Plant": "PlantSeed", "FlowerGroup": "Flower", "FlowerBlueGroup": "FlowerBlue",
             "CutBushGroup": "CutBush", "FirePressureRadiate": "FirePressure", "JumpBeamer": "JumpBeamerBody", "TreasureBoxKinokoOneUp": "TreasureBox", "TreasureBoxCoin": "TreasureBox", "TreasureBoxEmpty": "TreasureBox", "TreasureBoxGoldEmpty": "TreasureBoxGold", "TreasureBoxCrackedKinokoOneUp": "TreasureBoxCracked", "TreasureBoxCrackedAirBubble": "TreasureBoxCracked", "TreasureBoxBlueChip": "TreasureBox", "TreasureBoxYellowChip": "TreasureBox", "TreasureBoxKinokoLifeUp": "TreasureBox", "TreasureBoxCrackedKinokoLifeUp": "TreasureBoxCracked", "TreasureBoxCrackedEmpty": "TreasureBoxCracked"}  # where a class's clips are when not in its own-named archive
-ANIM_ARC.update({"DinoPackunVs2": "DinoPackun2", "DinoPackunEggShellBreakVs2": "DinoPackunEggShellBreak"})  # DinoPackun::init: initModelManagerWithAnm DinoPackun2 (getVsCount 2)
+ANIM_ARC.update({"DharmaSamboPartsHead": "DharmaSamboParts", "DinoPackunVs2": "DinoPackun2", "DinoPackunEggShellBreakVs2": "DinoPackunEggShellBreak"})  # DinoPackun::init: initModelManagerWithAnm DinoPackun2 (getVsCount 2)
 ANIM_ARC.update({c: a for c, a in WAIT_ARC.items() if c not in ANIM_ARC})
 # Air.cpp (NameObjFactory Air / PriorDrawAir / ProjectionMapAir / AirFar100m): no collision (Air::init makes none);
 # baked at the colours they rest at: tryStartAllAnim(own name), then appear's Appear at its end (setAllAnimFrameAtEnd)
@@ -173,7 +174,7 @@ CANM_ARC = {"GrandStarReturnDemoStarter": ("gsr", "DemoAstroReturn"), "TripodBos
 MODEL_ARC = {"TrickRabbitFreeRunChild": "TrickRabbit",  # TrickRabbitSnow (TrickRabbitSnowCollect::initRabbits): initModelManagerWithAnm TrickRabbit; the collector has no model (NO_DRAW)
              "TamakoroTutorial": "SignBoard",  # TamakoroTutorial::init: initModelManagerWithAnm SignBoard
              "Tico~5": "Tico~colorchange:5", "Koura~0": "Koura~koura:0", "Koura~1": "Koura~koura:1",  # NokonokoLand's JetTurtle: becomeSlowType / becomeFastType (Koura BRK frame 0 / 1)
-             "KeySwitchOwned": "KeySwitch", "TripodBossKillerGenerater": "TripodBossKillerCannon", "TripodBossUpperKillerCannon": "TripodBossKillerCannon", "TripodBossUnderKillerCannon": "TripodBossKillerCannon", "TripodBossBottomKillerCannon": "TripodBossKillerCannon", "ChildKameck": "Kameck", "BkDemo": "BossKameckBattleDemo", "ChildKuribo": "Kuribo", "ChildIceMeramera": "IceMeramera", "LuigiEvent": "LuigiNPC", "TicoDomeLecture": "Tico", "PStar": "PowerStar", "GStar": "GrandStar", "OtaKing": "OtaKing", "KoopaJr": "KoopaJr", "Tico": "Tico", "Plant": "PlantSeed", "DinoPackunVs2": "DinoPackun2", "DinoPackunTailBallVs2": "DinoPackunTailBall^vs2", "DinoPackunEggShellVs2": "DinoPackunEggShell^vs2", "DinoPackunEggShellVs2#EggBroken": "DinoPackunEggShell^vs2#EggBroken", "DinoPackunEggShellBreakVs2": "DinoPackunEggShellBreak^vs2",
+             "KeySwitchOwned": "KeySwitch", "TripodBossKillerGenerater": "TripodBossKillerCannon", "TripodBossUpperKillerCannon": "TripodBossKillerCannon", "TripodBossUnderKillerCannon": "TripodBossKillerCannon", "TripodBossBottomKillerCannon": "TripodBossKillerCannon", "ChildKameck": "Kameck", "BkDemo": "BossKameckBattleDemo", "ChildKuribo": "Kuribo", "ChildIceMeramera": "IceMeramera", "LuigiEvent": "LuigiNPC", "TicoDomeLecture": "Tico", "PStar": "PowerStar", "GStar": "GrandStar", "OtaKing": "OtaKing", "KoopaJr": "KoopaJr", "Tico": "Tico", "Plant": "PlantSeed", "DharmaSamboPartsHead": "DharmaSamboParts!SamboMatBody_v", "DharmaSamboPartsBody": "DharmaSamboParts!SamboMatFace_v,SamboMatEye_v,FlowerMat_v", "DinoPackunVs2": "DinoPackun2", "DinoPackunTailBallVs2": "DinoPackunTailBall^vs2", "DinoPackunEggShellVs2": "DinoPackunEggShell^vs2", "DinoPackunEggShellVs2#EggBroken": "DinoPackunEggShell^vs2#EggBroken", "DinoPackunEggShellBreakVs2": "DinoPackunEggShellBreak^vs2",
              # the Gateway intro (HeavensDoorGalaxy 1): RunawayRabbitCollect's children, DemoRabbit, the baby Lumas; the
              # rabbits' TrickRabbitBaby and the RunawayTico's TicoBaby are their EXTRA (by arg / cast id)
              "RunawayRabbit": "TrickRabbit", "DemoRabbit": "TrickRabbit", "RunawayTico": "Tico", "TicoBaby": "TicoBaby",
@@ -235,6 +236,7 @@ EXTRA = {"ConcreteBlock": ("ConcreteBlockBreak",),  # SimpleBreakableObj: its br
          "BossStinkBug": ("BossStinkBugWing", "BossStinkBugBombLauncher", "BossStinkBugBomb", "BossStinkBugDemo"),
          "TombSpider": ("TombSpiderPlanet", "TombSpiderCocoon", "TombSpiderGland", "TombSpiderVitalSpot"),  # TombSpiderEnvironment (planet, cocoon), TombSpiderParts (glands, vital spots)  # its PartsModels, bombs, DemoPositionController  # createScenery, createMarioPosDummyModel
          "MorphItemNeoFire": ("MarioFireBall",), "AirBubbleGenerator": ("AirBubble",),
+         "DharmaSambo": ("DharmaSamboPartsHead", "DharmaSamboPartsBody"),  # its DharmaSamboParts (game.c dharma.inc)
          "MarblePlanet": ("MarblePlanetCore", "MarblePlanetElectron", "MarblePlanetElectronShadow"),  # MarblePlanet::initCoreAndElectron (statics.inc st_mp_*)
          "DinoPackunVs2": ("DinoPackunTailBallVs2", "DinoPackunEggShellVs2", "DinoPackunEggShellVs2#EggBroken", "DinoPackunEggShellBreakVs2", "DinoPackunFireBall"),  # DinoPackun::initBall / initEggShell (getVsCount 2: startBtp Vs2), DinoPackunFireHolder (game.c dino2_*)
          "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell", "DinoPackunEggShell#EggBroken", "DinoPackunEggShellBreak"), "OtaKing": ("CocoNut", "OtaKingFoot", "FireBall", "FireBubble", "OtaKingMagma", "OtaKingLongFoot", "OtaKingMagmaBloom"), "OtaRock": ("CocoNut", "FireBall"), "HammerHeadPackun": ("PackunLeaf",), "Plant": ("PlantTop", "PlantLeaf"), "CocoSambo": ("CocoSamboHead",), "Hanachan": ("HanachanHead", "HanachanBody", "HanachanBodyS"), "PackunPetit": ("PackunPetitHead",),
@@ -870,7 +872,7 @@ def btp_tables(lfiles):
 LAYER_BLEND = {"add": 2, "sub": 7, "mul": 6, "lerp": 1}
 
 
-def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat=None, player=None, btp=None):
+def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat=None, player=None, btp=None, drop=None):
     """-> (groups [(verts, tris, uvs or None, texture or None, slots or None, colours or None, blend)], kcl bytes or
     None,
     skin chunk entry or None) for the first J3D model of an archive. texture = tex.to_ps2 dict of the group's material
@@ -975,7 +977,8 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                     mats = [posed[k] if k < len(posed) else np.eye(4) for k in d]
                     verts = [tuple(float(x) for x in (m[:3, :3] @ p + m[:3, 3])) for m, p in zip(mats, verts)]
                 mat = shapes.get(info["shape"])
-                if mat is not None and (arc.stem, tex.material_name(b, bl[b"MAT3"], mat)) in DROP_MATERIALS:
+                if mat is not None and ((arc.stem, tex.material_name(b, bl[b"MAT3"], mat)) in DROP_MATERIALS or
+                                        (drop and tex.material_name(b, bl[b"MAT3"], mat) in drop.split(","))):
                     continue
                 pj_ = None
                 if mat is not None:  # its Projmap textures at what this shape reads of them (tex.proj_texels), through
@@ -2229,7 +2232,7 @@ def placement(fs, galaxy, scenario):
                 arcmap.setdefault(o["name"] + e, arcmap[o["name"]] + e if arcmap[o["name"]] else None)
             else:
                 ea = MODEL_ARC.get(e, e)  # an EXTRA model from another archive (PStar: a skinned PowerStar)
-                arcmap.setdefault(e, ea if (fsp / "ObjectData" / f"{ea.partition('#')[0].partition('~')[0].partition('^')[0]}.arc").exists() else None)
+                arcmap.setdefault(e, ea if (fsp / "ObjectData" / f"{ea.partition('#')[0].partition('~')[0].partition('^')[0].partition('!')[0]}.arc").exists() else None)
     sd = {n.lower(): d for n, d in B.rarc_files((fsp / "StageData" / galaxy / f"{galaxy}Scenario.arc").read_bytes())}
     sd = sd["scenariodata.bcsv"]
     names = next(B.rarc_files((fsp / "StageData" / "ObjNameTable.arc").read_bytes()))[1]
@@ -2369,6 +2372,7 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
         a, _, hp = a.partition("%")  # "<archive>%<player>": MarioHandL / R with that player's hand material
         a, _, mk = a.partition("@")  # "<archive>@<k>": material colour k (MAT_COLOR)
         a, _, bt = a.partition("^")  # "<archive>^<BTP>": its texture pattern's frame 0 (startBtp)
+        a, _, dm = a.partition("!")  # "<archive>!<material>,...": those materials' shapes left out (hideMaterial)
         mc = (MAT_COLOR[a][0], tuple(MAT_COLOR[a][1][int(mk)])) if mk else None
         cls = t.partition("~")[0]
         arc = fsp / "ObjectData" / f"{a}.arc"
@@ -2376,11 +2380,11 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
             continue
         sk = cls in SKINNED or cls in SKINNED_OBJ or cls in AUTO_SKINNED or cls in MORPH_SKIN
         # one archive static and skinned (PowerStar / PStar): two entries; and per layer step (slice_all LAYER_STEPS)
-        key = (a, pose, ratio, brk, mc, sk, hp, bt, tex.LAYER_MIN, tex.LAYER_MAX)
+        key = (a, pose, ratio, brk, mc, sk, hp, bt, dm, tex.LAYER_MIN, tex.LAYER_MAX)
         if key not in _model_cache:
             st = {}
             _model_cache[key] = (model_groups(arc, ratio, st, sk,
-                                              pose or None, brk, mc, hp or None, bt or None), st)
+                                              pose or None, brk, mc, hp or None, bt or None, dm or None), st)
         (groups, kcl, sk), st = _model_cache[key]
         for k, v in st.items():
             if not k.startswith("_"):
