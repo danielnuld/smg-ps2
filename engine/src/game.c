@@ -48645,13 +48645,14 @@ static void put_test(void)
                     row_axes(&sc->objs[row], &x, &z);
                     mario->pos = vadd(row_pos(&sc->objs[row]), vmul(vcross(z, x), PUT_UP));
                 }
-                if (row >= 0 && !strcmp(cls, "CollisionArea")) { /* 150 over the top face of the first one with an AreaPolygon */
+                if (row >= 0 && !strcmp(cls, "CollisionArea")) { /* 30 before the +X face (its AreaPolygon's first face) of
+                                                                   * the first shown one that has a polygon there */
                     int t = (int)sc->objs[row].type;
                     for (u32 i = 0; i < sc->nobjs; i++)
-                        if ((int)sc->objs[i].type == t && sc->objs[i].arg[3] != 0 && sc->objs[i].scale[1] >= 0.2f) { row = (int)i; break; }
+                        if ((int)sc->objs[i].type == t && (sc->objs[i].arg[3] & 1) && row_shown((int)i)) { row = (int)i; break; }
                     V3 x, z;
                     row_axes(&sc->objs[row], &x, &z);
-                    mario->pos = vadd(row_pos(&sc->objs[row]), vmul(vcross(z, x), 500.0f * sc->objs[row].scale[1] + 150.0f));
+                    mario->pos = vadd(row_pos(&sc->objs[row]), vmul(x, 500.0f * sc->objs[row].scale[0] + 30.0f));
                     mario->hvel = v3(0, 0, 0); mario->vup = 0;
                 }
                 printf("put file: %s row %d, inside %d, SW_A %d" "\n", cls, row, row >= 0 && area_inside(&sc->objs[row], mario->pos),
@@ -50625,6 +50626,20 @@ static void col_areas_init(const Scene *s)
         if (r->arg[3] == 0) continue;
         cpolys[i].has = 1;
         cpoly_set(&cpolys[i], r, 0);
+#ifdef PUT_TEST /* the KCL just built asked as the engine asks it: a sphere of 60 whose centre is 30 before the face's
+                 * middle (a hit 30 deep), a segment from 100 before it to 100 behind (half way) */
+        if (!ncpolys++) {
+            V3 ax, az;
+            row_axes(r, &ax, &az);
+            V3 c = cpolys[i].c, a = vadd(c, vmul(ax, 30.0f)), b = vadd(c, vmul(ax, 100.0f)), d = vmul(ax, -200.0f);
+            float fc[3] = {a.x, a.y, a.z}, fo[3] = {b.x, b.y, b.z}, fd[3] = {d.x, d.y, d.z}, frac = 0.0f;
+            KclHit h[4];
+            int got = kcl_check_sphere((const unsigned char *)cpolys[i].kcl, fc, 60.0f, h, 4);
+            int pr = kcl_check_arrow((const unsigned char *)cpolys[i].kcl, fo, fd, &frac);
+            printf("collision area: polygon self check row %d: sphere hits %d (prism %d flag %d depth %d), segment prism %d at %d / 100" "\n",
+                   (int)col_areas[i], got, got ? h[0].prism : 0, got ? h[0].flag : 0, got ? (int)h[0].dist : 0, pr, (int)(frac * 100.0f));
+        }
+#endif
     }
     ncpolys = ncol_areas;
 }

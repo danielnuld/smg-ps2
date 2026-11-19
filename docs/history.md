@@ -11,6 +11,19 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- CollisionArea's AreaPolygon (feat/717-area-polygon, #717, 2026-11-19, agent areas2): the 118 CollisionAreas with
+  arg3 not 0 put a DynamicCollisionObj of two triangles on one face of their box (#713 had the push alone). `cpoly_set`
+  (AreaPolygon::setSurface, DynamicCollisionObj::createCollision / updateTriangle / updateCollisionHeader): the
+  face's quad, 10 wider and farther out unless he is Teresa Mario, as a 236-byte KCL in world space: a prism a
+  triangle (its first vertex, the face normal and the three edge normals, its height), thickness 40, one octree
+  leaf listing prisms 2 and 1. It starts on face 0 (+X); update_collision_areas moves it to the face hitCheck finds
+  Mario nearest when arg3 has its bit (setSurfaceAndSync), and turns it off with the area and while a vanished
+  Teresa Mario passes (_58). The parts that are no instance's (Hit.inst -1) are now of two kinds by their sub:
+  IceStep's (under ICE_STEPS) and the areas' polygons (ICE_STEPS + the area): `xpart_kcl` gives their KCL to every
+  Tri made from a hit, tri_part their matrix (identity), kcl_query_ and kcl_line ask them (`cpoly_at`) after the
+  instances: Mario's binder, the walkers, the camera's lines and the shadows meet them as any face. ColPoly: 256
+  bytes an area from the scene arena. ponytail: the prisms' attribute (their index, of no table) is 0, a plain
+  face; the header's block shift is 30 (one leaf either way).
 - RainCloud (feat/692-raincloud, #692, 2026-11-18): 69 placed (OceanRingZone layers C / D, ReverseForestHomeZone),
   generic rail parts before. update_rainclouds after RainCloud.cpp: Wait / Appear / Disappear / End / SoftTouch /
   HardTouch (Mario falls through a cloud for 60 frames unless he is a bee; OnBee under a bee; Disappear at its rail's
