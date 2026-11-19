@@ -1603,6 +1603,7 @@ static int miss_race; /* the next miss is forceKillPlayerByGroundRace's (EventRa
 static void rm_reset(void), update_race(void); /* RaceManager and its racers (race.inc) */
 static void update_syati(void), draw_syati_rings(void); static int sy_took(int row), sy_bva(const Inst *in, const char **key, float *frame), sy_miss_anim(void); /* Syati (syati.inc) */
 static void update_surf(void); static int sr_try(Player *m), sr_hold(Player *m), pcs_talk(int k, Inst *in), pcs_of(int row), pcs_branch(u32 v); static float sr_reach(void); static V3 sr_body(void); /* SurfRay, SurfRayTutorial, the surfing PenguinCoach (surf.inc) */
+static int wrd_hold(Player *m); static void wrd_update(void), draw_water_road(void), wrd_init(void), wrd_cast_hook(int type); /* WaterRoad (water_road.inc) */
 static void or_init(void), or_update(void), draw_oceanrings(void); static int or_in_water(V3 p, V3 up, float *depth), or_row(V3 p); /* OceanRing (ocean_ring.inc) */
 static int rm_ctrl_off(void), pg_jet_hit(V3 p); static void rm_note_star(void); static const char *rm_bck(void); /* offPlayerControl; its startBckPlayer clip on Mario */
 static void gh_reset(void);
@@ -3325,6 +3326,7 @@ void game_init(const Scene *s, const unsigned char *blob)
            ncoins, npurple, npieces, nkuribo, (int)start_pos.x, (int)start_pos.y, (int)start_pos.z);
     os_init();
     or_init();
+    wrd_init();
     bgb_init();
     { /* GameDataHolder: this galaxy's scenario visited (setAlreadyVisitedStage) */
         char gal[48];
@@ -23400,6 +23402,10 @@ static void update_mario_(void)
         }
     }
     if (ss_hold(m)) { /* in a Sandstorm */
+        if (mario_anim) anim_update(mario_anim);
+        return;
+    }
+    if (wrd_hold(m)) { /* in a WaterRoad */
         if (mario_anim) anim_update(mario_anim);
         return;
     }
@@ -46442,6 +46448,7 @@ static void dx_cast_hook(int row, int type, int part)
     }
     if (gw_cast_hook(row, type, part)) return;
     if (!strcmp(cls, "KoopaJrShip")) { kj_cast_hook(row, type, part); return; }
+    if (!strcmp(cls, "WaterRoad")) { wrd_cast_hook(type); return; }
     if (!strcmp(cls, "DemoKoopaJrShip")) { dkj_cast_hook(row, type, part); return; }
     if (type == 0 && !strcmp(cls, "StarReturnDemoStarter")) { srd_appear(row); return; }
     if (type == 0 && !strcmp(cls, "GrandStarReturnDemoStarter")) { gsr_appear(row); return; }
@@ -55191,6 +55198,7 @@ int game_test_bk(int frame)
 #include "statics.inc" /* placed classes once drawn still (Flag ...): st_* */
 #include "race.inc" /* RaceManager, RaceRail (PlayerRacer), TeresaRacer: rm_*, game_test_race */
 #include "ocean_ring.inc" /* OceanRing: or_* */
+#include "water_road.inc" /* WaterRoad: wrd_* */
 #include "syati.inc" /* Syati / TalkSyati, PrizeRing: sy_*, prg_* */
 #include "surf.inc" /* SurfRay, SurfRayTutorial, PenguinCoach 2 / 3: sr_*, srt_*, pcs_* */
 /* Test builds: Mario in the boss's SwitchCylinder until it starts, then dropped in a hip drop on its BodyHipDrop part
@@ -56824,6 +56832,7 @@ void game_update(void)
     update_whirls();
     update_pressures();
     update_trapezes();
+    wrd_update();
     swr_update();
     update_onimasu();
     update_lavarocks();
@@ -58639,6 +58648,7 @@ void game_draw(void)
         V3 back = vnorm(vsub(ce, cw)), right = vnorm(vcross(cu, back));
         draw_oceanspheres(ce, right, vcross(back, right));
         draw_oceanrings();
+        draw_water_road();
         draw_bigbubbles(ce, right, vcross(back, right));
     }
     st_draw();
