@@ -91,6 +91,7 @@ SKINNED_OBJ += ("BossBegomanHead", "ChildKameck", "BkDemo")  # BkDemo: BossKamec
 SKINNED_OBJ += ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp")  # TicoShop: NPCData TicoShopItem goods on StarPieceR / StarPieceL (Shake)
 SKINNED_OBJ += ("CircleShell", "CircleStrawberry")  # SmallStone.cpp: WindLoop / WindEnd, CircleShell's Kind BVA (game.c stone_pose)
 SKINNED_OBJ += ("IceMerameraKingShock", "IceMerameraKingBreak")  # IceMerameraKing: its ShockWave's Shock, its break model's Break
+SKINNED_OBJ += ("Banekiti",)  # Banekiti.cpp: Wait / Repel (game.c banekiti.inc)
 SKINNED_OBJ += ("DashRing",)  # DashRing.cpp: Loop / Start / End / Revival (game.c update_drings)
 SKINNED_OBJ += ("QuarterRollGravityRoomArrow",)  # its RollGravityA / B (Reverse) clips (game.c statics.inc st_qrarrow)
 SKINNED_OBJ += ("DeadLeaves", "DesertMovingLandSmall")  # DeadLeaves.cpp: Spin (game.c update_givers); DesertMovingLand's small one: Vibration (update_dlands)
@@ -345,6 +346,7 @@ LOGIC = ("SoundEmitterCube", "SoundEmitterSphere", "QuakeEffectAreaCube", "Playe
          "ExtraWallCheckArea", "ExtraWallCheckCylinder",  # Mario's wall shade (game.c wall_shade_calc)
          "HazeCube",  # HeatHazeDirector (game.c haze_update)
          "CollisionArea",  # (game.c update_collision_areas)
+         "ViewGroupCtrlCube",  # ViewGroupCtrl (game.c vg_update)
          # Mario's areas (MR::getAreaObj: game.c area_obj / foo_sphere)
          "CelestrialSphere", "TowerModeCylinder", "NonSleepCube", "EffectCylinder", "SmokeEffectColorAreaCube",
          "MessageAreaCube", "MessageAreaCylinder", "PullBackCylinder", "PlaneModeCube", "PlaneCircularModeCube",
@@ -395,6 +397,7 @@ def rows(b):
     mid = int_or(b, "MessageId", n, -1)
     demo, cast = int_or(b, "DemoGroupId", n, -1), int_or(b, "CastId", n, -1)  # DemoDirector::registerDemoCast
     oid = int_or(b, "Obj_ID", n, -1)  # JMapLinkInfo::setLinkInfo: the objinfo l_id it follows (BaseMatrixFollower)
+    vgroup = int_or(b, "ViewGroupId", n, -1)  # MR::getJMapInfoViewGroupID (ViewGroupCtrl; a SHORT: 0xFFFF none)
     out = []
     for i in range(n):
         out.append(dict(name=names[i], l_id=lid[i], path=path[i], camset=camset[i], pos=[fl[f][i] for f in ROW_FIELDS[:3]],
@@ -404,6 +407,7 @@ def rows(b):
                         priority=int_or(b, "Priority", n, 0)[i], inverse=int_or(b, "Inverse", n, 0)[i],
                         gtype=(B.bcsv_column(b, "Gravity_type") or ["Normal"] * n)[i],
                         sw=[sw[f][i] for f in SW_FIELDS], group=group[i], mid=mid[i], demo=demo[i], cast=cast[i], oid=oid[i],
+                        vgroup=vgroup[i] if 0 <= vgroup[i] < 0x4000 else -1,
                         cls=names[i]))
     return out
 
@@ -475,7 +479,7 @@ def scene(fs, galaxy, scenario):
         for layer in act[s]:
             for f in ("objinfo", "planetobjinfo", "areaobjinfo"):
                 for r in rows(files.get(f"{root}/jmp/placement/{layer}/{f}", b"")):
-                    objs.append(dict(r, zone=zid))
+                    objs.append(dict(r, zone=zid, planet=f == "planetobjinfo"))
             for r in rows(files.get(f"{root}/jmp/childobj/{layer}/childobjinfo", b"")):
                 objs.append(dict(r, zone=zid))
             mp = files.get(f"{root}/jmp/mapparts/{layer}/mappartsinfo", b"")
@@ -2259,6 +2263,9 @@ def placement(fs, galaxy, scenario):
     cams, cam_index, cam_types = camera.cameras(bcams, float_column, int_or, jp2en, rails)
     cset = [(i, r["camset"]) for i, r in enumerate(keep) if r.get("camset", -1) >= 0]  # ActorCameraInfo: CameraSetId
     out.append(chunk(b"CSET", struct.pack("<I", len(cset)) + b"".join(struct.pack("<Hh", i, v) for i, v in cset)))
+    # VGRP: (row, ViewGroupId; bit 14: a planetobjinfo row, PlanetMap's LodCtrlPlanet) for game.c vg_init (ViewGroupCtrl)
+    vgrp = [(i, r["vgroup"] | (0x4000 if r.get("planet") else 0)) for i, r in enumerate(keep) if r.get("vgroup", -1) >= 0]
+    out.append(chunk(b"VGRP", struct.pack("<I", len(vgrp)) + b"".join(struct.pack("<Hh", i, v) for i, v in vgrp)))
     out.append(demo_chunk(fsp, demos, gpos, keep, jp2en, se_table()))
     out.append(canm_chunk(Path(fs), set(types), galaxy, B.placed_scenario(sd, galaxy, scenario)))  # after demo_chunk: DEMO_CANM; StartScenario<getCurrentScenarioNo>.canm
     # GHST: GhostPlayer's packets (GhostPlayer::init: <stage>.gst / <stage>Luigi.gst of GhostData<stage>.arc, as on
