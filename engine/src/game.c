@@ -899,7 +899,9 @@ static struct {
     V3 bpos, bvel;
     int seq, nt, dnrv, dt, ddir;   /* DinoPackunVs1's step, its nerve's frames, its damage state, its frames, the hit's side
                                     * (1 left, 2 right, 3 top) */
-    int prev_nrv, react;           /* the nerve a punch interrupted; a star piece's hit reaction (frames left) */
+    int prev_nrv;                  /* the nerve a punch interrupted */
+    int asc_n, asc_t;              /* its AnimScaleController (_B8): nerve (ASC_*), step; a star piece's hit reaction */
+    float asc_y, asc_v;            /* its scale Y (_C.y) and velocity (_18) */
     V3 tp[9], tv[9], tdir[9];      /* DinoPackunTail's nodes (TailRoot, Tail1..7; the ball is bpos / bvel): world
                                     * position, velocity, mNodeDirection */
     int chain_ok, tlock1;          /* the tail active (activate: resetJoint done); node 1 locked */
@@ -10250,6 +10252,32 @@ static const char *dino_clip(int *loop)
  * are bodies pulled to their links (90; the ball 120), kept bent (sKeepBendPower) and, in Find, to the clip (_18);
  * the ball takes the chain only in Wait / Rebound. Off (pure clip, the ball on its joint) before the fight and in the
  * demos (mTail->deactivate / startDemoAndReset). */
+enum { ASC_STOP, ASC_ANIM, ASC_HIT }; /* AnimScaleController's nerves (asc_core) */
+static void asc_core(int *nrv, int *t, float *y, float *v, const float p[7]);
+static const float dino_asc[7] = {0.1f, 0.91f, 0.2f, 1.8f, 0.07f, 0.12f, 0.92f}; /* DinoPackunParam: _0, _4, _8, _C, _20, _24, _28 */
+static const float dino_trad[9] = {0, 80, 70, 60, 55, 50, 45, 50, 135}; /* sJointRadius (Tail1-7), the ball's body */
+/* DinoPackun::hitScaleJoint: Spine1 pre-scaled by (_C.y, _C.z, _C.x) of its AnimScaleController, its children with
+ * it (joints 21-45: Spine1, Spine2, the arms, the head). The joint's axes are taken as square to each other */
+static void dino_scale_joint(Anim *a)
+{
+    if (dino.asc_n == ASC_STOP || dino.asc_y <= 0.0f || a->skin->njoints < 46) return; /* (y 0: started, not yet updated) */
+    float sx = sqrtf(1.0f / dino.asc_y), s[3] = {dino.asc_y, sx, sx}, w[16];
+    memcpy(w, a->world[21], sizeof w);
+    for (int j = 21; j < 46; j++) {
+        float *m = a->world[j];
+        for (int c = 0; c < 4; c++) {
+            float v[3] = {m[4 * c], m[4 * c + 1], m[4 * c + 2]}, o[3] = {0, 0, 0};
+            if (c == 3) for (int i = 0; i < 3; i++) { v[i] -= w[12 + i]; o[i] = w[12 + i]; }
+            for (int i = 0; i < 3; i++) {
+                const float *ax = w + 4 * i;
+                float l2 = ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2];
+                float k = l2 > 1e-12f ? s[i] * (ax[0] * v[0] + ax[1] * v[1] + ax[2] * v[2]) / l2 : 0.0f;
+                o[0] += k * ax[0]; o[1] += k * ax[1]; o[2] += k * ax[2];
+            }
+            m[4 * c] = o[0]; m[4 * c + 1] = o[1]; m[4 * c + 2] = o[2];
+        }
+    }
+}
 static void dino_pose(void)
 {
     if (dino.brk && m_deggbrk && m_deggbrk->skin && dino.nrv == DN_DAMAGE && dino.dnrv == DD_EGGBROKEN && dino.dt >= 30) {
@@ -10265,6 +10293,7 @@ static void dino_pose(void)
     snprintf(n, sizeof n, "%s/%s", dino.vs == 2 ? "dinopackunvs2" : "dinopackun", dino_clip(&loop));
     anim_play(a, n, dino.seq == DSEQ_WAIT ? 0.0f : 1.0f, loop, 8);
     anim_pose(a);
+    dino_scale_joint(a);
     float m[16];
     basis_matrix(m, dino.pos, dino.up, dino.f, 0);
     int chain = (dino.seq == DSEQ_EGG || (dino.seq >= DSEQ_LV1 && dino.seq <= DSEQ_LV3 && dino.seq != DSEQ_ANGRY)) && a->skin->njoints > 20;
@@ -10281,7 +10310,7 @@ static void dino_pose(void)
      * addAccelKeepBend, addAccelToBck; the parts (DinoPackunTailPart::exeWait) fall 0.7, x 0.88, bound by spheres of
      * sJointRadius; the joints (turnJointLocalXDir, calcJointScale) turned along the chain at the nodes */
     static const float bend[9] = {30, 30, 25, 20, 15, 10, 10, 10, 10}; /* root: sKeepBendPower[0]; the ball: 10 */
-    static const float rad[9] = {0, 80, 70, 60, 55, 50, 45, 50, 135};
+    const float *rad = dino_trad;
     V3 org = v3(m[12], m[13], m[14]), ax = v3(m[0], m[1], m[2]), ay = v3(m[4], m[5], m[6]), az = v3(m[8], m[9], m[10]);
 #define TOW(l) vadd(org, vadd(vadd(vmul(ax, (l).x), vmul(ay, (l).y)), vmul(az, (l).z)))
 #define TOL(w) v3(vdot(vsub(w, org), ax), vdot(vsub(w, org), ay), vdot(vsub(w, org), az))
@@ -10401,6 +10430,29 @@ static V3 dino_head(void)
         return v3(jm[12] + 140.0f * jm[0] - 110.0f * jm[4], jm[13] + 140.0f * jm[1] - 110.0f * jm[5], jm[14] + 140.0f * jm[2] - 110.0f * jm[6]);
     }
     return vadd(dino.pos, vadd(vmul(dino.up, 350.0f), vmul(dino.f, 200.0f)));
+}
+/* a star piece (its body 30) on DinoPackun: 0 no hit, 1 taken, 2 reflected. The egg's sensor (400) reflects it in the
+ * egg's battle (DinoPackunBattleEgg / EggVs2: isMsgStarPieceReflect); in the battles its head (270) and body (200)
+ * start the hit reaction (DinoPackunBattleVs1Lv1 / Lv2: isMsgStarPieceAttack, Vs2Lv1: isMsgStarPieceReflect;
+ * DinoPackun::startHitReaction: SE_OJ_STAR_PIECE_HIT_STOP, the scale controller's HitReaction); the tail's parts
+ * (DinoPackunTailPart: 1.25 + its radius) and its ball (135) reflect it while the tail is active. In the demos no
+ * action takes it (DinoPackunSequencer: mCurrentAction null) */
+static int dino_shot(V3 p)
+{
+    int egg = dino.seq == DSEQ_EGG, battle = dino.seq == DSEQ_LV1 || dino.seq == DSEQ_LV2 || dino.seq == DSEQ_LV3;
+    if (dino.row < 0 || (!egg && !battle)) return 0;
+    V3 body = vadd(dino.pos, vmul(dino.up, 200.0f)); /* sBodyHitOffset / sEggHitOffset */
+    if (egg) { if (vlen(vsub(p, body)) < 400.0f + 30.0f) return 2; }
+    else if (vlen(vsub(p, body)) < 200.0f + 30.0f || vlen(vsub(p, dino_head())) < 270.0f + 30.0f) {
+        se_start(SE_OJ_STAR_PIECE_HIT_STOP, &dino.pos.x);
+        dino.asc_n = ASC_HIT; dino.asc_t = -1;
+        printf("dino packun: star piece hit reaction" "\n");
+        return dino.vs == 2 ? 2 : 1;
+    }
+    if (!dino.chain_ok) return 0;
+    if (vlen(vsub(p, dino.bpos)) < 135.0f + 30.0f) return 2;
+    for (int i = 1; i < 8; i++) if (vlen(vsub(p, dino.tp[i])) < 1.25f + dino_trad[i] + 30.0f) return 2;
+    return 0;
 }
 
 static void dino_set_nrv(int n) { dino.nrv = n; dino.nt = 0; }
@@ -10685,6 +10737,7 @@ static void dino_next_seq(void)
             hp = v3(jm[12], jm[13], jm[14]);
         }
         launch_pieces(hp, dino.up, 8, 50.0f, 60.0f);
+        se_start(SE_OJ_STAR_PIECE_BURST, &dino.pos.x);
     }
     printf("dino packun: seq %d" "\n", dino.seq);
 }
@@ -10769,7 +10822,7 @@ static void update_dino(void)
     V3 up = dino.up, side = vcross(up, dino.f), body = vadd(dino.pos, vmul(up, 200.0f)), head = dino_head();
     int egg = dino.seq == DSEQ_EGG, lv2 = dino.seq >= DSEQ_LV2;
     dino.t++; dino.nt++;
-    if (dino.react) dino.react--;
+    asc_core(&dino.asc_n, &dino.asc_t, &dino.asc_y, &dino.asc_v, dino_asc); /* control: _B8->updateNerve */
     { /* its sounds at its body (Petari's step n is dino.t n + 1 here): DinoPackunDemo's demos, the egg's turn */
         float at[3] = {body.x, body.y, body.z};
         int t = dino.t;
@@ -10862,7 +10915,10 @@ static void update_dino(void)
         case DN_CHASE: { /* updateChase(240, 180, 1, 1.5, 60) / Lv2 (300, 180, 1.3, 1.8, 90); a hit reaction: nothing */
             int len = lv2 ? 300 : 240, ramp = lv2 ? 90 : 60;
             dino_foot(dino.nt - 1, 46);
-            if (!dino.react) {
+#ifdef DINO_STAR /* XF=-DDINO_STAR (with the dino mode): a star piece on its body 30 frames into each chase */
+            if (dino.nt == 30) printf("dino test: star piece %d\n", dino_shot(body));
+#endif
+            if (!(dino.asc_n == ASC_HIT && dino.asc_t < 15)) { /* isHitReaction(15) */
                 DINO_TURN_TO(to, lv2 ? 1.3f : 1.0f);
                 accel = (lv2 ? 1.8f : 1.5f) * (dino.nt < ramp ? (float)dino.nt / ramp : 1.0f);
             }
@@ -26627,7 +26683,6 @@ static V3 w_joint(Kuribo *k, const Model *md, int j, V3 off)
  * its nerve (phase: 0 Stop, 1 Anim, 2 HitReaction) and step (timer); _C = (sqrt(1 / y), y, sqrt(1 / y)).
  * p: _0, _4, _8, _C, _20, _24, _28 of its AnimScaleParam. ponytail: DpdVibration / Crush (the 2P pointer, crushes)
  * left out: no walker here starts them */
-enum { ASC_STOP, ASC_ANIM, ASC_HIT };
 static void asc_start(Kuribo *k, int nrv) { k->phase = nrv; k->timer = -1; }
 static void asc_scale(float *y, float *v, float f1, float f2, float lo, float hi) /* updateScale */
 {
@@ -45435,6 +45490,7 @@ static void update_shots(void)
         if (!hit && gw_shot(s->pos)) hit = 1; /* RunawayRabbit: isMsgStarPieceAttack */
         if (!hit) hit = npc_shot(s->pos); /* NPCActor::receiveMsgPlayerAttack: isMsgStarPieceReflect (Tico: isMsgStarPieceAttack) */
         if (!hit && hana_shot(s->pos)) hit = 1;
+        if (!hit) hit = dino_shot(s->pos);             /* DinoPackun: the hit reaction; its egg and tail reflect */
         if (!hit && dd_shot(s->pos)) hit = 1;          /* Dodoryu, its hill */
         if (!hit && bsb_shot(s->pos)) hit = 1; /* BossStinkBugBomb */
         if (!hit && kj_jr_shot(s->pos)) hit = 2; /* KoopaJr (NPCActor): isMsgStarPieceReflect */
