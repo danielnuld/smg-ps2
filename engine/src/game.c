@@ -3639,13 +3639,16 @@ static void update_tsuki(void)
             float l2 = vdot(ab, ab), u = l2 > 0 ? vdot(vsub(mario->pos, a), ab) / l2 : 0;
             u = u < 0 ? 0 : u > 1 ? 1 : u;
             if (vlen(vsub(mario->pos, vadd(a, vmul(ab, u)))) < 700.0f) pad_rumble(RUMBLE_WEAK);
+            in->lv[0] = se_level(SE_OJ_LV_TSUKIDASHI_VIB, &in->m[12], in->lv[0]);
         }
         if (*ph == 2 && *t >= (r->arg[1] >= 0 ? r->arg[1] : 120)) { *ph = 3; *t = 0; }
-        else if (*ph == 3 && *t >= 60) { *ph = 4; *t = 0; }
+        else if (*ph == 3 && *t >= 60) { *ph = 4; *t = 0; se_start(SE_OJ_TSUKIDASHI_START, &in->m[12]); } /* exeMove's first step */
         else if (*ph == 4) {
             float old[16], len = tsuki_len(in->tsuki), n = row_coord[row] + (r->arg[0] > 0 ? r->arg[0] : 10) * row_rdir[row];
             memcpy(old, in->m, 64);
+            in->lv[1] = se_level(SE_OJ_LV_TSUKIDASHI_MOVE, &in->m[12], in->lv[1]);
             if (n >= len || n <= 0) { /* isRailReachedGoal: reverse, wait */
+                se_start(SE_OJ_TSUKIDASHI_STOP, &in->m[12]);
                 n = n >= len ? len : 0;
                 row_rdir[row] = -row_rdir[row];
                 *ph = 2; *t = 0;
@@ -3912,7 +3915,7 @@ static void update_meteor(void)
  * frames of straight flight, blowing up the walkers within 250 (sendMsgExplosionToNearActor); 180 frames later the
  * next one comes out. R2 with the pointer on it freezes it 20 frames, shaking along the camera's X. row_turn 0
  * appear, 1 move, 2 chase, 3 broken; row_step its frames. ponytail: no Smoke / SmokeChase trails (looping effects),
- * no propeller / BCKs, no target sensors (GoToTarget), Torpedo not handled.
+ * no propeller / BCKs, no target sensors (GoToTarget).
  * MagnumKiller (killer 3, Type_MagnumKiller): always a straight shot (mIsLinearShot), never frozen (tryFreeze), its
  * body and binder 70 x its scale, SE_EM_MAGKILLER_FIRING, its fly level SE pitched 1.8 .. 0.9 over 500 .. 1400 from
  * Mario (startMoveLevelSound); enemies it hits do not break it (tryToExplosion / receiveMsgEnemyAttack), Mario does.
@@ -4035,9 +4038,18 @@ static void update_killers(void)
                 in->lv[0] = se_level(SE_EM_LV_MAGKILLER_FLY, &k->pos.x, in->lv[0]);
                 float dm = fminf(fmaxf((d - 500.0f) / 900.0f, 0.0f), 1.0f);
                 if (in->lv[0]) se_volpitch(in->lv[0], 1.0f, 1.8f + (0.9f - 1.8f) * dm);
-            } else in->lv[0] = se_level(SE_EM_LV_KILLER_FLY, &k->pos.x, in->lv[0]); /* processMove: startMoveLevelSound */
-        } else if (!brk) { /* processChase */
-            in->lv[0] = se_level(SE_EM_LV_KILLER_FLY, &k->pos.x, in->lv[0]); /* startMoveLevelSound(true): its alarm a Torpedo's */
+            } else in->lv[0] = se_level(in->killer == 2 ? SE_EM_LV_TORPEDO_MOVE : SE_EM_LV_KILLER_FLY, &k->pos.x, in->lv[0]); /* processMove: startMoveLevelSound */
+        } else if (!brk) { /* processChase: startMoveLevelSound(true) */
+            in->lv[0] = se_level(in->killer == 2 ? SE_EM_LV_TORPEDO_MOVE : SE_EM_LV_KILLER_FLY, &k->pos.x, in->lv[0]);
+            if (in->killer == 2) { /* a Torpedo's alarm by its distance to Mario (AudSoundObject::modifySe_Takezawa:
+                                    * pitch 1.27 at 300 .. 1.2 at 2000, port 11 its beep's wait 4 at 200 .. 24 at 3000) */
+                float d = vlen(vsub(mario->pos, k->pos));
+                in->lv[1] = se_level(SE_EM_LV_TORPEDO_ALARM, &k->pos.x, in->lv[1]);
+                if (in->lv[1]) {
+                    se_volpitch(in->lv[1], 1.0f, 1.27f + (1.2f - 1.27f) * fminf(fmaxf((d - 300.0f) / 1700.0f, 0.0f), 1.0f));
+                    se_port(in->lv[1], 11, (u16)(4.0f + 20.0f * fminf(fmaxf((d - 200.0f) / 2800.0f, 0.0f), 1.0f)));
+                }
+            }
             V3 tg = killer_target(k, g, in->killer == 2 ? 75.0f : 200.0f);
             k->front = turn_to(k->front, tg, 1.0f - (r->arg[1] >= 0 ? r->arg[1] : 3) * 0.0001f);
             killer_rotz(k, tg, g);
@@ -4062,7 +4074,7 @@ static void update_killers(void)
             basis_matrix(m, k->pos, vmul(g, -1.0f), k->front, 0);
             if (in->killer == 3) fx_named("MagnumKiller", "Explosion", m, NULL, NULL);
             else fx_emit(FX_HOMINGKILLER_EXPLOSION, m);
-            se_start(SE_EM_KILLER_EXPLOSION, &k->pos.x);
+            se_start(in->killer == 2 ? SE_EM_TORPEDO_EXPLOSION : SE_EM_KILLER_EXPLOSION, &k->pos.x);
             rumble_shake_weak(k->pos, RUMBLE_STRONG, RUMBLE_MIDDLE, 1000.0f, 2000.0f); /* cCameraShakeDistance */
             if (ground && in->killer == 1) fx_emit(FX_HOMINGKILLER_SANDCOLUMN, m); /* (Type_HomingKiller's SandColumn) */
             walker_explosion(k->pos);
@@ -9526,7 +9538,11 @@ static int jbranch_update(Player *m)
  * off and Mario flies off towards the neutral point at 60 (BindAttack) for arg0 (60) frames, x 0.98 a frame in the
  * last 90, until he hits the map after 20; closer it goes back to waiting. X lets go (RushCancel). Then it ignores
  * him until he is 300 off or on the ground (FreeInvalid). A pointer sweep over it (R2 off) and star pieces push the
- * cocoon. coc.phase 1 wait, 2 aim, 3 flight; coc.wait the FreeInvalid inst. ponytail: no stalk drawn (the cocoon
+ * cocoon. Its sounds: SE_PV_CATCH and SE_OJ_SPACE_COCOON_ATTACH at the catch (exeBindLand), SE_OJ_SPACE_COCOON_DRAG_ST
+ * at BindAim's first step, SE_OJ_LV_SPACE_COCOON_DRAG 100 or more off its neutral point (its level (off - 100) / 400:
+ * pitch 1 + t x t, volume 0.7 + 0.3 t x t, AudSoundObject::modifySe_Kawamura), updateHang's DRAG3 at 500 off / DRAG2
+ * from 100, SE_PV_JUMP_JOY and SE_OJ_SPACE_COCOON_LAUNCH at BindAttack's first step, SE_OJ_SPACE_COCOON_BOUND at a
+ * pointer touch. coc.phase 1 wait, 2 aim, 3 flight; coc.wait the FreeInvalid inst. ponytail: no stalk drawn (the cocoon
  * model only, tilted along it), no CocoonWait / Stretch / Fly animations, no breakables hit at the end
  * Its multi-actor cameras: ウェイト on the catch and back from a short aim, 狙い中 while aiming, 攻撃中 in the flight
  * (no target: its base), all ended at the release; AirRotation for Mario when mAttackTime runs out. ponytail: the
@@ -9581,6 +9597,7 @@ static void update_cocoons(void)
             V3 o, d, up = vnorm(v3(in->m0[4], in->m0[5], in->m0[6]));
             cursor_ray(&o, &d);
             in->hvel = vadd(in->hvel, vmul(vnorm(vtangent(vcross(d, up), up)), 5.0f));
+            se_start(SE_OJ_SPACE_COCOON_BOUND, &in->head.x);
             row_turn[in->row] = 20; /* sTouchTimerMax */
         }
         if (row_turn[in->row] > 0) row_turn[in->row]--;
@@ -9600,6 +9617,7 @@ static int cocoon_try(Player *m)
         if (vlen(vsub(c, b)) > 200.0f + HIT_BODY_R * 0.5f) continue;
         coc.inst = i; coc.phase = 1; coc.t = 0;
         cocoon_cam(in, "ウェイト"); /* exeBindLand */
+        mario_se(SE_PV_CATCH); se_start(SE_OJ_SPACE_COCOON_ATTACH, &in->head.x);
         in->hvel = vtangent(vadd(m->hvel, vmul(m->up, m->vup)), up); /* mSpringVel: his speed along side and front */
         m->hip = 0; m->spin_timer = 0;
         if (mario_anim) mario_play("cocoonland", 1.0f, 0);
@@ -9650,8 +9668,20 @@ static int cocoon_update(Player *m)
     }
     if (coc.phase == 1 && cursor_sees(in->head, 40.0f) && menu_pointer_touch(in, 1)) /* updateBindWait: pointed (touch, "弱") */
         menu_pointer_request(SPM_BLUESTARREADY);
-    if (coc.phase == 1 && pointer_a() && cursor_sees(in->head, 40.0f)) { coc.phase = 2; coc.t = 0; cocoon_cam(in, "狙い中"); } /* BindAim */
+    if (coc.phase == 1 && pointer_a() && cursor_sees(in->head, 40.0f)) { /* BindAim */
+        coc.phase = 2; coc.t = 0; cocoon_cam(in, "狙い中");
+        se_start(SE_OJ_SPACE_COCOON_DRAG_ST, &in->head.x);
+    }
     if (coc.phase == 2) {
+        float dist = vlen(vsub(in->head, n));
+        if (dist >= 100.0f) { /* sAimDistanceMin .. sDistanceMax */
+            float t = fminf((dist - 100.0f) / 400.0f, 1.0f);
+            in->lv[0] = se_level(SE_OJ_LV_SPACE_COCOON_DRAG, &in->head.x, in->lv[0]);
+            if (in->lv[0]) se_volpitch(in->lv[0], 0.7f + 0.3f * t * t, 1.0f + t * t);
+        }
+        static u32 lv3; /* updateHang: sAimRumbleDistanceStrong 500 / Weak 100 */
+        if (pointer_a() && dist >= 500.0f) lv3 = se_level(SE_OJ_LV_SPACE_COCOON_DRAG3, &in->head.x, lv3);
+        else if (pointer_a() && dist >= 100.0f) in->lv[1] = se_level(SE_OJ_LV_SPACE_COCOON_DRAG2, &in->head.x, in->lv[1]);
         if (!pointer_a()) { /* tryRelease */
             float off = vlen(vsub(in->head, n));
             if (off < 100.0f) { coc.phase = 1; cocoon_cam(in, "ウェイト"); }
@@ -9660,6 +9690,7 @@ static int cocoon_update(Player *m)
                 coc.phase = 3; coc.t = 0;
                 in->hvel = v3(0, 0, 0);
                 if (mario_anim) mario_play("cocoonfly", 1.0f, 1);
+                mario_se(SE_PV_JUMP_JOY); se_start(SE_OJ_SPACE_COCOON_LAUNCH, &in->head.x); /* exeBindAttack's first step */
                 cocoon_cam(in, "攻撃中"); /* startMultiActorCameraNoTarget */
                 printf("space cocoon row %d: launched from %d off" "\n", in->row, (int)off);
                 return 1;
@@ -9717,8 +9748,10 @@ static void jet_place(Inst *in)
 }
 
 static int jet_gold(const Inst *in) { return !strcmp(sc->types + 32 * sc->objs[in->row].type, "GoldenTurtle"); }
+static u32 jet_launch; /* its SE_OJ_TURTLE_JET_LAUNCH_W / L (reset: stopSound) */
 static void jet_reset(Inst *in, int reason) /* JetTurtle::reset */
 {
+    if (jet_launch) { se_stop(jet_launch); jet_launch = 0; }
     const Row *r = &sc->objs[in->row];
     V3 p = in->head;
     float dep;
@@ -14897,11 +14930,18 @@ static void update_jets(void)
             }
         }
         if (jet.inst == i && jet.phase == 1) { /* held: in front of him at his hands */
+            float dep;
+            if (!jet.t++) { /* exeTakenStart: sendMsgTaken taken */
+                se_start(SE_SY_GET_TURTLE_JET, NULL);
+                if (!in_water(in->head, mario->up, &dep)) mario_se(SE_PV_CATCH);
+            }
             in->head = vadd(vadd(mario->pos, vmul(mario->face, 70.0f)), vmul(mario->up, 60.0f));
             if (mario->spin_timer > 0 || jet.drop) { /* thrown (in water: dropJet, along his swim front) */
                 in->hvel = vmul(jet.drop ? jet.dir : mario->face, (const float[]){30, 20, 30}[type]);
                 jet.drop = 0;
                 jet.phase = 2; jet.t = 0;
+                if (in_water(in->head, mario->up, &dep)) jet_launch = se_start(SE_OJ_TURTLE_JET_LAUNCH_W, &in->head.x); /* exeThrowing's first step */
+                else { jet_launch = se_start(SE_OJ_TURTLE_JET_LAUNCH_L, &in->head.x); mario_se(SE_PV_THROW); }
                 printf("jet turtle row %d: thrown" "\n", in->row);
             }
             jet_place(in);
@@ -40497,7 +40537,8 @@ static void update_dlands(void)
 /* BigFan.cpp after Petari (BigFan, BigFanNoLeg): Wait (its Wait clip and its wind model's: BigFanWind at its base
  * matrix, z scaled arg0 / 2000 (4000 long)); with an appear switch it Starts when it appears (Appear clips, START SE,
  * then Wait). Its wind (arg1 speed) moves only Boo Mario and big bubbles, neither of them here. row_turn 0 not
- * started, 1 Start, 2 Wait. ponytail: hidden (not stopped) until its appear switch, no level SE */
+ * started, 1 Start, 2 Wait; exeWait's SE_OJ_LV_BIG_FAN; in TeresaMario2DGalaxy (mIsTeresaGalaxy) the _FAR sounds.
+ * ponytail: hidden (not stopped) until its appear switch */
 static void update_bigfans(void)
 {
     FOR_KIND(i, bigfan) {
@@ -40505,10 +40546,12 @@ static void update_bigfans(void)
         if (!in->bigfan || !row_shown(in->row)) continue;
         const Row *r = &sc->objs[in->row];
         signed char *n = &row_turn[in->row];
+        int far = on_stage("TeresaMario2DGalaxy"); /* mIsTeresaGalaxy */
         if (*n == 0) {
-            if (r->sw[SW_APPEAR] >= 0) { *n = 1; obj_play(in, "Appear", 0, 0); se_start(SE_OJ_BIG_FAN_START, &in->m[12]); }
+            if (r->sw[SW_APPEAR] >= 0) { *n = 1; obj_play(in, "Appear", 0, 0); se_start(far ? SE_OJ_BIG_FAN_START_FAR : SE_OJ_BIG_FAN_START, &in->m[12]); }
             else { *n = 2; obj_play(in, "Wait", 1, 0); }
         } else if (*n == 1 && in->anim && in->anim->done) { *n = 2; obj_play(in, "Wait", 1, 0); } /* isActionEnd */
+        if (*n == 2) in->lv[0] = se_level(far ? SE_OJ_LV_BIG_FAN_FAR : SE_OJ_LV_BIG_FAN, &in->m[12], in->lv[0]); /* exeWait */
     }
 }
 static void draw_bigfan_winds(void)

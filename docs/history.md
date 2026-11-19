@@ -11,6 +11,18 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Sounds of five ported map objects (feat/595-mapobj-se, #595, 2026-11-18): Torpedo (HomingKiller Type_Torpedo:
+  SE_EM_LV_TORPEDO_MOVE for the fly sound, while chasing SE_EM_LV_TORPEDO_ALARM with modifySe_Takezawa's pitch 1.27
+  .. 1.2 over 300 .. 2000 from Mario and port 11 (its beep's wait) 4 .. 24 over 200 .. 3000, SE_EM_TORPEDO_EXPLOSION);
+  JetTurtle (SE_SY_GET_TURTLE_JET and, out of water, SE_PV_CATCH at the catch; at the throw
+  SE_OJ_TURTLE_JET_LAUNCH_W in water, else _L with SE_PV_THROW, stopped by reset); SpaceCocoon (it had none:
+  SE_PV_CATCH + SE_OJ_SPACE_COCOON_ATTACH at the catch, _DRAG_ST at BindAim's first step, SE_OJ_LV_SPACE_COCOON_DRAG
+  from 100 off its neutral point with modifySe_Kawamura's pitch 1 + t x t and volume 0.7 + 0.3 t x t, updateHang's
+  _DRAG3 at 500 / _DRAG2 from 100, SE_PV_JUMP_JOY + _LAUNCH at the release, _BOUND at a pointer touch); Tsukidashikun
+  (SE_OJ_LV_TSUKIDASHI_VIB through Sign, _START at Move's first step, SE_OJ_LV_TSUKIDASHI_MOVE, _STOP at the rail's
+  end); BigFan (exeWait's SE_OJ_LV_BIG_FAN; the _FAR pair in TeresaMario2DGalaxy). Not ported, dead code in Petari:
+  SpaceMine's Appear nerve (nothing sets it) and CrystalCage's SE_OJ_CRYSTAL_CAGE_S_DAMAGE (only CrystalCageL has two
+  hits). **Release: sound.py --pack** for the galaxies that place them (simplest with the full repack).
 - EarthenPipe's hidden partner and water stream (feat/594-pipe, #594, 2026-11-18): the hidden pipe (arg2 1) was shown
   at once and hidden at once when the first pipe was armed again. Now as Petari: WaitToShowUp 20, ShowUp 30
   (pipe_trans: calcTrans eased in from its placement to its top, LavaAppear kept at its placement,
