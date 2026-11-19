@@ -9796,6 +9796,15 @@ static void update_gcap_targets(void)
             gap[k--] = gap[--ngap];
         }
     }
+#ifdef PUT_TEST /* XF=-DPUT_TEST=GCaptureTarget: 300 frames in, the appear switch of each target that has one put on */
+    if (game_frame == 300)
+        for (u32 q = 0, t = (u32)scene_type(sc, "GCaptureTarget"); q < sc->nobjs; q++)
+            if (sc->objs[q].type == t && sc->objs[q].sw[SW_APPEAR] >= 0 && !sw_on(&sc->objs[q], SW_APPEAR)) {
+                sw_set(&sc->objs[q], SW_APPEAR, 1);
+                printf("gcap test: row %u appear switch on, camera set %d%c", q, row_camset[q], 10);
+            }
+    if (ngap && game_frame % 30 == 0) printf("gcap test: appear row %d step %d clip %d%c", gap[0].row, gap[0].step, gap[0].clip, 10);
+#endif
     if (gcap_req_t > 30) { gcap_req = -1; gcap_req_t = 0; } /* GCapture::control */
     if (gcap_req >= 0) gcap_req_t++;
     int pick = gcap.phase || dome_busy() ? -1 : gcap_pick();
