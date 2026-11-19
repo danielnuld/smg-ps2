@@ -17,6 +17,66 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   -DASC_HOW=<game_test_enemy's way>": PCSX2, EggStarGalaxy/1, Mario beside a Takobo (kind 6, way 2): it attacks,
   "hit reaction", scale y 1.055, 1.136, 1.013, 0.911, 0.959, 1.046, stopped at step 91, three times. A star piece
   stuns a Takobo (no scale reaction: as Petari). The other six kinds were not run.
+- CameraRepulsiveCylinder (feat/585-camera-repulsive, #585, 2026-11-18): camera.c view_interp, after
+  interpolateCameraSwitching: translateByRepulsion (`camera_repulsion` -> game.c cam_repulsion:
+  CameraRepulsiveCylinder::getRepulsion, the eye's part across the cylinder's axis over (2 x its length / radius)
+  cubed; the sphere's is zero) and lookAtCenter (the view turned back on the watch point, its up with it). No stage
+  of RMGE01 places a CameraRepulsiveCylinder / Sphere (every StageData archive read: the names are only in
+  ObjNameTable), so nothing changes in play and no pack needs it; slice.py LOGIC carries them all the same. Test:
+  plain with `XF=-DCAM_REPULSE_TEST=3000` (EggStarGalaxy/1: a test cylinder of that radius about Mario's up from
+  frame 300, "cam repulsion: eye a off the axis, pushed b").
+- The seesaws (feat/614-seesaws, #614, 2026-11-18): SimpleSeesawObj (SimpleMapObj.cpp: KoopaShipSeesawStep,
+  IceVolcanoBalanceStepA / B, IceMountainSeesawSlipA-D / NoSlipA; 16 placed, they turned as plain MapPartsRotators)
+  and LavaHomeSeesaw in update_seesaws beside PhantomShipHandle (Inst.seesaw 1-4): MapPartsSeesaw1AxisRotator for
+  RotateAxis 0, MapPartsSeesaw2AxisRotator else (Stay / Move / HipDrop: blended towards its base tilted RotateAngle
+  about up x Mario's place by 0.001 x his distance / inertia, back by 0.0001 x RotateStopTime),
+  LavaHomeSeesawRotator (starts at 0.01, the 0.7 dip under his landing with the weak shake and
+  SE_OJ_LAVA_FLOATER_ON_METAL, SE_OJ_LV_LAVA_SEESAW_MOVE over 0.1); the move sounds of sSeDataTable over 0.001. The
+  rotator's matrix is a quaternion now (start()'s turn back over the limit, the first up from the placement, not
+  gravity; MR::sign's 0; isNearZero 0.001). RotateAccelType is a seesaw's inertia (100-2000) and the pack kept four
+  bits (PhantomShipHandle's 100 read as 4): slice.py map_parts writes it whole to arg 3 for the seesaw classes; an
+  older pack's row keeps the four bits. Petari as it is: IceMountain's seesaws never leave MoveStart (their top speed
+  0.07-0.1 is not over 0.1), so they get neither the restoring force nor the friction. Test: `build.sh seesaw`
+  (`XF=-DSEESAW_N=k` the k-th seesaw row, `-DSEESAW_AXIS2` the first on two axes). ponytail: no SW_B start / end
+  (none placed has one), LavaHomeSeesaw's projection map offset. **Release: slice_all.py** IceVolcanoGalaxy,
+  StarDustGalaxy, HellProminenceGalaxy, EggStarGalaxy (arg 3) **+ sound.py --pack** for them (the seesaws'
+  SE names are new in game.c: `se?` until then).
+- Mario carried on AreaMove / RailMove floors (feat/581-power-area-rail-move, #581, 2026-11-18): game.c m_power_moves
+  (MarioEnforce.cpp powerAreaMove / powerRailMove): on a floor of code 28 in an AreaMoveSphere round it (arg0 or 10 a
+  frame), on one of code 27 along his ground's rail at the point nearest him (10 a frame; the rail's own speed,
+  path_arg3, is not in the PATH entries); against a wall the part into it dropped; tryJump takes the two off his
+  velocity and into the jump. PCSX2: XF=-DSINK_TEST=27 SandClockGalaxy/1, set on a sand stream with the stick let go
+  he sinks to 64 (updateOnSand's rail floor) and is taken off its end in about 60 frames. AreaMove waits for the
+  repack (slice.py LOGIC AreaMoveSphere: the galaxies placing it). His position was not logged: no speed measured.
+- MarioStep (#571, 2026-11-18): m_check_step / m_start_step / step_update (MarioStep.cpp): the stick against a front
+  wall with a floor on it under mWalkStepHeight sets him on it, his drawn matrix eased; m_check_all_wall keeps the
+  floor and slope ahead (_4D8 / _50C, _4DC / _518). _4DC never holds as decompiled: MarioBump can not start. PCSX2:
+  EggStar 1's route unchanged (star at f 4281) with no "step:" line (XF=-DSTEP_TEST): no step taken was seen yet.
+- RasterScrollCube, AstroChangeStageCube's capture wipe (feat/492-raster-astro-wipe, 2026-11-07): MarioCollision.cpp:2296
+  (Mario in a RasterScrollCube: setRasterScroll(arg0, arg1, arg2); slice.py LOGIC RasterScrollCube, HeavenlyBeach's
+  only; its scene reserves the target blocks). AstroChangeStageCube after its 5 frames: closeSystemWipeCircleWithCapture
+  Screen(110) centred on Mario's centre (render_screen_capture: the frame at 320 x 224 in the target blocks, reserved
+  at that moment; render_screen_captured draws it back over the screen under the ring each frame), the stage change once
+  the ring is shut. Tests: `astro` AstroGalaxy/1 (the dome's cube: the ring closes over the frozen frame, AstroDome);
+  plain XF "-DRASTER_TEST -DPACKS_OVERLAY=..." HeavenlyBeachGalaxy/1 (Mario in the cube 300-600: the waves).
+  ponytail: the capture at half size. Repack: slice_all.py HeavenlyBeachGalaxy (LOGIC RasterScrollCube).
+- Sound emitter areas and the quake (feat/580-sound-emitter-areas, #580, 2026-11-18): `update_sound_emitters`
+  (keep_effects, every frame): SoundEmitterCube (arg0: SE_AT_LV_GRAVE / KOOPA_WIND / WIND_DESERT / WIND_ICE_MT_TOP)
+  and SoundEmitterSphere (SE_AT_LV_MAGMA_AMBIENT / SE_OJ_LV_FLOATING_SAND / SE_AT_LV_WIND_DESERT /
+  MAGMA_WIND_VOLCANO / KOOPA_FLOAT_SAND / WIND_RABBIT_MAZE) play their level sound at the camera's watch point or
+  the microphone, moved into the cube's world bounding box / onto the sphere; PlayerSeCube / Sphere / Cylinder
+  (PlayerSeArea, arg0 0): SE_PM_LV_LONG_FALL while Mario is inside and not rising in a jump. `update_quake`
+  (QuakeEffectGenerator: Wait / WaitInArea / Quaking): with Mario in a QuakeEffectAreaCube, every 400 frames
+  shakeCameraInfinity(0.05, 1.5) and SE_AT_LV_EARTHQUAKE for 120. sound.py scenario_keep: QuakeEffectGenerator.cpp's
+  names where a QuakeEffectArea is placed (createSceneObj, no `new`: sfxcut did not follow it). Test: plain with
+  `XF="-DPACKS_OVERLAY=<overlay> -DSE_LOG -DPUT_TEST=QuakeEffectAreaCube -DPUT_UP=100 -DPUT_NOCAM -DPUT_HOLD"`
+  (PUT_HOLD: Mario held where he was put; with PUT_TEST "sound emitter: row ..." at an emitter's first handle and
+  "quake: nerve a -> b"), HellProminenceGalaxy/1 and KoopaBattleVs1Galaxy/1 with their scene and sound packs made
+  again. ponytail: the microphone (AudMicWrap::getMicPos) taken as the camera's eye. **Release: slice_all.py +
+  sound.py --pack** BattleShipGalaxy, CosmosGardenGalaxy, FactoryGalaxy, FloaterOtakingGalaxy,
+  HellProminenceGalaxy, HoneyBeeKingdomGalaxy, IceVolcanoGalaxy, KoopaBattleVs1Galaxy, KoopaBattleVs2Galaxy,
+  KoopaBattleVs3Galaxy, SandClockGalaxy, StarDustGalaxy (slice.py LOGIC: the areas were not in the packs; their SE
+  names are new in game.c).
 - Hidden stars' scenario number (fix/508-placed-scenario-no, #508, 2026-11-18): game_scenario_no /
   game_stage_scenario are GameSystemSceneController::getCurrentScenarioNo, the number
   ScenarioSelectScene::trySetCurrentScenarioNo placed (gamedata.c gd_placed_hidden_star_scenario,

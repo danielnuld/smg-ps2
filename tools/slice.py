@@ -322,15 +322,15 @@ HOME_POS = "\u5408\u4f53\u30d6\u30ed\u30c3\u30af\u6545\u90f7\u70b9"  # 合体ブ
 TEX_ONLY = ("Flag", "FlagKoopaA", "FlagKoopaB", "FlagRaceA", "FlagKoopaCastle", "FlagPeachCastleA", "FlagPeachCastleB",
             "FlagPeachCastleC", "FlagSurfing", "FlagTamakoro")
 DUMMY_TEX = ("MapDummy",)  # AstroMapBoard: GalaxyMapController::capture's picture (TEXT pad0 1: render_target_capture)
-LOGIC = ("MercatorCube", "MirrorAreaCube", "SnowFloor", "SnowplowSwitch", "FallOutFieldDraw", "ClipFieldSwitch", "RaceRail", "NPCSupportRail", "BallRail", "SphereRailDash", "FluffWind", "Fountain", "SpringJetWater", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "TimerSwitch", "SkeletalFishBossRail", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "KoopaSwitchKeeper", "KoopaPowerUpSwitch", "KoopaViewSwitchKeeper", "KoopaRestarterVs3", "BossKameckMoveRail", "TripodBossBaseJointPosition", "TripodBossStepPoint", "TripodBossStepStartArea", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
+LOGIC = ("SoundEmitterCube", "SoundEmitterSphere", "QuakeEffectAreaCube", "PlayerSeCube", "PlayerSeSphere", "PlayerSeCylinder", "MercatorCube", "MirrorAreaCube", "SnowFloor", "SnowplowSwitch", "FallOutFieldDraw", "ClipFieldSwitch", "RaceRail", "NPCSupportRail", "BallRail", "SphereRailDash", "FluffWind", "Fountain", "SpringJetWater", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "TimerSwitch", "SkeletalFishBossRail", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "KoopaSwitchKeeper", "KoopaPowerUpSwitch", "KoopaViewSwitchKeeper", "KoopaRestarterVs3", "BossKameckMoveRail", "TripodBossBaseJointPosition", "TripodBossStepPoint", "TripodBossStepStartArea", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "ForbidTriangleJumpCube", "HeavySteeringCube", "DashChargeCylinder", "ForbidJumpCube",  # Mario::updateCubeCode
-         "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
-         "DeathCylinder", "RestartCube", "StarPieceSpot", "WaterCube", "WaterSphere", "WaterCylinder",
+         "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "CameraRepulsiveCylinder", "CameraRepulsiveSphere", "DeathCube", "DeathSphere",
+         "DeathCylinder", "AreaMoveSphere", "RestartCube", "StarPieceSpot", "WaterCube", "WaterSphere", "WaterCylinder",
          "ChangeBgmCube", "BgmProhibitArea", "AudioEffectCube", "AudioEffectSphere", "AudioEffectCylinder", "AstroChangeStageCube", "MovieStarter", "RunawayRabbitCollect", "PhantomTorch", "PhantomBonfire", "Hanachan",
          # Mario's areas (MR::getAreaObj: game.c area_obj / foo_sphere)
          "CelestrialSphere", "TowerModeCylinder", "NonSleepCube", "EffectCylinder", "SmokeEffectColorAreaCube",
          "MessageAreaCube", "MessageAreaCylinder", "PullBackCylinder", "PlaneModeCube", "PlaneCircularModeCube",
-         "DarkMatterCube", "ForbidWaterSearchCube",  # doDarkDamage; MarioSwim::checkUnderWaterFull (#575)
+         "RasterScrollCube", "DarkMatterCube", "ForbidWaterSearchCube",  # doDarkDamage; MarioSwim::checkUnderWaterFull (#575)
          "PrologueDirector", "PurpleCoinStarter", "ExterminationKuriboKeySwitch", "AstroOverlookObj", "AstroOverlookAreaCylinder", "CoinBox", "GhostPlayer",
          "BigBubbleMoveLimitterPlane", "BigBubbleMoveLimitterCylinder", "DodoryuClosedCylinder")  # BigBubbleMoveLimitter (game.c bgb_limit_pos)  # areas (areaobjinfo) travel as OBJS rows too
 
@@ -393,8 +393,12 @@ def rows(b):
 def map_parts(b, rs):
     """mappartsinfo rows: Obj_arg0-3 as usual, the MapPartsRotator columns in args 4-7: RotateSpeed, RotateAngle,
     RotateAxis, then bit 30 (a map part) | RotateType (bits 0-3, default 1) | RotateAccelType << 4 | MoveConditionType
-    << 8 | RotateStopTime << 12 (unset: Petari's defaults, 0 but the type)."""
+    << 8 | RotateStopTime << 12 (unset: Petari's defaults, 0 but the type). A seesaw's RotateAccelType is its inertia
+    (100-2000, over the four bits): written whole to arg 3, which those classes do not read."""
     n = len(rs)
+    seesaws = {"PhantomShipHandle", "LavaHomeSeesaw", "KoopaShipSeesawStep", "IceVolcanoBalanceStepA", "IceVolcanoBalanceStepB",
+               "IceMountainSeesawSlipA", "IceMountainSeesawSlipB", "IceMountainSeesawSlipC", "IceMountainSeesawSlipD",
+               "IceMountainSeesawNoSlipA"}  # MapPartsSeesaw1AxisRotator / 2AxisRotator / LavaHomeSeesawRotator hosts
     col = {f: int_or(b, f, n, -1) for f in ("RotateSpeed", "RotateAngle", "RotateAxis", "RotateType", "RotateAccelType",
                                            "MoveConditionType", "RotateStopTime")}
     for i, r in enumerate(rs):
@@ -402,6 +406,8 @@ def map_parts(b, rs):
         r["args"][4:8] = [col["RotateSpeed"][i], col["RotateAngle"][i], col["RotateAxis"][i],
                           1 << 30 | g("RotateType", 1) & 15 | (g("RotateAccelType", 0) & 15) << 4 |
                           (g("MoveConditionType", 0) & 15) << 8 | min(g("RotateStopTime", 0), 0x3FFF) << 12]
+        if r["name"] in seesaws:
+            r["args"][3] = col["RotateAccelType"][i]
     return rs
 
 

@@ -353,7 +353,9 @@ typedef struct {
     int hipsw;       /* hip drop switch (update_hip_switches): 1 HipDropSwitch, 2 HipDropTimerSwitch, 3 PicketSwitch(Big) */
     int rotor;       /* map part with a RotateSpeed: turns (rotor_matrix), carries Mario */
     int halo;        /* ZoneHalo 1 / PowerStarHalo 2: shown only from afar (update_halos); Air 3, AirFar100m 4 (update_airs) */
-    int seesaw;      /* PhantomShipHandle: MapPartsSeesaw1AxisRotator, turned by Mario's weight (update_seesaws) */
+    int seesaw;      /* 1 PhantomShipHandle, 2 a SimpleSeesawObj on one axis (MapPartsSeesaw1AxisRotator), 3 one on two
+                      * (MapPartsSeesaw2AxisRotator), 4 LavaHomeSeesaw (LavaHomeSeesawRotator): turned by Mario's weight
+                      * (update_seesaws) */
     int sky;         /* sky dome (Petari Sky): centred on the camera, drawn first */
     int sun;         /* BrightSun: its Sun model far off the camera along its rotation, drawn with the skies */
     int steam;       /* LavaSteam: vents on a cycle and burns (update_steam) */
@@ -544,6 +546,7 @@ static unsigned *row_larea_t;
 static struct { int area, from, t, n; RenderLight cur; } plight; /* the player's ActorLightCtrl (area -1: none yet) */
 static int area_inside(const Row *r, V3 p);
 static int area_obj(const char *cls, V3 p);
+static void mario_set_raster(int t, int x, int y); /* MR::setRasterScroll (race.inc) */
 /* clip_area.inc */
 static void snow_init(const Scene *s), snow_update(void), snow_draw(V3 eye); /* snow_floor.inc */
 static int ca_shape_of(const char *name);
@@ -1098,6 +1101,7 @@ static struct {
 } hhps[MAX_HHPS];
 static int nhhps;
 static void seesaw_matrix(Inst *in);
+static u32 seesaw_se(const char *name);
 static int nseesaws;
 #define MAX_BRIDGES 4
 static int nbridges; /* PhantomShipBridge (update_bridges) */
@@ -1105,8 +1109,8 @@ static int nfollows;
 #define MAX_FOLLOWS 8
 #define FOLLOW_N 16
 static struct { int row, nrv, step, n, slot[FOLLOW_N], alive; float angle; V3 x, y, z, off[FOLLOW_N], vel[FOLLOW_N]; } follows[MAX_FOLLOWS];
-#define MAX_SEESAWS 8
-static struct { int row, nrv, step, hip; float vel, angle; } seesaws[MAX_SEESAWS];
+#define MAX_SEESAWS 16 /* (IceMountainZone has twelve) */
+static struct { int row, nrv, step, hip; float vel, angle; Quat q; /* the two axis one's mRotateMtx; vel its mRotateSpeed */ } seesaws[MAX_SEESAWS];
 static int seesaw_of(int row);
 #define MAX_VINES 4
 #define VINE_PTS 256
@@ -2230,6 +2234,37 @@ static int kcl_line(V3 a, V3 b, V3 *hp, V3 *n, int *inst)
  * the isCameraCodeThrough filter (Camera_through, slice.py kcl_codes bit 10: such faces passed through), and
  * Collision::checkStrikeBallToMap (each face's normal and depth) */
 static int cam_gravity(V3 p, V3 *g) { return gravity_at(grav, ngrav, (const float *)&p, (float *)g); }
+/* CameraRepulsiveCylinder::getRepulsion (CameraRepulsiveArea.cpp; the sphere's is zero): the place's part across
+ * the cylinder's axis, divided by (twice its length over the radius) cubed: a camera at half the radius is pushed
+ * out to the radius, nearer the axis farther */
+static int area_obj(const char *cls, V3 p);
+static int cam_repulsion(V3 pos, V3 *rep)
+{
+#ifdef CAM_REPULSE_TEST /* XF=-DCAM_REPULSE_TEST=<radius>: an endless cylinder of that radius about Mario's up, from
+                         * frame 300 (no stage of RMGE01 places a CameraRepulsiveArea); logged every 60 calls */
+    static int t;
+    if (!mario || ++t < 300) return 0;
+    V3 up = mario->up, ret = vsub(pos, mario->pos);
+    float rad = CAM_REPULSE_TEST;
+#else
+    int a = area_obj("CameraRepulsiveCylinder", pos);
+    if (a < 0) { if (area_obj("CameraRepulsiveSphere", pos) < 0) return 0; *rep = v3(0, 0, 0); return 1; }
+    const Row *r = &sc->objs[a];
+    V3 x, z;
+    row_axes(r, &x, &z);
+    V3 up = vcross(z, x), ret = vsub(pos, row_pos(r));
+    float rad = 500.0f * r->scale[0];
+#endif
+    ret = vsub(ret, vmul(up, vdot(up, ret)));
+    float base = vlen(vcross(ret, up)) * 2.0f / rad;
+    if (base < 1e-6f) { *rep = v3(0, 0, 0); return 1; }
+    *rep = vmul(ret, 1.0f / (base * base * base));
+#ifdef CAM_REPULSE_TEST
+    if (vlen(ret) >= rad) return 0; /* (isInVolume) */
+    if (t % 60 == 0) printf("cam repulsion: eye %d off the axis, pushed %d (radius %d)" "\n", (int)vlen(ret), (int)vlen(*rep), (int)rad);
+#endif
+    return 1;
+}
 static int cam_map_poly(V3 a, V3 d, V3 *hp)
 {
     V3 b = vadd(a, d);
@@ -2962,6 +2997,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     { /* AstroMapBoard's picture, the mirror's, the raster scroll's bands (a TeresaRacer of a racer id): their VRAM out of the cache */
         int tr = scene_type(s, "TeresaRacer"), raster = 0;
         for (u32 i = 0; tr >= 0 && i < s->nobjs; i++) raster |= (int)s->objs[i].type == tr && s->objs[i].arg[0] != -1;
+        raster |= scene_type(s, "RasterScrollCube") >= 0; /* (MarioCollision's setRasterScroll in it) */
         render_target_reserve(st_mapboard || scene_type(s, "MirrorAreaCube") >= 0 || raster);
     }
     gw_init();
@@ -3252,6 +3288,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         cam_blob = blob;
         camera_rail = cam_rail;
         camera_gravity = cam_gravity; camera_map_poly = cam_map_poly; camera_map_ball = cam_map_ball;
+        camera_repulsion = cam_repulsion;
         const CamParam *cp = c ? (const CamParam *)(c + 16) : NULL;
         if (c && *(const int *)(c + 4) != (int)sizeof(CamParam)) { /* an older blob's 132-byte cameras: no roll */
             int nc = *(const int *)c;
@@ -5442,7 +5479,7 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->giver = strcmp(name, "DeadLeaves") == 0 ? 1 : strcmp(name, "Pompon2Plant") == 0 || strcmp(name, "Pompon4Plant") == 0 ? 2 : 0;
     ci->hipsw = strcmp(name, "HipDropSwitch") == 0 ? 1 : strcmp(name, "HipDropTimerSwitch") == 0 ? 2 :
                 strncmp(name, "PicketSwitch", 12) == 0 ? 3 : 0;
-    ci->seesaw = strcmp(name, "PhantomShipHandle") == 0;
+    ci->seesaw = strcmp(name, "PhantomShipHandle") == 0 ? 1 : seesaw_se(name) ? 2 : strcmp(name, "LavaHomeSeesaw") == 0 ? 4 : 0;
     ci->bridge = strcmp(name, "PhantomShipBridge") == 0;
     ci->dossun = strcmp(name, "Dossun") == 0;
     ci->onimasu = strcmp(name, "Onimasu") == 0 || strcmp(name, "OnimasuPivot") == 0;
@@ -5761,6 +5798,7 @@ static void game_rebind_(void)
             char bn[40]; snprintf(bn, sizeof bn, "%sBloom", name); in->md_bloom = scene_model(s, bn);
             if (r->type < 1024) { bloom_of[r->type] = in->md_bloom; bloom_ok[r->type] = 1; }
         }
+        if (in->seesaw == 2 && r->arg[6] != 0) in->seesaw = 3; /* setupInitInfoSeesaw: RotateAxis 0 the one axis rotator, else the two axis one */
         if (in->seesaw) { in->rotor = 0; seesaw_matrix(in); }
         in->railer = scene_blob_g && ((r->arg[7] > 0 && (r->arg[7] >> 30 & 1)) || in->eyebeamer || st_rail_obj(name) || !strcmp(name, "OceanSmallTurtle")) && r->path >= 0 ? /* (st_rail_obj: an objinfo RailMoveObj; OceanSmallTurtle's createMapPartsRailMoverForMercator) */
                      find_path(scene_blob_g, r->zone, r->path) : NULL;
@@ -6431,13 +6469,31 @@ int game_test_petari(void) /* the first Petari: Mario 800 off it (it comes, wait
     return -1;
 }
 
-int game_test_seesaw(int phase) /* the first PhantomShipHandle: Mario dropped 150 along its X (phase 0) or onto it in a
-                                 * hip drop (phase 1); its zone first */
+#ifndef SEESAW_N
+#define SEESAW_N 0
+#endif
+int game_test_seesaw(int phase) /* the first seesaw (XF=-DSEESAW_N=k: the k-th row of one, -DSEESAW_AXIS2: the first on two axes): Mario dropped 150 along its X
+                                 * (phase 0) or onto it in a hip drop (phase 1); its zone first */
 {
     test_nolost = 1;
+    int want = -1, nth = 0;
+    static int listed;
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const char *cn = sc->types + 32 * sc->objs[i].type;
+        if (!strcmp(cn, "PhantomShipHandle") || !strcmp(cn, "LavaHomeSeesaw") || seesaw_se(cn)) {
+            if (!listed) printf("seesaw test: %d is row %d %s axis %d arg3 %d\n", nth, (int)i, cn, (int)sc->objs[i].arg[6], (int)sc->objs[i].arg[3]);
+#ifdef SEESAW_AXIS2 /* the first two axis one */
+            if (want < 0 && seesaw_se(cn) && sc->objs[i].arg[6] != 0) want = (int)i;
+            nth++;
+#else
+            if (nth++ == SEESAW_N) want = (int)i;
+#endif
+        }
+    }
+    listed = 1;
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
-        if (!in->seesaw) continue;
+        if (!in->seesaw || in->row != want) continue;
         int k = seesaw_of(in->row);
         if (k < 0) return -1;
         V3 pos = v3(in->m[12], in->m[13], in->m[14]), up = up_at(pos, mario->up);
@@ -6449,16 +6505,14 @@ int game_test_seesaw(int phase) /* the first PhantomShipHandle: Mario dropped 15
             mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
             if (phase) { mario->hip = HIP_START; mario->hip_t = 0; }
         }
-        if (game_frame % 20 == 0) printf("seesaw: nrv %d angle %d vel x100 %d on %d hip %d\n", seesaws[k].nrv, (int)seesaws[k].angle, (int)(seesaws[k].vel * 100), mario_ground == i, mario->hip);
+        if (game_frame % 20 == 0) printf("seesaw %s kind %d: nrv %d angle %d up %d %d %d vel x1000 %d on %d hip %d\n", sc->types + 32 * sc->objs[in->row].type, in->seesaw, seesaws[k].nrv, (int)seesaws[k].angle, (int)(in->m[4] * 1000), (int)(in->m[5] * 1000), (int)(in->m[6] * 1000), (int)(seesaws[k].vel * 1000), mario_ground == i, mario->hip);
         return seesaws[k].nrv;
     }
-    int ty = scene_type(sc, "PhantomShipHandle");
-    for (u32 i = 0; i < sc->nobjs; i++)
-        if (sc->objs[i].type == ty) {
-            V3 p = row_pos(&sc->objs[i]);
-            mario->up = up_at(p, mario->up); mario->pos = vadd(p, vmul(mario->up, 400.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
-            return -2;
-        }
+    if (want >= 0) {
+        V3 p = row_pos(&sc->objs[want]);
+        mario->up = up_at(p, mario->up); mario->pos = vadd(p, vmul(mario->up, 400.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return -2;
+    }
     return -1;
 }
 
@@ -16190,6 +16244,8 @@ static void m_squat_anim(Player *m)
 
 static void m_proc_jump(Player *m, int a1);
 static void m_init_jump(Player *m);
+static int near0(V3 v);
+static V3 m_v190, m_v19C; /* Mario::_190 / _19C: this frame's move by an AreaMoveSphere / along his ground's rail */
 static void m_pad_vib(int s) /* MarioModule::startPadVib(u32): 0 弱, 1 微弱, 2 中, 3 強 */
 {
     static const u8 k[4] = {RUMBLE_WEAK, RUMBLE_VERY_WEAK, RUMBLE_MIDDLE, RUMBLE_STRONG};
@@ -17053,6 +17109,16 @@ static void m_try_jump(Player *m) /* tryJump: 1st / 2nd / 3rd jump, or the turn,
     }
     if (m_flip1A) m->jump_kind = 0; /* _10._1A: _430 0 */
     m_set_jv(m, vadd(vmul(m->face, m->walk * MC.mJumpFrontSpeed), vmul(m->up, MC.mJumpHeight[m->jump_kind])));
+    { /* stickTotal (_190 + _19C): off his velocity, its part across gravity into the jump (half against it) */
+        V3 st = vadd(m_v190, m_v19C);
+        if (!near0(st)) {
+            m->vel = vsub(m->vel, st); /* addVelocity(-stickTotal) */
+            st = vtangent(st, m->up);
+            V3 jv = m_jv(m), h = vtangent(jv, m->up);
+            h = vadd(h, vmul(st, vdot(st, h) > 0.0f ? 1.0f : 0.5f));
+            m_set_jv(m, vadd(h, vmul(m->up, vdot(jv, m->up))));
+        }
+    }
     m->digital = 0; m->grounded = 0;
     m_proc_jump(m, 1);
     m->jumping = 1;
@@ -19128,6 +19194,10 @@ static struct {
     int f15, f39;               /* calcFrontFloor: _15 the floor over the wall's hit, _39 a place on it (_4A4) */
     float f4E0, f4E4;           /* its height over the hit, the hit's distance ahead */
     V3 p4A4;
+    Tri t4D8, t4DC;             /* checkAllWall: _4D8 a floor face ahead and under his centre (its place _50C), _4DC a
+                                 * standable slope ahead (its place _518) */
+    V3 p50C, p518;
+    int f4D8, f4DC;             /* (their isValid) */
     Tri floor;                  /* _47C */
     Tri last;                   /* recordLastGround: _474, _4BC its place in it */
     V3 l4BC, ground_pos;        /* mGroundPos */
@@ -19932,8 +20002,10 @@ static void m_wall_jump_hit(Player *m)
 /* checkAllWall: the faces round the centre within 80 (90 swimming), not floors nor ceilings (|n . head| <= 0.5), by
  * their normal against his front (his last move in a tornado jump): front (-mWallFrontAngleRange), back
  * (mWallBackAngleRange) or side, the deepest of each. A front one hit on its face (-0.999, on a wall -0.9) is faced
- * (_8), else met (_32); one under the floor ahead is no front wall. ponytail: the slope ahead (_4DC, _4D8, _380,
- * mDrawStates._F / _17), checkStrikePointToMap, Teresa's thick ball, ThroughWall and _400 are not kept */
+ * (_8), else met (_32); one under the floor ahead is no front wall. Of the floors and ceilings: _4D8 the one hit
+ * ahead (over 0.707 on his front) and under his centre, _4DC a face ahead of mFlatAngle or more he could stand on
+ * (mSlipAngle) more than 30 off his ground (diffAngleAbs gives radians: as decompiled this never holds).
+ * ponytail: _380, mDrawStates._F / _17, checkStrikePointToMap, Teresa's thick ball, ThroughWall and _400 are not kept */
 static void m_check_all_wall(Player *m)
 {
     float r = swimming ? 90.0f : 80.0f;
@@ -19944,9 +20016,19 @@ static void m_check_all_wall(Player *m)
     }
     Hit h[16];
     int n = kcl_query(c, r, h, 16), walls[3] = {-1, -1, -1};
+    mw.f4D8 = mw.f4DC = 0;
     for (int i = 0; i < n; i++) {
-        if (fabsf(vdot(h[i].n, m->up)) > 0.5f) continue;
         if (m2.on && fabsf(vdot(h[i].n, m2.v6A0)) > 0.707f) continue; /* (2D) */
+        V3 dir = vsub(h[i].pos, c), fb = vsub(h[i].pos, m->pos);
+        dir = vlen(dir) > 1e-6f ? vnorm(dir) : v3(0, 0, 0); fb = vlen(fb) > 1e-6f ? vnorm(fb) : v3(0, 0, 0);
+        float un = vdot(m->up, h[i].n), deg = 180.0f * (acosf(un > 1.0f ? 1.0f : un < -1.0f ? -1.0f : un) / 3.14159f);
+        Tri ht = {h[i].inst, h[i].sub, h[i].prism, h[i].inst < 0 ? kcl_icestep : insts[h[i].inst].kcl};
+        if (deg >= MC.mFlatAngle && vdot(dir, m->face) > 0.0f && vdot(fb, m->face) > 0.0f &&
+            angle_d(m, h[i].n) <= MC.mSlipAngle && ang_abs(m->ground_n, h[i].n) > 30.0f) { mw.t4DC = ht; mw.p518 = h[i].pos; mw.f4DC = 1; }
+        if (fabsf(un) > 0.5f) { /* (mHeadVec) */
+            if (vdot(dir, m->up) < 0.0f && vdot(dir, m->face) > 0.707f) { mw.t4D8 = ht; mw.p50C = h[i].pos; mw.f4D8 = 1; }
+            continue;
+        }
         float facing = vdot(h[i].n, front);
         int side = facing >= MC.mWallBackAngleRange ? 2 : facing <= -MC.mWallFrontAngleRange ? 0 : 1;
         if (walls[side] >= 0 && h[walls[side]].dist > h[i].dist) continue;
@@ -20581,6 +20663,144 @@ static void m_blend_step(void)
     if (!m_blend_n) return;
     m_blend_r = 1.0f - (1.0f - m_blend_r) * (float)(m_blend_n - 1) / (float)m_blend_n;
     m_blend_n--;
+}
+/* MarioStep.cpp after Petari (Mario::checkStep / startStep, MarioStep: MarioStatus_Step): on his feet, the stick held
+ * against a front wall (his pad's direction under -0.5 on its normal) that has a floor on it (_15, _39: calcFrontFloor,
+ * its place _4A4) less than mWalkStepHeight up, he is set on that floor (階段) with nothing 80 over it (a point, a 20
+ * and a 50 ball) and 200 to the ceiling; the status then walks him on (mainMove without its velocity, the walk speed
+ * 0.1 at least) while his drawn matrix eases over 20 - 16 x his walk speed frames (4 at least; counted down by the
+ * walk speed, 0.5 at least). A jumps out of it. Before that, with a floor face ahead (_4D8, no front wall faced):
+ * within 20 across and nearly square to his front it is the step (its place _50C); else, under 60 degrees of his
+ * front on its normal, his velocity is turned about his side by that much. No step onto a press part or one that
+ * moved (unless it is his ground's). ponytail: startStep's _4C8 test (the face he is pressed by), MarioStatus_Climb
+ * and MarioActor::_3E5 not kept */
+static struct { int on; float t, walk; } stp; /* _14, _18 */
+static float m_dist_to_ceil(Player *m);
+static V3 m_front_wall_norm(void);
+static int sw_anim_busy(void);
+static void m_start_step(Player *m, V3 at) /* startStep, MarioStep::start */
+{
+    if (stp.on) return; /* getCurrentStatus() == 0x10 */
+    V3 cp = vadd(at, vmul(m->up, 80.0f)); /* rVec - gravity x 80 */
+    Hit h[2];
+    if (kcl_query(cp, 1.0f, h, 2)) return;  /* checkStrikePointToMap */
+    if (kcl_query(cp, 20.0f, h, 1)) return; /* checkStrikeBallToMap 20 */
+    if (kcl_query(cp, 50.0f, h, 1)) return; /* 50 */
+    V3 old = m->pos;
+    m->pos = at;
+    float ceil_d = m_dist_to_ceil(m); /* calcDistToCeil(false) from there */
+    m->pos = old;
+    if (ceil_d < 200.0f) return;
+    if (mw.f4D8) { /* _4D8: no press object's, no part that moved but his ground's */
+        if (press_at(mw.t4D8.inst)) return;
+        if (tri_moved(&mw.t4D8) && mw.t4D8.inst != mario_ground) return;
+    }
+    m->pos = at; /* setTrans(rVec, 階段) */
+    stp.on = 1;  /* changeStatus(mStep): start */
+    stp.walk = m->walk; /* (MR::clamp's result is dropped) */
+    int n = 20 - (int)(16.0f * stp.walk);
+    if (n < 4) n = 4;
+    m_blend_mtx(n); /* setBlendMtxTimer */
+    stp.t = (float)n;
+    if (sw_anim_busy()) m_clip_stop(); /* isAnimationRun(nullptr): stopAnimation(nullptr) */
+    m->turn_slip = 0; /* _3D0 */
+    m->vel = v3(0, 0, 0);
+    m->turn_neutral = 0; /* mMovementStates._10 */
+#ifdef STEP_TEST
+    printf("step: up %.0f, %d frames, walk %.2f\n", vdot(vsub(at, old), m->up), n, stp.walk);
+#endif
+}
+/* Mario::powerAreaMove / powerRailMove (MarioEnforce.cpp), after tryPushToVelocity: on his feet on an AreaMove floor
+ * (code 28) inside an AreaMoveSphere he is carried round it: its up less its part towards the sphere's centre, at
+ * arg0 (10) a frame; on a RailMove floor (27) along his ground's rail at the point nearest him, at 10 a frame. Against
+ * a wall (front, side or back) the part into it and along gravity is dropped. tryJump takes the two off his velocity
+ * and adds them to the jump (half when against it).
+ * ponytail: the rail's speed is its path_arg3 (10 when unset), which the PATH entries do not carry */
+static const unsigned char *find_path(const unsigned char *blob, int zone, int id);
+static float rail_nearest(const float *p, int n, V3 q);
+static V3 m_power_wall(Player *m, V3 v) /* (_8 || _19 || _1A) */
+{
+    if (mw.w8 || mw.w19 || mw.w1A) {
+        V3 n = m_wall_norm(m);
+        if (vdot(n, v) < 0.0f) { v = vsub(v, vmul(n, vdot(v, n))); v = vtangent(v, m->up); }
+    }
+    return v;
+}
+static void m_power_moves(Player *m)
+{
+    m_v190 = m_v19C = v3(0, 0, 0);
+    if (!m->grounded || m->jumping) return;
+    if (m->floor == 28) { /* powerAreaMove: MR::calcAreaMoveVelocity */
+        int a = area_obj("AreaMoveSphere", m->pos);
+        if (a >= 0) {
+            const Row *r = &sc->objs[a];
+            V3 x, z;
+            row_axes(r, &x, &z);
+            V3 up = vcross(z, x), radial = vsub(row_pos(r), m->pos);
+            radial = vlen(radial) > 1e-6f ? vnorm(radial) : v3(0, 0, 0);
+            up = vsub(up, vmul(radial, vdot(up, radial)));
+            up = vlen(up) > 1e-6f ? vnorm(up) : v3(0, 0, 0);
+            m_v190 = m_power_wall(m, vmul(up, r->arg[0] == -1 ? 10.0f : (float)r->arg[0]));
+            m->vel = vadd(m->vel, m_v190); /* addVelocity */
+        }
+    }
+    if (m->floor == 27 && mario_ground >= 0 && insts[mario_ground].row >= 0) { /* powerRailMove: his ground's host */
+        const Row *r = &sc->objs[insts[mario_ground].row];
+        const unsigned char *e = scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
+        if (e) {
+            const float *pts = (const float *)(e + 24);
+            u32 np = *(const u32 *)(e + 8);
+            float c = rail_nearest(pts, (int)np, m->pos); /* calcNearestRailDirection */
+            V3 d = vsub(rail_at(pts, np, c + 10.0f), rail_at(pts, np, c));
+            if (vlen(d) < 1e-3f) d = vsub(rail_at(pts, np, c), rail_at(pts, np, c - 10.0f)); /* (the rail's end) */
+            d = vlen(d) > 1e-6f ? vnorm(d) : v3(0, 0, 0);
+            if (mw.w8 || mw.w19 || mw.w1A) { /* (the direction, before its speed) */
+                V3 n = m_wall_norm(m);
+                if (vdot(n, d) < 0.0f) { d = vsub(d, vmul(n, vdot(d, n))); d = vtangent(d, m->up); }
+            }
+            m_v19C = vmul(d, 10.0f);
+            m->vel = vadd(m->vel, m_v19C);
+        }
+    }
+}
+static void m_check_step(Player *m) /* checkStep */
+{
+    if (m->jumping || m->squat || !m->grounded) return; /* jumping, _A, !_1 */
+    if (hg.on || m->walling || swimming) return;        /* MarioStatus_Hang / Wall / Swim, isSwimming */
+    if (dm_damaging()) return;
+    if (!near0(carry_d)) return;                        /* _184 */
+    if (fabsf(m_sz) < 0.001f) return;                   /* !isStickOn */
+    if (m->stand_turn) return;                          /* _750 */
+    if (m->slip_poly) return;                           /* mDrawStates._C */
+    if (mw.s2 && slip_polygon(m, tri_attr(&mw.shadow) & 0x3F, tri_n(&mw.shadow))) return; /* isSlipPolygon(_45C) */
+    if (mw.f4D8 && !mw.w8) { /* _4D8->isValid() && !_8 (&& _1) */
+        float fd = vdot(m->face, tri_n(&mw.t4D8));
+        V3 hz = vtangent(vsub(mw.p50C, m->pos), m->up); /* vecKillElement(.., -gravity) */
+        if (vlen(hz) < 20.0f && fabsf(fd) < 0.3926991f) {
+            if (vdot(vsub(mw.p50C, m->pos), m->up) < MC.mWalkStepHeight) m_start_step(m, mw.p50C);
+        } else if (fabsf(fd) < 1.0471976f) m->vel = rot_axis(m->vel, vcross(m->up, m->face), fd); /* PSMTXRotAxisRad(mSideVec, frontDot) */
+        return;
+    }
+    if (!mw.f15 || !mw.f39) return;                     /* _15, _39 */
+    if (!(vdot(m_pad, m_front_wall_norm()) < -0.5f)) return; /* getWorldPadDir . mFrontWallTriangle's normal */
+    if (vdot(vsub(mw.p4A4, m->pos), m->up) < MC.mWalkStepHeight) m_start_step(m, mw.p4A4);
+}
+static void m_try_jump(Player *m);
+static void m_update_walk_speed(Player *m);
+static int step_update(Player *m) /* MarioStep::update: 0 ends it */
+{
+    if (m_req_jump) { m_try_jump(m); return 0; } /* isRequestJump */
+    if (m->jumping) return 0;
+    m_main_move(m);
+    m->vel = v3(0, 0, 0); /* clearVelocity */
+    float w = m->walk < 0.1f ? 0.1f : m->walk;
+    m->walk = w;
+    m_update_walk_speed(m);
+    if (w < 0.5f) w = 0.5f;
+    stp.t -= w;
+    if (stp.t < 0.0f) return 0;
+    m_blend_mtx((int)stp.t);
+    return 1;
 }
 static void mtx_quat(const float *m, float q[4]) /* C_QUATMtx (m's columns its axes) */
 {
@@ -23238,6 +23458,17 @@ static void update_mario_(void)
             m_tower.r = 500.0f * r->scale[0];
         }
     }
+    { /* MarioCollision.cpp:2296: in a RasterScrollCube, setRasterScroll(its arg0, arg1, arg2) */
+        int rs = area_obj("RasterScrollCube", m->pos);
+        if (rs >= 0) mario_set_raster(sc->objs[rs].arg[0], sc->objs[rs].arg[1], sc->objs[rs].arg[2]);
+#ifdef RASTER_TEST /* XF=-DRASTER_TEST HeavenlyBeachGalaxy/1: Mario put in the cube from frame 300 to 600 */
+        if (game_frame >= 300 && game_frame < 600) {
+            int t = scene_type(sc, "RasterScrollCube");
+            for (u32 i = 0; t >= 0 && i < sc->nobjs; i++) if ((int)sc->objs[i].type == t) { m->pos = vadd(row_pos(&sc->objs[i]), vmul(m->up, 200.0f)); m->hvel = v3(0, 0, 0); m->vup = 0; break; }
+        }
+        if (game_frame % 30 == 0) printf("raster test f %u: cube %d%c", game_frame, rs, 10);
+#endif
+    }
     { /* updateCubeCode: in a PullBackCube or PullBackCylinder, doRecovery (a cylinder without arg0 1: its base and up
        * for MarioRecovery's _4C / _58, _12) */
         int pb = area_obj("PullBackCube", m->pos);
@@ -23347,6 +23578,7 @@ static void update_mario_(void)
         else if (!m_clip_on("spinground") || m->jumping || slipping) m->magic = 0;
         else { m_main_move(m); m_update_walk_speed(m); done = 1; }
     }
+    if (!done && stp.on) { if (!step_update(m)) stp.on = 0; done = 1; } /* MarioStep (a status; close does nothing) */
     if (!done && suke.on) { if (!suke_update(m)) suke_close(m); done = 1; } /* MarioSukekiyo / MarioBury (a status) */
     if (!done && m->side_step) { if (!side_step_update(m)) side_step_close(m); done = 1; } /* MarioSideStep (a status) */
     if (!done && m->slider) { if (!slider_update(m)) slider_close(m); done = 1; } /* MarioSlider (a status) */
@@ -23392,6 +23624,8 @@ static void update_mario_(void)
         m->vel = vadd(m->vel, m->s350);
     }
     m->s350 = v3(0, 0, 0);
+    m_power_moves(m); /* powerAreaMove, powerRailMove */
+    m_check_step(m); /* checkStep (ponytail: checkBump not ported) */
 
     /* MarioActor's Binder (initBinder 60, setBinderOffsetVec _2C4): radius 60 round his place + _2C4, up x 70 on the
      * ground (50 squatting), eased 0.1 a frame to -gravity x 70 off it; checkGround keeps him on the ground. Hanging his
@@ -37659,24 +37893,72 @@ static int mp_running(const Row *r, int row)
  * along its X / (0.1 x inertia: RotateAccelType, 1000 unset); after 2 frames the restoring force (RotateStopTime x
  * 0.01 towards its first up; slower than 0.1 and upright: stopped) and friction 0.99; clamped to RotateSpeed x 0.01
  * a frame; RotateAngle > 0 limits it (bounced back x -0.5). A hip drop on it adds 40 x that. Stopped: Stay. */
+/* SimpleMapObj.cpp: SimpleSeesawObj is a MapObjActor with one of the two seesaw rotators (setupInitInfoSeesaw:
+ * RotateAxis 0 the one axis one, else MapPartsSeesaw2AxisRotator), started at init (no SW_B on any placed), its move
+ * sound from sSeDataTable while it turns faster than 0.001. MapPartsSeesaw2AxisRotator.cpp: Stay until Mario stands on
+ * it, then Move for good: with him on it, it blends (blendMtxRotate: JMAQuatLerp) towards its base turned RotateAngle
+ * about its up x his place in its frame, by 0.001 x his distance / inertia (RotateAccelType, 500 unset; a tenth of it
+ * in the hip drop's frame), then back towards its base by 0.0001 x RotateStopTime. The inertia is over the pack's four
+ * RotateAccelType bits: slice.py map_parts writes it whole to arg 3 (unused by these classes); an older pack's row
+ * keeps the four bits.
+ * LavaHomeSeesaw.cpp / LavaHomeSeesawRotator.cpp: the one axis seesaw again with its own nerves: it starts at 0.01 a
+ * frame; Stay turns too (no friction) until Mario lands, then MoveStart: a weak camera shake, ON_METAL, 0.7 a frame
+ * down for steps 0-5 and back up for 6-7, Move at 8; Stay again when slower than 0.01 and level; no "stopped" snap.
+ * ponytail: its projection map's offset (initAfterPlacement: updateMtxUseBaseMtxWithLocalOffset) is not made. */
 enum { SS_STAY, SS_MOVESTART, SS_MOVE, SS_HIPDROP };
+static u32 seesaw_se(const char *name) /* sSeDataTable */
+{
+    static const struct { const char *name; u32 se; } t[] = {
+        {"KoopaShipSeesawStep", SE_OJ_LV_KOOPA_SHIP_SEESAW}, {"IceVolcanoBalanceStepA", SE_OJ_LV_VOL_BAL_STEP_ROT},
+        {"IceVolcanoBalanceStepB", SE_OJ_LV_VOL_BAL_STEP_ROT}, {"IceMountainSeesawSlipA", SE_OJ_LV_ICE_M_SEESAW_S},
+        {"IceMountainSeesawSlipB", SE_OJ_LV_ICE_M_SEESAW_M}, {"IceMountainSeesawSlipC", SE_OJ_LV_ICE_M_SEESAW_L},
+        {"IceMountainSeesawSlipD", SE_OJ_LV_ICE_M_SEESAW_L}, {"IceMountainSeesawNoSlipA", SE_OJ_LV_ICE_M_SEESAW_S},
+    };
+    for (u32 i = 0; i < sizeof t / sizeof t[0]; i++) if (!strcmp(name, t[i].name)) return t[i].se;
+    return 0;
+}
+static Quat seesaw_base(const Row *r, V3 *up) /* the placement's rotation (its base matrix at init) */
+{
+    float m[16], one[3] = {1, 1, 1};
+    mat_translate_rot_scale(m, r->pos, r->rot, one);
+    if (up) *up = v3(m[4], m[5], m[6]);
+    return q_from_axes(v3(m[0], m[1], m[2]), v3(m[4], m[5], m[6]), v3(m[8], m[9], m[10]));
+}
 static int seesaw_of(int row)
 {
     for (int i = 0; i < nseesaws; i++) if (seesaws[i].row == row) return i;
     if (nseesaws == MAX_SEESAWS) return -1;
     memset(&seesaws[nseesaws], 0, sizeof seesaws[0]);
     seesaws[nseesaws].row = row; seesaws[nseesaws].step = -1; /* start(): Stay */
+    seesaws[nseesaws].hip = -1; /* (its start() still to run: update_seesaws) */
+    seesaws[nseesaws].q = seesaw_base(&sc->objs[row], NULL);
     return nseesaws++;
 }
-static void seesaw_matrix(Inst *in) /* its placement turned `angle` about its own Z */
+static void seesaw_matrix(Inst *in) /* calcAndSetBaseMtx: its rotator's mRotateMtx at its place */
 {
     const Row *r = &sc->objs[in->row];
     int k = seesaw_of(in->row);
-    float base[16], rz[16], a = k >= 0 ? seesaws[k].angle * 0.0174533f : 0;
-    mat_translate_rot_scale(base, r->pos, r->rot, r->scale);
-    mat_identity(rz);
-    rz[0] = cosf(a); rz[1] = sinf(a); rz[4] = -sinf(a); rz[5] = cosf(a);
-    mat_mul(in->m, base, rz);
+    if (k < 0) { mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale); return; }
+    V3 ax[3];
+    q_axes(seesaws[k].q, &ax[0], &ax[1], &ax[2]);
+    for (int j = 0; j < 3; j++) {
+        in->m[4 * j] = ax[j].x * r->scale[j]; in->m[4 * j + 1] = ax[j].y * r->scale[j]; in->m[4 * j + 2] = ax[j].z * r->scale[j];
+        in->m[4 * j + 3] = 0; in->m[12 + j] = r->pos[j];
+    }
+    in->m[15] = 1;
+}
+static float seesaw_angle(V3 up, V3 gup) /* calcRotatedAngle: its up against gravity's, degrees */
+{
+    float c = vdot(vnorm(up), gup);
+    if (fabsf(1.0f - c) < 0.001f) c = 1.0f;
+    if (fabsf(c) < 0.001f) c = 0.0f;
+    return acosf(c > 1 ? 1 : c < -1 ? -1 : c) * 57.29578f;
+}
+static float seesaw_sign(float x) { return x > 0 ? 1.0f : x < 0 ? -1.0f : 0.0f; } /* MR::sign */
+static Quat q_lerp(Quat a, Quat b, float t) /* JMAQuatLerp (the nearer of b and -b), kept unit */
+{
+    if (a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w < 0) b = (Quat){-b.x, -b.y, -b.z, -b.w};
+    return q_norm((Quat){a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t});
 }
 /* PhantomShipBridge.cpp: with SW_A it waits (no BCK: its bind pose) until SW_A turns on, then MoveA; SW_B on:
  * MoveB; without SW_A it is at MoveA's end at once (setStateMoveA). Step 55 of either: shakeCameraNormal. Its Move
@@ -37773,14 +38055,95 @@ static void update_seesaws(void)
         const Row *r = &sc->objs[in->row];
         int packed = r->arg[7] > 0 ? r->arg[7] : 0, acc = packed >> 4 & 15, stop = packed >> 12 & 0x3FFF;
         float vmax = r->arg[4] != -1 ? r->arg[4] * 0.01f : 0, limit = r->arg[5] > 0 ? (float)r->arg[5] : 0;
-        float inertia = 0.1f * (acc > 0 ? (float)acc : 1000.0f);
+        if (r->arg[3] > 0) acc = r->arg[3]; /* RotateAccelType whole (slice.py map_parts) */
+        const char *cn = sc->types + 32 * r->type;
+        u32 se = in->seesaw == 1 ? SE_OJ_LV_P_SHIP_HANDLE_MOVE : seesaw_se(cn);
+        float se_speed = in->seesaw == 1 ? 0.1f : 0.001f; /* mMoveSoundSpeed */
         V3 pos = v3(in->m[12], in->m[13], in->m[14]), ax = vnorm(v3(in->m[8], in->m[9], in->m[10]));
         V3 x = vnorm(v3(in->m[0], in->m[1], in->m[2])), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
         V3 g = vmul(up_at(pos, v3(0, 1, 0)), -1.0f), off = vsub(mario->pos, pos);
-        float dist = 0.001f * fabsf(vdot(x, off)), sgn = vdot(vcross(off, g), ax) < 0 ? -1.0f : 1.0f;
         int on = mario_ground == i;
+        float old[16];
+        memcpy(old, in->m, 64);
+        if (o->hip < 0) { /* start() */
+            o->hip = 0;
+            if (in->seesaw == 4) o->vel = 0.01f; /* sAngularSpeedMin */
+            float a = seesaw_angle(up, vmul(g, -1.0f));
+            if (in->seesaw != 3 && limit > 0 && limit < a) { /* placed past its limit: turned back over it */
+                o->q = q_norm(q_mul(o->q, q_axis(ax, 1.05f * 0.0174533f * (a - limit))));
+                seesaw_matrix(in);
+                continue;
+            }
+        }
+        if (in->seesaw == 3) { /* MapPartsSeesaw2AxisRotator */
+            if (hip_hit && hip_inst == i) { o->hip = 1; if (o->nrv != SS_HIPDROP) { o->nrv = SS_HIPDROP; o->step = -1; } } /* receiveMsg */
+            if (o->nrv == SS_STAY) { if (on) o->nrv = SS_MOVE; continue; } /* exeStay */
+            int rot = on; /* exeMove */
+            if (o->nrv == SS_HIPDROP) { /* exeHipDrop */
+                rot = o->hip; o->hip = 0;
+                if (!rot) { o->nrv = SS_MOVE; continue; }
+            }
+            V3 bup;
+            Quat qb = seesaw_base(r, &bup);
+            if (rot) { /* rotate() */
+                V3 bx, bz, d = vsub(mario->pos, pos);
+                q_axes(qb, &bx, NULL, &bz);
+                V3 l = v3(vdot(d, bx), vdot(d, bup), vdot(d, bz)); /* mBaseMtxInv x his place */
+                float in2 = (acc > 0 ? (float)acc : 500.0f) * (o->nrv == SS_HIPDROP ? 0.1f : 1.0f); /* getInertiaConst */
+                float sp = 0.001f * vlen(l) / in2;
+                sp = sp < 0 ? 0 : sp > 1 ? 1 : sp;
+                Quat qt = q_mul(qb, q_axis(vcross(bup, l), limit * 0.0174533f)); /* mBaseMtx x the tilt */
+                o->vel = sp - o->vel; /* mRotateSpeed */
+                if (se && fabsf(o->vel) > se_speed) in->lv[0] = se_level(se, &in->m[12], in->lv[0]);
+                o->q = q_lerp(o->q, qt, sp);
+            }
+            if (o->nrv == SS_MOVE) { /* restoreMove */
+                float sp = 0.0001f * stop;
+                o->q = q_lerp(o->q, qb, sp > 1 ? 1 : sp);
+            }
+            seesaw_matrix(in);
+            if (on) carry(old, in);
+            continue;
+        }
+        float inertia = 0.1f * (acc > 0 ? (float)acc : 1000.0f);
+        float dist = 0.001f * fabsf(vdot(x, off)), sgn = seesaw_sign(vdot(vcross(off, g), ax));
         if (hip_hit && hip_inst == i) { o->nrv = SS_HIPDROP; o->step = -1; o->hip = 1; } /* tryHipDrop */
         int st = ++o->step;
+        if (in->seesaw == 4) { /* LavaHomeSeesawRotator */
+            int snd = o->nrv != SS_HIPDROP;
+            if (o->nrv == SS_STAY && on) { o->nrv = SS_MOVESTART; o->step = -1; continue; } /* exeStay */
+            if (o->nrv == SS_MOVESTART) {
+                if (st == 0) { camera_shake(SHAKE_WEAK); se_start(SE_OJ_LAVA_FLOATER_ON_METAL, &in->m[12]); }
+                if (st == 8) { o->nrv = SS_MOVE; o->step = -1; continue; } /* sGroundOnReboundTime */
+            }
+            if (o->nrv == SS_HIPDROP && st == 0) o->vel += sgn * 40.0f * dist / inertia; /* addForceHipDrop */
+            /* updateRotateMtx: updateVelocity */
+            V3 up0;
+            seesaw_base(r, &up0); /* mInitialUp */
+            float force = vdot(vcross(up, up0), ax);
+            if (on) o->vel += sgn * dist / inertia;
+            if (o->nrv != SS_MOVESTART && st > 2) {
+                o->vel += seesaw_sign(force) * 0.01f * stop / inertia; /* updateRestoreForce */
+                if (o->nrv != SS_STAY) o->vel *= 0.99f;
+            }
+            o->vel = o->vel < -vmax ? -vmax : o->vel > vmax ? vmax : o->vel;
+            if (o->nrv != SS_STAY && o->nrv != SS_MOVESTART && fabsf(o->vel) < 0.01f && fabsf(force) < 0.001f) {
+                o->nrv = SS_STAY; o->step = -1; /* tryStay */
+            } else {
+                V3 nu = vadd(vmul(up, cosf(o->vel * 0.0174533f)), vmul(vcross(ax, up), sinf(o->vel * 0.0174533f)));
+                if (limit > 0 && seesaw_angle(nu, vmul(g, -1.0f)) >= limit) o->vel *= -0.5f; /* tryRebound */
+                else {
+                    float d = o->vel;
+                    if (o->nrv == SS_MOVESTART) d = 0.7f * (st <= 5 ? 1.0f : -1.0f) * seesaw_sign(o->vel); /* its dip under his landing: sGroundOnDownTime */
+                    o->q = q_norm(q_mul(q_axis(ax, d * 0.0174533f), o->q));
+                    seesaw_matrix(in);
+                    if (on) carry(old, in);
+                }
+            }
+            if (!snd) { if (!o->hip) { o->nrv = SS_MOVE; o->step = -1; } o->hip = 0; } /* exeHipDrop's end */
+            else if (snd && fabsf(o->vel) > 0.1f) in->lv[0] = se_level(SE_OJ_LV_LAVA_SEESAW_MOVE, &in->m[12], in->lv[0]); /* soundMoveSE */
+            continue;
+        }
         if (o->nrv == SS_STAY) {
             if (on) { o->nrv = SS_MOVESTART; o->step = -1; }
             continue;
@@ -37790,27 +38153,28 @@ static void update_seesaws(void)
         /* rotate: updateVelocity */
         if (on) o->vel += sgn * dist / inertia;
         if (o->nrv != SS_MOVESTART && st > 2) {
-            V3 up0 = up_at(pos, v3(0, 1, 0)); /* ponytail: its first up taken as against gravity (placements are upright) */
+            V3 up0;
+            seesaw_base(r, &up0); /* mInitialUp */
             float force = vdot(vcross(up, up0), ax);
-            if (fabsf(force) < 1e-6f && fabsf(o->vel) <= 0.1f) o->vel = 0;
-            else o->vel += (force < 0 ? -1.0f : 1.0f) * 0.01f * stop / inertia;
+            if (fabsf(force) < 0.001f && fabsf(o->vel) <= 0.1f) o->vel = 0;
+            else o->vel += seesaw_sign(force) * 0.01f * stop / inertia;
             o->vel *= 0.99f;
         }
         o->vel = o->vel < -vmax ? -vmax : o->vel > vmax ? vmax : o->vel;
-        if ((o->nrv == SS_MOVESTART || o->nrv == SS_MOVE) && fabsf(o->vel) > 0.1f) /* exeMove: mMoveSoundSpeed 0.1 */
-            in->lv[0] = se_level(SE_OJ_LV_P_SHIP_HANDLE_MOVE, &in->m[12], in->lv[0]);
+        int moving = o->nrv != SS_HIPDROP; /* exeMove's sound, after its rotate() */
         if (o->nrv == SS_HIPDROP) { if (!o->hip) { o->nrv = SS_MOVE; o->step = -1; } o->hip = 0; }
         if (o->vel == 0) { o->nrv = SS_STAY; o->step = -1; continue; }
         if (limit > 0) { /* isGoingToReachTargetAngle */
             V3 nu = vadd(vmul(up, cosf(o->vel * 0.0174533f)), vmul(vcross(ax, up), sinf(o->vel * 0.0174533f)));
-            float c = vdot(vnorm(nu), vmul(g, -1.0f));
-            if (acosf(c > 1 ? 1 : c < -1 ? -1 : c) * 57.29578f >= limit) { o->vel *= -0.5f; continue; }
+            if (seesaw_angle(nu, vmul(g, -1.0f)) >= limit) { o->vel *= -0.5f; limit = -1; }
         }
-        float old[16];
-        memcpy(old, in->m, 64);
-        o->angle += o->vel;
-        seesaw_matrix(in);
-        if (on) carry(old, in);
+        if (limit >= 0) { /* (not bounced back) */
+            o->angle += o->vel;
+            o->q = q_norm(q_mul(q_axis(ax, o->vel * 0.0174533f), o->q)); /* the turn about its Z, before mRotateMtx */
+            seesaw_matrix(in);
+            if (on) carry(old, in);
+        }
+        if (moving && se && fabsf(o->vel) > se_speed) in->lv[0] = se_level(se, &in->m[12], in->lv[0]);
     }
 }
 
@@ -42600,7 +42964,8 @@ int game_test_movie(int which) /* tests: the appear switch of the MovieStarter o
     return -1;
 }
 
-static int ac_row = -1, ac_wait;
+static int ac_row = -1, ac_wait, ac_capture; /* ac_capture: 1 capture the next frame, 2 draw it (SystemWipeHolder) */
+static const Scene *ac_scene;
 #ifdef ASTRO_DOOR
 /* astro test with XF=-DASTRO_DOOR=1: Mario 600 out of dome 1's door (its cube's side of the dome's centre), walked by the stick through its door to its
  * AstroChangeStageCube (its Open collision: the Close one stops him at the door, as with =0, no grand star) */
@@ -42639,17 +43004,31 @@ int game_test_astro_cube(int mode) /* tests: Mario put in the first AstroChangeS
 static void astro_cube(int row, const Row *r)
 {
     int id = r->arg[0] == 0 ? game_scenario_no() : r->arg[1]; /* _3C: getCurrentScenarioNo */
+    if (ac_scene != sc) { ac_scene = sc; ac_row = -1; ac_capture = 0; }
     if (ac_row >= 0) {
-        if (row != ac_row || ac_wait++ != 5) return;
+        if (row != ac_row) return;
+        if (ac_wait < 5) { ac_wait++; return; } /* cChangeStageWaitFrame */
+        if (ac_wait == 5) { /* closeSystemWipeCircleWithCaptureScreen(cWipeFrame 110), setWipeCircleCenterPos */
+            ac_wait++;
+            render_target_reserve(1); /* (the capture's blocks: taken only now, the scene ends) */
+            ac_capture = 1;
+            menu_wipe_circle(1, 110);
+            float x, y;
+            V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+            if (screen_pos(c, &x, &y)) menu_wipe_circle_center(x, y);
+            return;
+        }
+        if (ac_wait != 6 || menu_wipe_active()) return; /* the change stage request: done once the ring is shut */
+        ac_wait++;
         switch (r->arg[0]) {
-        case 0: case 4: menu_fade_move(110, SEQ_MOVE, "AstroGalaxy", -1, id, 0); break;
-        case 2: menu_fade_move(110, SEQ_MOVE, "AstroGalaxy", 1, id, 0); break;
+        case 0: case 4: menu_fade_move(1, SEQ_MOVE, "AstroGalaxy", -1, id, 0); break;
+        case 2: menu_fade_move(1, SEQ_MOVE, "AstroGalaxy", 1, id, 0); break;
         case 1:
-            if (gd_flag_is_on("RosettaTalkAboutTico")) menu_fade_move(110, SEQ_SCENARIO_SELECT, "HeavensDoorGalaxy", -1, -1, 0);
-            else menu_fade_move(110, SEQ_MOVE, "HeavensDoorGalaxy", 2, id, 0);
+            if (gd_flag_is_on("RosettaTalkAboutTico")) menu_fade_move(1, SEQ_SCENARIO_SELECT, "HeavensDoorGalaxy", -1, -1, 0);
+            else menu_fade_move(1, SEQ_MOVE, "HeavensDoorGalaxy", 2, id, 0);
             break;
-        case 3: menu_fade_move(110, SEQ_MOVE, "LibraryRoom", 1, id, 0); break;
-        case 5: menu_fade_move(110, SEQ_MOVE, "AstroDome", r->arg[2], id, 0); break;
+        case 3: menu_fade_move(1, SEQ_MOVE, "LibraryRoom", 1, id, 0); break;
+        case 5: menu_fade_move(1, SEQ_MOVE, "AstroDome", r->arg[2], id, 0); break;
         }
         return;
     }
@@ -46865,6 +47244,9 @@ static void put_test(void)
             if (sc->objs[i].sw[SW_A] == PUT_SW_B_OF && sc->objs[i].sw[SW_B] >= 0) sw_set(&sc->objs[i], SW_B, 1);
 #endif
     }
+#ifdef PUT_HOLD /* -DPUT_HOLD: held where he was put (an area he would fall out of) */
+    { static V3 at; if (t == PUT_AT) at = mario->pos; else if (row >= 0 && t > PUT_AT) mario->pos = at; }
+#endif
     if (row >= 0 && t % 60 == 0) {
         const Inst *in = NULL;
         for (int i = 0; i < ninsts; i++) if (insts[i].row == row) { in = &insts[i]; break; }
@@ -48454,9 +48836,99 @@ static void ambient_effects(void)
     }
 }
 
+/* SoundEmitterCube.cpp / SoundEmitterSphere.cpp after Petari (their movement, every frame, demos too): an ambient level sound (arg0: the cube's SE_AT_LV_GRAVE / KOOPA_WIND / WIND_DESERT / WIND_ICE_MT_TOP, the
+ * sphere's MAGMA_AMBIENT / FLOATING_SAND / WIND_DESERT / MAGMA_WIND_VOLCANO / KOOPA_FLOAT_SAND / WIND_RABBIT_MAZE)
+ * played at the camera's watch point (cube 0 / 3, sphere 1 / 2 / 4 / 5) or the microphone, moved into the area: the
+ * cube's world bounding box, the sphere's surface. PlayerSeArea.cpp (placed as PlayerSeCube / Sphere / Cylinder; arg0
+ * 0): SE_PM_LV_LONG_FALL while Mario is in it and not rising in a jump. ponytail: the microphone (AudMicWrap::getMicPos) taken as the camera's eye */
+static struct { short row; unsigned char kind; u32 h; } snd_em[48];
+static int n_snd_em = -1;
+static const Scene *snd_em_sc;
+static void update_sound_emitters(void)
+{
+    static const u32 cube_se[4] = {SE_AT_LV_GRAVE, SE_AT_LV_KOOPA_WIND, SE_AT_LV_WIND_DESERT, SE_AT_LV_WIND_ICE_MT_TOP};
+    static const u32 sphere_se[6] = {SE_AT_LV_MAGMA_AMBIENT, SE_OJ_LV_FLOATING_SAND, SE_AT_LV_WIND_DESERT,
+                                     SE_AT_LV_MAGMA_WIND_VOLCANO, SE_AT_LV_KOOPA_FLOAT_SAND, SE_AT_LV_WIND_RABBIT_MAZE};
+    if (snd_em_sc != sc || n_snd_em < 0) {
+        int t[5] = {scene_type(sc, "SoundEmitterCube"), scene_type(sc, "SoundEmitterSphere"), scene_type(sc, "PlayerSeCube"),
+                    scene_type(sc, "PlayerSeSphere"), scene_type(sc, "PlayerSeCylinder")};
+        snd_em_sc = sc; n_snd_em = 0;
+        for (u32 i = 0; i < sc->nobjs && n_snd_em < 48; i++)
+            for (int k = 0; k < 5; k++)
+                if (t[k] >= 0 && (int)sc->objs[i].type == t[k]) { snd_em[n_snd_em].row = (short)i; snd_em[n_snd_em].kind = (unsigned char)k; snd_em[n_snd_em++].h = 0; }
+    }
+    if (!n_snd_em) return;
+    V3 eye, watch, cu;
+    float fovy;
+    camera_pose(&eye, &watch, &cu, &fovy);
+    for (int k = 0; k < n_snd_em; k++) {
+        const Row *r = &sc->objs[snd_em[k].row];
+        int a0 = r->arg[0];
+        V3 c = row_pos(r), q;
+        if (snd_em[k].kind == 0) { /* SoundEmitterCube (a base origin cube) */
+            if (a0 < 0 || a0 > 3) continue;
+            V3 x, z, lo, hi;
+            row_axes(r, &x, &z);
+            V3 y = vcross(z, x);
+            q = a0 == 0 || a0 == 3 ? watch : eye;
+            lo = hi = vadd(vadd(c, vmul(x, -500.0f * r->scale[0])), vmul(z, -500.0f * r->scale[2]));
+            for (int n = 1; n < 8; n++) { /* the box of its eight corners */
+                V3 v = vadd(vadd(vadd(c, vmul(x, (n & 1 ? 500.0f : -500.0f) * r->scale[0])), vmul(y, (n & 2 ? 1000.0f : 0.0f) * r->scale[1])),
+                            vmul(z, (n & 4 ? 500.0f : -500.0f) * r->scale[2]));
+                lo = v3(fminf(lo.x, v.x), fminf(lo.y, v.y), fminf(lo.z, v.z));
+                hi = v3(fmaxf(hi.x, v.x), fmaxf(hi.y, v.y), fmaxf(hi.z, v.z));
+            }
+            q = v3(fminf(fmaxf(q.x, lo.x), hi.x), fminf(fmaxf(q.y, lo.y), hi.y), fminf(fmaxf(q.z, lo.z), hi.z));
+            snd_em[k].h = se_level(cube_se[a0], &q.x, snd_em[k].h);
+        } else if (snd_em[k].kind == 1) { /* SoundEmitterSphere */
+            if (a0 < 0 || a0 > 5) continue;
+            float rad = 500.0f * r->scale[0], d;
+            q = a0 == 1 || a0 == 2 || a0 == 4 || a0 == 5 ? watch : eye;
+            d = vlen(vsub(q, c));
+            if (!(row_shown(snd_em[k].row) && d < rad) && d > 1e-6f) q = vadd(c, vmul(vsub(q, c), rad / d)); /* !isInVolume */
+            snd_em[k].h = se_level(sphere_se[a0], &q.x, snd_em[k].h);
+        } else if (a0 == 0 && row_shown(snd_em[k].row) && area_inside(r, mario->pos) && !(mario->jumping && m_rising(mario)))
+            snd_em[k].h = se_level(SE_PM_LV_LONG_FALL, &mario->pos.x, snd_em[k].h); /* PlayerSeArea::movement: startLevelSoundPlayer */
+#ifdef PUT_TEST
+        { static u32 was[48]; if (!was[k] && snd_em[k].h) printf("sound emitter: row %d kind %d arg0 %d, handle %u" "\n", snd_em[k].row, snd_em[k].kind, a0, (unsigned)snd_em[k].h); was[k] = snd_em[k].h; }
+#endif
+    }
+}
+
+/* QuakeEffectGenerator.cpp after Petari (made with the scene: SceneObjHolder): with Mario in a QuakeEffectArea
+ * (placed as QuakeEffectAreaCube) every
+ * sQuakeInterval 400 frames it quakes sCamShakeFrame 120: shakeCameraInfinity(0.05, 1.5) and SE_AT_LV_EARTHQUAKE */
+static void update_quake(void)
+{
+    static const Scene *at;
+    static int nrv, step, has; /* 0 Wait, 1 WaitInArea, 2 Quaking */
+    static u32 lv;
+    if (at != sc) { at = sc; nrv = step = 0; lv = 0; has = scene_type(sc, "QuakeEffectAreaCube") >= 0; }
+    if (!has) return;
+    int in = area_obj("QuakeEffectAreaCube", mario->pos) >= 0, next = -1;
+    switch (nrv) {
+    case 0: if (in) next = 1; break;
+    case 1:
+        if (!in) next = 0;
+        else if (step != 0 && step % 400 == 0) next = 2;
+        break;
+    case 2:
+        if (step == 0) camera_shake_infinity(&nrv, 0.05f, 1.5f);
+        lv = se_level(SE_AT_LV_EARTHQUAKE, NULL, lv); /* startAtmosphereLevelSE */
+        if (step == 120) { camera_shake_stop(&nrv); next = in ? 1 : 0; }
+        break;
+    }
+#ifdef PUT_TEST
+    if (next >= 0) printf("quake: nerve %d -> %d at step %d, SE handle %u" "\n", nrv, next, step, (unsigned)lv);
+#endif
+    if (next >= 0) { nrv = next; step = 0; } else step++;
+}
+
 static void keep_effects(void)
 {
     ambient_effects();
+    update_sound_emitters();
+    update_quake();
     float m[16];
     for (int i = 0; i < npieces; i++)
         if (pickup_shown(&pieces[i]) && vlen(vsub(pieces[i].pos, cam_pos)) < 4000.0f) {
@@ -57952,6 +58424,8 @@ void game_draw(void)
     PROF(6);
     render_world_done(); /* the blended instances (an Air's sky) under the HUD and talks */
     mario_draw_raster(); /* MarioActor::drawRasterScroll (its draw: the 3D done) */
+    if (ac_capture == 1) { render_screen_capture(); ac_capture = 2; } /* SystemWipeHolder::startGameScreenCapture */
+    else if (ac_capture == 2) render_screen_captured(); /* the captured screen under the wipe ring */
     talk_draw();
     wipe_draw();
     menu_draw();

@@ -74,6 +74,11 @@ void render_target_capture(void);
  * (render_mirror_capture); in the frame that follows, render_mirror_surface draws a mirror's surface model textured
  * by it (0: no picture this frame). render_mirror_plane: a mirror model's plane (first vertex, first triangle's normal) */
 void render_mirror_capture(void);
+/* SystemWipeHolder's game screen capture (closeSystemWipeCircleWithCaptureScreen): the frame put in the target blocks
+ * (reserved first) at half size, then drawn back over the whole screen each frame. ponytail: 320 x 224 (the blocks
+ * hold no more), bilinear back up */
+void render_screen_capture(void);
+void render_screen_captured(void);
 /* MarioActor::drawRasterScroll: the frame so far, rows shifted (needs render_target_reserve(1)) */
 void render_raster_scroll(float amplitude, int period, float wavelength, int t);
 int render_mirror_surface(const Model *md, const float world[16]);
