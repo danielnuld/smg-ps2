@@ -19,6 +19,23 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   the ring is shut. Tests: `astro` AstroGalaxy/1 (the dome's cube: the ring closes over the frozen frame, AstroDome);
   plain XF "-DRASTER_TEST -DPACKS_OVERLAY=..." HeavenlyBeachGalaxy/1 (Mario in the cube 300-600: the waves).
   ponytail: the capture at half size. Repack: slice_all.py HeavenlyBeachGalaxy (LOGIC RasterScrollCube).
+- Sound emitter areas and the quake (feat/580-sound-emitter-areas, #580, 2026-11-18): `update_sound_emitters`
+  (keep_effects, every frame): SoundEmitterCube (arg0: SE_AT_LV_GRAVE / KOOPA_WIND / WIND_DESERT / WIND_ICE_MT_TOP)
+  and SoundEmitterSphere (SE_AT_LV_MAGMA_AMBIENT / SE_OJ_LV_FLOATING_SAND / SE_AT_LV_WIND_DESERT /
+  MAGMA_WIND_VOLCANO / KOOPA_FLOAT_SAND / WIND_RABBIT_MAZE) play their level sound at the camera's watch point or
+  the microphone, moved into the cube's world bounding box / onto the sphere; PlayerSeCube / Sphere / Cylinder
+  (PlayerSeArea, arg0 0): SE_PM_LV_LONG_FALL while Mario is inside and not rising in a jump. `update_quake`
+  (QuakeEffectGenerator: Wait / WaitInArea / Quaking): with Mario in a QuakeEffectAreaCube, every 400 frames
+  shakeCameraInfinity(0.05, 1.5) and SE_AT_LV_EARTHQUAKE for 120. sound.py scenario_keep: QuakeEffectGenerator.cpp's
+  names where a QuakeEffectArea is placed (createSceneObj, no `new`: sfxcut did not follow it). Test: plain with
+  `XF="-DPACKS_OVERLAY=<overlay> -DSE_LOG -DPUT_TEST=QuakeEffectAreaCube -DPUT_UP=100 -DPUT_NOCAM -DPUT_HOLD"`
+  (PUT_HOLD: Mario held where he was put; with PUT_TEST "sound emitter: row ..." at an emitter's first handle and
+  "quake: nerve a -> b"), HellProminenceGalaxy/1 and KoopaBattleVs1Galaxy/1 with their scene and sound packs made
+  again. ponytail: the microphone (AudMicWrap::getMicPos) taken as the camera's eye. **Release: slice_all.py +
+  sound.py --pack** BattleShipGalaxy, CosmosGardenGalaxy, FactoryGalaxy, FloaterOtakingGalaxy,
+  HellProminenceGalaxy, HoneyBeeKingdomGalaxy, IceVolcanoGalaxy, KoopaBattleVs1Galaxy, KoopaBattleVs2Galaxy,
+  KoopaBattleVs3Galaxy, SandClockGalaxy, StarDustGalaxy (slice.py LOGIC: the areas were not in the packs; their SE
+  names are new in game.c).
 - Hidden stars' scenario number (fix/508-placed-scenario-no, #508, 2026-11-18): game_scenario_no /
   game_stage_scenario are GameSystemSceneController::getCurrentScenarioNo, the number
   ScenarioSelectScene::trySetCurrentScenarioNo placed (gamedata.c gd_placed_hidden_star_scenario,
