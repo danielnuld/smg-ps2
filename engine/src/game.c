@@ -23744,6 +23744,64 @@ static void m_gravity_turn(Player *m, V3 up0, int zero)
         m_334--;
     }
 }
+/* Mario::tryFreeJump(v, true): the jump kind 0, digital, his jump vector v */
+static void m_free_jump(Player *m, V3 v)
+{
+    m->jump_kind = 0;
+    if (vdot(v, m->up) < 0.0f) m->drop_free = 1; /* _20 */
+    m->jumping = 1; m->grounded = 0; m->connect = 0; m->digital = 1; m->hip = 0;
+    m_set_jv(m, v);
+    m_reset_tornado(m);
+    m->air_timer = 0; m->back_t = 0; m->air_walk_t = 0; m->fall_t = 0; m->keep_jump = 1; m->fly11 = 0;
+    m->s76C = 0;
+    m_pad_vib(2);
+    if (m->rabbit) { m->rb26 = 1; m->rb68 = 1; } /* mRabbit->forceJump */
+}
+/* Mario::checkAndTryForceJump (MarioJump.cpp:2219; Mario::update, after checkSliderMode): on his feet, or in his hip
+ * drop's landing clip (_728), on a floor of code 6 / 0x22 (mCodeJumpPower[0] along his ground's normal), 7 ([1]),
+ * 8 ([2]) or 0xB (his last velocity _16C across the gravity at 10, [3] up) a jump is kept (_304, _2E) and made the
+ * frame after: tryFreeJump(_304, true), not with no life left. Hurt (MarioStatus_Damage) the status closes, with no
+ * life left as a NonStop game over. フリージャンプ and its sounds. Returns _2E: the update ends there.
+ * ponytail: the ground's host gets no message 2; tryForceJumpDelay's _2D has no caller here */
+static int m_check_force_jump(Player *m)
+{
+    static V3 v304;
+    static int s2E;
+    int force = 0;
+    V3 v = v3(0, 0, 0);
+    if ((m->grounded && !m->jumping) || m->hip == HIP_LAND) {
+        switch (m->floor) {
+        case 6: case 0x22: v = vmul(m->ground_n, MC.mCodeJumpPower[0]); force = 1; break;
+        case 7: v = vmul(m->ground_n, MC.mCodeJumpPower[1]); force = 1; break;
+        case 8: v = vmul(m->ground_n, MC.mCodeJumpPower[2]); force = 1; break;
+        case 0xB:
+            v = vtangent(m->prev_vel, m->up);
+            v = vlen(v) > 1e-6f ? vmul(vnorm(v), 10.0f) : v3(0, 0, 0); /* setLength(10) */
+            v = vadd(v, vmul(m->up, MC.mCodeJumpPower[3]));
+            force = 1;
+            break;
+        }
+    }
+    if (s2E) {
+        force = 0;
+        if (life != 0) {
+            if (dmg.st == DMS_DAMAGE) dm_change(m, 0); /* closeStatus */
+            m_free_jump(m, v304);
+        }
+        s2E = 0;
+    }
+    if (force) {
+        if (dmg.st == DMS_DAMAGE) {
+            dm_game_over_nonstop(1); /* mHealth 0: forceGameOverNonStop */
+            dm_change(m, 0);
+        }
+        s2E = 1; /* (_21: no jump voice at the next jump, not kept) */
+        v304 = v;
+        m_anim("フリージャンプ");
+        if (!miss_running()) { mario_sound("トランポリンジャンプ大"); mario_sound("声大ジャンプ"); mario_sound("ジャンプ踏切"); } /* isEnableNerveChange */
+    }
+    return s2E;
+}
 static void update_mario_(void)
 {
     if (bh.on) { bh_update(mario); if (mario_anim) anim_update(mario_anim); return; } /* MarioActorNrvGameOverBlackHole */
@@ -24147,6 +24205,7 @@ static void update_mario_(void)
     if (m->s23 && angle_d(m, m->ground_n) >= 30.0f)
         s24 = map_poly(vadd(m->pos, vmul(m->ground_n, 100.0f)), vmul(m->s904, -150.0f), NULL, &t460);
     if (!m->jumping && m->grounded && m->floor == 9) m_start_slider(m); /* checkSliderMode (isSliderFloor) */
+    if (m_check_force_jump(m)) { if (mario_anim) anim_update(mario_anim); return; } /* checkAndTryForceJump, _2E */
     m_retain(m);
     if (m->grounded) m_trample_n = m_combo = 0; /* initForJump */
     if (m_b94 && !--m_b94) { if (m_upper_on("ハンマー投げ回転中")) m_upper_stop(); m_stop_anim("ハンマー投げ回転中", NULL); } /* MarioActor::update */
@@ -24461,8 +24520,9 @@ static void update_mario_(void)
  * MarioAccess::startDownWipe (EventDown / FireDown / RaceDown's init; not sinking, not frozen) turns drawPreWipe on:
  * a black box over the world, its alpha _A6C x 1.75 (224 past 128) of 255, _A6C counted each frame, and Mario drawn
  * again over it (game_draw).
- * ponytail: the death cameras (startGlobalEventCameraNoTarget 昇天カメラ / 奈落カメラ) are not started: the game camera
- * follows him; setSoundVolumeSetting not made (no SE volume settings); no CometRetryButton; startDownWipe's _390 test
+ * The nerves' cameras (camera_event_death): 昇天カメラ in exeGameOver and with no lives left, 奈落カメラ in the Abyss
+ * nerve and, with lives left, in the NonStop and Sink ones; a black hole keeps its own.
+ * ponytail: setSoundVolumeSetting not made (no SE volume settings); no CometRetryButton; startDownWipe's _390 test
  * and EventSequence::setSpot (an empty function in the decompilation) not kept */
 #if defined(CATCHUP) || defined(MISS_TEST)
 #define MISS_EVENTS 1
@@ -24573,6 +24633,7 @@ static void miss(void)
     else if (mario_anim && !bh.on && !(mev.nonstop && mev.over)) m_game_over_anim(mario); /* (exeGameOverNonStop's ゲームオーバー: none) */
     if (!mev.over && !mev.ghost && (mev.abyss || mev.nonstop)) menu_miss_start(); /* EventAbyss / EventFireDown::init: startMissLayout */
     if (!mev.over && !mev.ghost && !mev.abyss && !mev.sink && dmg.st != DMS_FREEZE && !m_anim_on("氷結")) mev.dark = 1; /* startPlayerDownWipe */
+    if (!bh.on) camera_event_death(mev.abyss || ((mev.nonstop || mev.sink) && !mev.over)); /* startGlobalEventCameraNoTarget */
     cube_bgm_invalid = 1; bgm_queue_clear(); /* setCubeBgmChangeInvalid, clearBgmQueue (every PlayerEvent's init,
                                                * MarioActor's exeGameOver*) */
     bgm_stop(10); bgm_sub_stop(10);
