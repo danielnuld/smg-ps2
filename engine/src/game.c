@@ -1116,6 +1116,7 @@ static struct {
 static int nhhps;
 static void seesaw_matrix(Inst *in);
 static u32 seesaw_se(const char *name);
+static void game_appear_init(const Scene *s);
 static int nseesaws;
 /* RainCloud (update_rainclouds): a cloud's state, a table of the scene's from the arena (game_init: row_table) */
 typedef struct {
@@ -2782,6 +2783,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     row_dead = mem_alloc(MEM_OBJECTS, s->nobjs);
     row_demo_hide = mem_alloc(MEM_OBJECTS, s->nobjs);
     star_wait = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(short));
+    game_appear_init(s);
     for (u32 i = 0; i < s->nobjs; i++) {
         int a = s->objs[i].arg[7];
         star_wait[i] = strcmp(s->types + 32 * s->objs[i].type, "PowerStar") && strcmp(s->types + 32 * s->objs[i].type, "GrandStar") ? 0 : a >= 0 ? a + 1 : a == -2 ? -1 : 0;
@@ -39244,8 +39246,8 @@ static void update_rotors(void)
 /* StageEffectDataTable.cpp's start / moving / stop SEs of the rail movers (stage_se kinds R, D, K):
  * RailMoveObj::exeMove's tryStageEffectStart as its rail mover starts working (startMoveInner), tryStageEffectMoving
  * while it works, tryStageEffectStop at an end (doAtEndPoint); RailDemoMoveObj the three SEs alone;
- * SideSpikeMoveStep::exeWait the moving / stop ones. ponytail: MapObjActor::appear's start SE (at the scene's start)
- * not played */
+ * SideSpikeMoveStep::exeWait the moving / stop ones. (MapObjActor::appear's start SE:
+ * update_appears) */
 /* StageEffectDataTable.cpp sStageEffectCameraDataTable: start / stop shake (0 none, 1 Strong .. 5 VeryWeak), the
  * moving infinity shake (intensity, speed; 0 none) and the distance to Mario under which the start / stop ones play
  * (-1: Mario on it, isDistanceValidShake) */
@@ -56750,6 +56752,56 @@ int game_test_bk(int frame)
 #include "snow_floor.inc" /* SnowFloor, SnowplowSwitch: snow_* */
 #include "clip_area.inc" /* ClipArea*, ClipFieldSwitch, FallOutFieldDraw, SimpleClipPartsObj, ClipAreaDropLaser: ca_* */
 #include "statics.inc" /* placed classes once drawn still (Flag ...): st_* */
+
+/* MapObjActor::appear (MapObjActor.cpp:69): a MapObjActor shown by its SW_APPEAR (syncStageSwitchAppear: also when it
+ * is on at the start) or by its demo's appear action emits its Appear effect, plays its StageEffect start SE (not
+ * DarkHopperRotateStepA) and, with mIsAppearRiddleSE (_B6), SE_SY_READ_RIDDLE_S. Which names: the last byte of their
+ * TYPE entry (tools/mapobj_flags.py from Petari's sources: 1 a MapObjActor keeping that appear(), 2 the chime); 0 in a
+ * pack sliced before, so nothing plays there. appear_st, a byte a row from the arena: 1 watched, 2 shown last frame,
+ * 4 seen hidden by a demo. SimpleTimerObj plays its own effect and SE (st_timer). */
+static unsigned char *appear_st;
+static void game_appear_init(const Scene *s) /* (game_init) the rows whose name has the flag */
+{
+    int n = 0;
+    appear_st = NULL;
+    for (u32 i = 0; i < s->nobjs; i++) n += s->types[32 * s->objs[i].type + 31] & 1;
+    if (!n) return;
+    appear_st = mem_alloc(MEM_OBJECTS, s->nobjs);
+    for (u32 i = 0; i < s->nobjs; i++) appear_st[i] = (unsigned char)(s->types[32 * s->objs[i].type + 31] & 1);
+}
+static void update_appears(void)
+{
+    if (!appear_st) return;
+#ifdef APPEAR_TEST /* XF=-DAPPEAR_TEST: at frame 900 the appear switch of the first three watched rows still hidden is turned on */
+    if (game_frame == 900)
+        for (u32 i = 0, n = 0; i < sc->nobjs && n < 3; i++) {
+            const Row *r = &sc->objs[i];
+            if (!(appear_st[i] & 1) || r->sw[SW_APPEAR] < 0 || sw_on(r, SW_APPEAR)) continue;
+            sw_set(r, SW_APPEAR, 1); n++;
+            printf("appear test: SW_APPEAR of row %d %s on%c", (int)i, sc->types + 32 * r->type, 10);
+        }
+#endif
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        unsigned char *st = &appear_st[i];
+        if (!(*st & 1)) continue;
+        const Row *r = &sc->objs[i];
+        if (row_demo_hide[i]) *st |= 4;
+        if (r->sw[SW_APPEAR] < 0 && !(*st & 4)) continue; /* makeActorAppeared at init: no appear() */
+        int shown = row_shown((int)i);
+        if (shown && !(*st & 2)) {
+            const char *name = sc->types + 32 * r->type;
+            int k = stage_se_of(name), own = st_kind((int)r->type) == ST_TIMER;
+            const Inst *in = row_inst((int)i);
+            if (in && !own) fx_named(name, "Appear", in->m, NULL, NULL);
+            if (!own && k >= 0 && stage_se[k].st && strcmp(name, "DarkHopperRotateStepA")) se_start(stage_se[k].st, in ? &in->m[12] : r->pos);
+            if (name[31] & 2) se_start(SE_SY_READ_RIDDLE_S, NULL);
+#ifdef SE_LOG
+            printf("appear: %s row %d, start SE %d, chime %d%c", name, (int)i, !own && k >= 0 && stage_se[k].st != 0, (name[31] & 2) != 0, 10);
+#endif
+        }
+        *st = (unsigned char)(shown ? *st | 2 : *st & ~2);
+    }
+}
 #include "race.inc" /* RaceManager, RaceRail (PlayerRacer), TeresaRacer: rm_*, game_test_race */
 #include "ocean_ring.inc" /* OceanRing: or_* */
 #include "water_road.inc" /* WaterRoad: wrd_* */
@@ -58574,6 +58626,7 @@ void game_update(void)
     update_warppods(); /* (WarpPod: its own demo's cast) */
     update_launch_appear();
     LQ(65, update_switches());
+    update_appears(); /* after the switches: MapObjActor::appear */
     LQ(66, update_pops());
     int had = got_coins;
     if (!opening_on) LQ(67, collect(coins, ncoins, 100.0f, 55.0f, &got_coins, FX_COIN_COINGET, SE_SY_COIN)); /* Coin::noticeGetCoin */
