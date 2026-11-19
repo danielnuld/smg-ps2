@@ -837,6 +837,11 @@ static void sw_set(const Row *r, int k, int on)
 }
 static unsigned short *row_step; /* per OBJS row: CollapsePlane frames since Mario stood on it (0: not yet) */
 static float *row_angle;         /* per OBJS row: a rotating map part's angle (degrees) */
+/* a rotator with RotateAccelType 1 (rotor_step): its row, mRotateSpeed, mTargetAngle, the sign of _18, StopAtEnd and
+ * its step, mIsOnReverse; a table of the scene's from the arena (game_init) */
+typedef struct { int row; float speed, target; signed char sgn, stop, rev, set; int t; } RotAcc;
+static RotAcc *rot_acc;
+static int nrot_acc, rot_acc_max;
 static signed char *row_turn;    /* per OBJS row: its direction (+1 / -1, 0 not started) and */
 static unsigned short *row_hold; /* frames it still holds at the end of its turn */
 static float *row_coord, *row_speed; /* per OBJS row: a rail-moving map part's distance along its rail, its speed */
@@ -2870,6 +2875,10 @@ void game_init(const Scene *s, const unsigned char *blob)
     }
     row_step = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(unsigned short));
     row_angle = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(float));
+    nrot_acc = 0; rot_acc_max = 0; rot_acc = NULL;
+    for (u32 i = 0; i < s->nobjs; i++) /* the map parts with RotateAccelType 1 and a RotateAngle */
+        rot_acc_max += s->objs[i].arg[7] > 0 && (s->objs[i].arg[7] >> 30 & 1) && (s->objs[i].arg[7] >> 4 & 15) == 1 && s->objs[i].arg[5] > 0;
+    if (rot_acc_max) rot_acc = mem_alloc(MEM_OBJECTS, (u32)rot_acc_max * sizeof *rot_acc);
     row_turn = mem_alloc(MEM_OBJECTS, s->nobjs);
     row_hold = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(unsigned short));
     row_coord = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(float));
@@ -39569,8 +39578,8 @@ static void carry(const float old[16], const Inst *in)
 
 /* Rotating map parts (MapPartsRotator): RotateSpeed * 0.01 degrees a frame; RotateAngle 0 turns for ever, else it
  * turns that far, holds RotateStopTime frames, then RotateType 0 stops, 1 swings back, 2 goes on; MoveConditionType
- * other than 0 waits for Mario on it. Mario standing on one (last frame's ground) is carried along. ponytail: constant
- * speed (no RotateAccelType easing), no start sign motion */
+ * other than 0 waits for Mario on it. Mario standing on one (last frame's ground) is carried along. RotateAccelType 1 eases
+ * (rotor_step: updateVelocity). ponytail: no start sign motion */
 /* MapObjActor's map parts functions (rotator, rail mover): with SW_A they wait in exeWait until it comes on, then run
  * on; with SW_B they run only while it is on (listenStageSwitchOnOffB: start / endMapPartsFunctions); without either
  * they start at init. SideSpikeMoveStep's star pointer stop (WalkerStateBindStarPointer) is the 2P pointer's only
@@ -39974,6 +39983,45 @@ static int rotor_step(Inst *in, int i) /* 1: its rotator turned (MapPartsRotator
         if (row_turn[row] == 2) return 0; /* RotateType 0: stopped at its end */
         if (row_hold[row]) { row_hold[row]--; return 0; }
         float speed = r->arg[4] * 0.01f, range = r->arg[5] > 0 ? (float)r->arg[5] : 0, sg = speed > 0 ? 1.0f : -1.0f;
+        if (range > 0 && (packed >> 4 & 15) == 1 && rot_acc) { /* RotateAccelType 1: updateVelocity's easing */
+            RotAcc *q = NULL;
+            for (int k = 0; k < nrot_acc && !q; k++) if (rot_acc[k].row == row) q = &rot_acc[k];
+            if (!q && nrot_acc < rot_acc_max) { q = &rot_acc[nrot_acc++]; memset(q, 0, sizeof *q); q->row = row; }
+            if (q) {
+                const char *name = sc->types + 32 * r->type;
+                int k = stage_se_of(name);
+                float a = row_angle[row];
+                if (!q->set) { q->set = 1; q->sgn = (signed char)(speed > 0 ? 1 : -1); q->target = a + q->sgn * range; } /* start(): updateTargetAngle */
+                if (q->stop) { /* exeStopAtEnd: restartAtEnd at step mRotateStopTime */
+                    if (q->t++ == hold) {
+                        if (type == 0) { row_turn[row] = 2; return 0; }
+                        if (type == 1) q->sgn = (signed char)-q->sgn; /* _18 x -1 */
+                        q->target = a + q->sgn * range; q->stop = 0;
+                    }
+                } else { /* exeRotate */
+                    float acc = speed * speed * q->sgn / range, was = q->speed;
+                    if (q->sgn > 0 ? q->target - range * 0.5f <= a : a <= q->target + range * 0.5f) acc = -acc;
+                    q->speed += acc;
+                    q->rev = (signed char)((was >= 0.0f && q->speed < 0.0f) || (was < 0.0f && q->speed >= 0.0f)); /* mIsOnReverse */
+#ifdef ROTACC_TEST
+                    if (q->rev) printf("rotacc: row %d reverse at angle x100 %d (frame %d)%c", row, (int)(a * 100), game_frame, 10);
+#endif
+                    a += q->speed; /* updateAngle */
+                    row_angle[row] = a;
+                    if (fabsf(q->speed) < 0.00001f) { q->stop = 1; q->t = 0; }
+                    else {
+                        float old[16];
+                        memcpy(old, in->m, 64);
+                        rotor_matrix(in);
+                        if (in->railer) railer_place(in);
+                        if (mario_ground == i) carry(old, in);
+                    }
+                }
+                /* MapObjActor::control: its StageEffect start SE while the rotator says isOnReverse (a MapObjActor: its TYPE flag) */
+                if (q->rev && (name[31] & 1) && k >= 0 && stage_se[k].st) se_start(stage_se[k].st, &in->m[12]);
+                return !q->stop;
+            }
+        }
         int dir = row_turn[row];
         float old[16], prev = row_angle[row], a = prev + fabsf(speed) * sg * dir;
         memcpy(old, in->m, 64);
@@ -39998,6 +40046,21 @@ static int rotor_step(Inst *in, int i) /* 1: its rotator turned (MapPartsRotator
  * port's rotators have no acceleration: never 0 while turning) */
 static void update_rotors(void)
 {
+#ifdef ROTACC_TEST /* XF=-DROTACC_TEST: at frame 600 the SW_APPEAR / SW_A of every RotateAccelType 1 rotator on; the first two logged */
+    for (u32 j = 0, n = 0; rot_acc && j < sc->nobjs; j++) {
+        const Row *r = &sc->objs[j];
+        if (!(r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && (r->arg[7] >> 4 & 15) == 1 && r->arg[5] > 0)) continue;
+        if (game_frame == 600) {
+            if (r->sw[SW_APPEAR] >= 0) sw_set(r, SW_APPEAR, 1);
+            if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
+            printf("rotacc test: row %d %s speed %d angle %d type %d stop %d%c", (int)j, sc->types + 32 * r->type, (int)r->arg[4], (int)r->arg[5], (int)(r->arg[7] & 15), (int)(r->arg[7] >> 12 & 0x3FFF), 10);
+        }
+        if (n++ < 2 && game_frame > 600 && game_frame % 20 == 0)
+            for (int k = 0; k < nrot_acc; k++)
+                if (rot_acc[k].row == (int)j)
+                    printf("rotacc test f %d: row %d angle x100 %d speed x1000 %d target %d sgn %d stop %d rev %d%c", game_frame, (int)j, (int)(row_angle[j] * 100), (int)(rot_acc[k].speed * 1000), (int)rot_acc[k].target, rot_acc[k].sgn, rot_acc[k].stop, rot_acc[k].rev, 10);
+    }
+#endif
     FOR_KIND(i, rotor) {
         Inst *in = &insts[i];
         if (!in->rotor || !dx_row_moves(in->row)) continue;

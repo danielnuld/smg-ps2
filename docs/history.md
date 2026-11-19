@@ -188,6 +188,14 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   select's start, on at its end (adome_selector_sw). AstroDomeBlueStar's BindTraction plays
   SE_OJ_LV_MAGIC_PNT_G_PULL / POINT. Open in #650: AstroMapObj's Revival / Open nerves, the blue star's Appear nerve,
   clips and ribbon, MiniatureGalaxy's effects and plates.
+- MapPartsRotator's RotateAccelType 1 (feat/735-rotator-accel, #735, 2026-11-19): DarkHopperRotateStepA / PlanetA
+  (DarkRoomGalaxy), TeresaMansionLightA / B (PhantomGalaxy), SandRiverLightA (TransformationExGalaxy) turned at
+  constant speed. rotor_step now eases them as updateVelocity: the speed grows by _18 x _18 / RotateAngle a frame up
+  to the half way and falls back after it, StopAtEnd when it is back to 0 (RotateStopTime frames), then restartAtEnd
+  (RotateType 1: the other way; 0: stopped). mIsOnReverse (the speed's sign changing, as Petari compares it: at the
+  first and last step of a swing the negative way) plays the StageEffect start SE from MapObjActor::control, on a
+  name with the TYPE flag of #734 (none in an older pack). State: RotAcc, a table of the scene's rows from the
+  arena. Test: `XF=-DROTACC_TEST` (their switches on at frame 600, angle and speed logged).
 - RainCloud (feat/692-raincloud, #692, 2026-11-18): 69 placed (OceanRingZone layers C / D, ReverseForestHomeZone),
   generic rail parts before. update_rainclouds after RainCloud.cpp: Wait / Appear / Disappear / End / SoftTouch /
   HardTouch (Mario falls through a cloud for 60 frames unless he is a bee; OnBee under a bee; Disappear at its rail's
