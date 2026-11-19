@@ -11,6 +11,78 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Enemy audit, fourth batch (feat/725-enemy-audit-4, #725, PR #730, 2026-11-19): Kanina's receiveFireBall from a fire
+  ball and a thrown shell (kan_fire: doDamageFireBall, not while its sensors are off); Gesso without clipping in Wait
+  from step 2 (exeWait). `docs/class-audit-enemy.md`: the rows of the classes compared by clips, sounds, step tests
+  and constants (KoteBug, Poihana, Gesso, Snakehead, Mogu, Metbo: equal) and the PCSX2 runs: #693's BombHei carry
+  (BH_TEST: taken, thrown, Physics) and #637's AnimScaleController kinds (way 2 starts none of them: see the table).
+  Test: built plain, host tests, the route test, memcheck. No repack.
+- RainCloud (feat/692-raincloud, #692, 2026-11-18): 69 placed (OceanRingZone layers C / D, ReverseForestHomeZone),
+  generic rail parts before. update_rainclouds after RainCloud.cpp: Wait / Appear / Disappear / End / SoftTouch /
+  HardTouch (Mario falls through a cloud for 60 frames unless he is a bee; OnBee under a bee; Disappear at its rail's
+  end, End back at the start until its whole group is there, Appear with THUNDER at 140), the rain (its length from
+  the ground under it up to arg0, the Splash and Line10 / Line20 effects, SE_OJ_LV_FOREST_RAIN; the
+  RainCloudCylinder model on the Shadow joint is written (rc_draw) but off, `XF=-DRAINCLOUD_CYLINDER`: it came out an
+  opaque dark column in ReverseKingdomGalaxy 3), the drop_water sensor (a bee's form washed away). Its state
+  (RainCloud, 60 B a cloud) comes from the arena at game_init (row_table), no static table and no Inst field.
+  Its end is read from the rail mover's coord (main's MapPartsRailMover stops at the end, then starts over). slice.py: RainCloud
+  skinned (its four clips, its AutoEffectList rows), RainCloudCylinder its EXTRA model. Test:
+  `XF=-DRAINCLOUD_TEST=k` on a plain build (Mario dropped on the k-th cloud; nerve changes logged). Seen: HardTouch
+  (OceanRingGalaxy 5, ReverseKingdomGalaxy 3), the rail clouds' Disappear / End / Appear and the rain's length
+  (ReverseKingdomGalaxy 3); not seen: a bee (SoftTouch, the wash), the effects, a posed cloud's Appear. ponytail: no BPK
+  colours, no LOD model, no shadow volume, ACTMES_PUDDLE_TOUCH_GROUND not sent, the projection read every 8th frame
+  and (with the effects and the rain's sound) only in view. **Release: slice_all.py** OceanRingGalaxy and
+  ReverseKingdomGalaxy **+ sound.py --pack** for them (the four RainCloud SEs are new in game.c).
+- ViewGroupCtrlCube (feat/718-view-group, #718, 2026-11-19, agent areas2): the last placed manager of
+  AreaObjContainer's table the engine did not read (624 cubes in 97 stage archives; 9365 rows carry a ViewGroupId:
+  coins, star pieces, enemies, NPCs, map parts; no planet does). Pack format: a new chunk **VGRP** in scene.bin
+  (u32 n, n x {u16 row, s16 ViewGroupId; bit 14 a planetobjinfo row}), and the cubes' rows through slice.py LOGIC; a
+  pack without the chunk (every pack before this repack) has no groups and plays as before (vg_init). `vg_update`
+  (ViewGroupCtrl::update, keep_effects): each cube holding Mario turns its group (arg0) on: _0 in view, arg1 1 / 2 /
+  3 the LodCtrl's high / middle / low model forced, arg1 4 not in view and hidden. `vg_of(row)`: obj_clipped and
+  the walkers' ClippingJudge call take far level 0 (no far clipping) for a row whose group is in view
+  (ClippingActorInfo::isJudgedToClip); `vg_hidden`: an instance of a hidden group is not drawn when its class has
+  a LodCtrl (LodCtrl::hideAllModel): the NPCs (clipcls 1), BeeFlowerHover, planets. ponytail: the port has no
+  LodCtrl, so the forced high / middle / low models do nothing and the other LodCtrl holders (UFOBase,
+  LavaStrangeRock, MapObjActor's planet LOD...) are not hidden; far level 0 reaches only what the port clips by
+  ClippingJudge (NPCs, walkers, SuperSpinDrivers: the rest is drawn by the port's own distances). Test: route with
+  `XF="-DVG_TEST -DPACKS_OVERLAY=<overlay>"` ("view groups: n on id:flags" when the count changes): EggStarGalaxy/1 on
+  the old packs, the star at f 4281; with its scene sliced anew (163 VGRP rows) the groups go on and off along the
+  flight ("2 on 1:3 13:3" ... "0 on") and the star is at f 4281 again. Not seen: a hidden group (arg1 4: 42 cubes).
+  Memory: about 1.5 KB of code, 2 bytes a row from the scene arena with the chunk. Repack: every galaxy.
+- UI audit, SysInfoWindow and the sub meter (fix/679-sysinfo-abutton, #679 #707, 2026-11-19): menu.c si_* gets
+  SysInfoWindow's mIconAButton (an IconAButton at AButtonPosition: openWithoutMessage when a Type_Key window appears,
+  term at Disappear's first step, killed, moved and drawn with the window: the save's done / error windows had no
+  A button; Iab's type moved above SysInfo). SubMeterLayout::control places FlyMeter / AirMeter from getPlayerPos:
+  game.c gave menu_submeter_update Mario's centre (MeterLayout's point), so it sat higher. Test: `miss` (the game
+  over's save, its done window). Three more IconAButton instances a scene (arena).
+- Per-class tables out of bss, 3 (perf/tables-arena-3, #709, 2026-11-19; the rule: the note of #630 below):
+  CoconutTreeLeaf's `lfs` (52 KB; `lf_alloc`, row_table), the FishGroups' `fgs` (29 KB; `fg_alloc`: a group a
+  FishGroupA..F row), the WaterPlants' `wplants` (44 KB; game_init: arg0 or 16 plants a row, `wplants_cap`, at most
+  MAX_WPLANTS) and sth_draw's vertex / index buffers (36 KB; `sth.dpos` / `.didx`, sth_init). memcheck: about 160 KB
+  of bss gone (_end 11907328, 20224 B before the region loses a step, the region 19456 KB: three steps over the
+  11:50 baseline with #630 and #657); route EggStarGalaxy/1 f 4281. Arena at boot: HeavenlyBeachGalaxy/1 (leaves,
+  fish, water plants) 3121 KB, StarDustGalaxy/3 below. Left in bss on purpose (always in use or not a class's):
+  mem.c `arena`, fx.c `pt` / `spr` / `em` (particles), se_seq.c `tr` / `ch`, se.c `upbuf`, render.c `i8_buf` / `quads` /
+  `dcache`, gravity.c `wch` / `g_pool` / `bound_c`, mc.c `buf`, gamedata.c `files`, me.c `tpool`, audio.c `rhy`,
+  game.c `tkq` (the talk's quads), walker_push_pass's `sen`, `hs_buf`. Still per-class and worth a look when memory
+  is short again: `ggs` (20 KB), `onis` (16), `mhills` (15), ocean_ring.inc `or_pos` / `or_uv` / `or_tri` (50),
+  snow_floor.inc `ws` / `xs` / `ys` (32), `notes` (12), and the many under 8 KB.
+- Banekiti (feat/701-banekiti, #701, 2026-11-18): MapObj/Banekiti.cpp in `engine/src/banekiti.inc`
+  (update_banekiti): TeresaMario2DGalaxy's four spring bumpers on their rails. Wait (its Wait clip,
+  SE_OJ_LV_BANEKITI_MOVE); Boo Mario touching one of its three sensors (80, 100 apart along its X) is reflected and
+  it goes to Repel (a weak rumble and shake, Repel, SE_OJ_BANEKITI_REPEL), Wait at the clip's end. Its nerve in
+  row_turn / row_step. `tools/slice.py` SKINNED_OBJ Banekiti (its clips). Test: plain `XF=-DBANEKITI_TEST`,
+  TeresaMario2DGalaxy/1: its Wait path runs with its clips in the overlay pack, but **the Repel was not seen in PCSX2** (the test's Mario falls out of that scenario's start and its placement by the bumper did not take). ponytail: no DPDSwoon (the 2P pointer), no star piece hit reaction (AnimScaleController).
+  Cost: about 1.0 KB of the ELF (nm update_banekiti), no state of its own; memcheck on a plain build of main with the six classes of this batch: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB; route test with them: star got. **Release: slice_all.py TeresaMario2DGalaxy + sound.py --pack TeresaMario2DGalaxy.**
+- LavaProminenceTriple / LavaProminenceEnvironment (feat/705-lava-prominence-triple, #705, 2026-11-18):
+  MapObj/LavaProminenceTriple.cpp in `engine/src/lava_prominence_triple.inc` (lpt_*): HellPoolAZone's three wheels
+  of fire and HellProminenceGalaxy's seven Environment ones. The appear time (arg1), the turn arg0 / 100 degrees a
+  frame about its Y, SE_OJ_LV_PROMINENCE_T_MOVE, the Drop effects on its Head joints (off while out of the view),
+  the Triple's attack sensor (80 x scale y on the ring of 1900 at Mario's angle, clamped into a head's arc:
+  sNoSensorTable; sendMsgEnemyAttackFireStrong). State in MEM_OBJECTS. `tools/jpa.py` NAMED (the Drop effects).
+  Test: plain `XF=-DLPT_TEST`, HellProminenceGalaxy/3: in PCSX2 the three Triples appear on their switch, turn 0.4 degrees a frame, their Drops go on and off with the view, their sensor follows Mario's angle; **the fire hit and the look of the effects were not seen** (Mario was not on a sensor in the run); its level sound answers `se?` (a sound pack to cut again). ponytail: the Head joints' places read offline from the BDLs; no bloom model. Cost:
+  about 2.2 KB of the ELF (nm lpt_*), its state in MEM_OBJECTS; memcheck on a plain build of main with the six classes of this batch: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB; route test with them: star got. **Release: slice_all.py resident.bin + resident_luigi.bin** (the effects).
 - UI and flow audit, first pass (feat/ui-audit-miss-left, #640 #641 #658 #659, 2026-11-18): Petari's Screen/ classes
   against menu.c / game.c, the table in `docs/ui-audit.md` (ok / fixed / issue / Wii-only / not re-read yet). Fixed:
   PlayerMissLeft (menu.c pms_*: after a miss's wipe the PlayerLeft layout's CenterPlayerLeft over the black screen,
