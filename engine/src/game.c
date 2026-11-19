@@ -11598,7 +11598,7 @@ static void update_ota(void)
         break;
     case OTA_DAMAGE: case OTA_POWERUP:
         if (ota.t == 1 || (ota.nrv == OTA_POWERUP && (ota.t == 74 || ota.t == 176))) ota_magma("damage"); /* cDamageCrownFallFrame, cBlurStartStep */
-        if (ota.t == 1) launch_pieces(vadd(ota.pos, v3(0, 300.0f, 0)), ota.up, ota.hits * 8, 60.0f, 50.0f); /* appearStarPiece */
+        if (ota.t == 1) { launch_pieces(vadd(ota.pos, v3(0, 300.0f, 0)), ota.up, ota.hits * 8, 60.0f, 50.0f); ota_se(SE_OJ_STAR_PIECE_BURST); } /* appearStarPiece (its sound object) */
         if (ota.t == 3) scene_stop = 16; /* stopScene (Lv1) */
         if (ota.t == 1) pad_rumble(RUMBLE_VERY_STRONG);
         if (ota.nrv == OTA_POWERUP && ota.t == 74) pad_rumble(RUMBLE_STRONG);         /* cDamageCrownFallFrame */
