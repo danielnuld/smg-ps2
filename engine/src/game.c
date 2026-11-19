@@ -1665,8 +1665,14 @@ static int scene_stop;           /* MR::stopScene: frames the actors stay still 
  * the axis or above the top, and the partner throws him out with Y * arg1 + Z * arg0 (default 20, 5). A pipe works
  * again once Mario stood on ground 30 frames after the warp. Mario goes through bound (pipe_bind: Ready, In, the
  * hidden partner rising, Out, the jump); the partner's actor camera 出現 from its tryShowUp to its tryHideDown (the
- * jump). ponytail: no water pipes' stream, no processBgmPlayerIn / Out */
-typedef struct { V3 top, up, front; float hf, vf; int id, partner, zone, row, mode; } Pipe; /* mode arg2: 1 / 2
+ * jump). The hidden partner (arg2 1): WaitToShowUp 20, ShowUp 30 (calcTrans eased in from its placement to its top,
+ * LavaAppear, SE_OJ_LV_PIPE_APPEAR_MAGMA), and from the jump WaitToHideDown 40, HideDown 15 (eased back, LavaVanish,
+ * SE_OJ_LV_PIPE_VANISH_MAGMA), then hidden. EarthenPipeInWater: SE_OJ_LV_PIPE_IN_WATER while its stream runs (_19C:
+ * from init, with its SW_A where it has one).
+ * ponytail: the water pipes' stream model and BinderWater sensors; the rising pipe's
+ * collision at its top from the first frame; exeWait's invalidateHitSensors while a pipe's SW_A is off (EarthenPipe.cpp:225:
+ * HeavensDoorGalaxy's first pipe has one, SW 1008) */
+typedef struct { V3 top, up, front; float hf, vf; int id, partner, zone, row, mode, water; u32 lv; } Pipe; /* mode arg2: 1 / 2
                     * hidden until the partner is used (row_step[row] 1 while out), 1 hides again after the exit */
 static int pipe_out = -1; /* the mode 1 pipe Mario came out of, hidden once the pipes re-arm */
 static Pipe *pipes;
@@ -3118,6 +3124,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         p->zone = r->zone;
         p->row = i;
         p->mode = r->arg[2];
+        p->water = r->type == t_wpipe; p->lv = 0;
         p->partner = -1;
         for (int k = 0; k < npipes; k++) /* EarthenPipeMediator::entry: the first pipe with the same id */
             if (pipes[k].id == p->id && pipes[k].partner < 0) { pipes[k].partner = npipes; p->partner = k; break; }
@@ -42280,6 +42287,28 @@ static void update_switches(void)
  * startBckPlayer EarthenPipeReady / In / Out / Jump); the jump out: endBindAndPlayerForceWeakGravityJumpInputOff */
 static int in_water(V3 p, V3 up, float *depth);
 static int mario_hidden;
+static float ease_in_f(float t);
+static int pipe_hide = -1, pipe_hide_t; /* the partner in WaitToHideDown / HideDown, its step */
+static void pipe_trans(const Pipe *p, float a, const char *fx) /* calcTrans(a): its Top joint a of the way up from its
+                                                                * placement; fx: the effect kept at its placement (_BC) */
+{
+    Inst *in = row_inst(p->row);
+    V3 base = vsub(p->top, vmul(p->up, 100.0f * sc->objs[p->row].scale[1])), t = vadd(base, vmul(vsub(p->top, base), a));
+    if (in) { in->m[12] = t.x; in->m[13] = t.y; in->m[14] = t.z; }
+    if (fx) { float m[16]; basis_matrix(m, base, p->up, p->front, 0); fx_named("EarthenPipe", fx, m, NULL, p); }
+}
+static void pipe_hide_tick(void) /* exeWaitToHideDown (40), exeHideDown (15) */
+{
+    static u32 lv;
+    if (pipe_hide < 0) return;
+    const Pipe *o = &pipes[pipe_hide];
+    int st = pipe_hide_t++ - 40;
+    if (st < 0) return;
+    pipe_trans(o, ease_in_f((15 - st) / 15.0f), st < 15 ? "LavaVanish" : NULL);
+    if (st < 15) { const Inst *in = row_inst(o->row); lv = se_level(SE_OJ_LV_PIPE_VANISH_MAGMA, in ? &in->m[12] : &o->top.x, lv); return; }
+    row_step[o->row] = 0; pipe_hide = -1; game_rebind(); /* hideModel, invalidateCollisionParts: Hide */
+    printf("pipe %d hidden" "\n", (int)(o - pipes));
+}
 static int pipe_bind(Player *m)
 {
     if (!pipe_seq) return 0;
@@ -42305,6 +42334,7 @@ static int pipe_bind(Player *m)
             if (row_camset[o->row] != -1) /* tryShowUp: startMultiActorCameraTargetSelf 出現 (the partner) */
                 camera_actor_start(sc->types + 32 * sc->objs[o->row].type, "出現", (unsigned short)row_camset[o->row], o->up, o->front, o->top);
             if (o->mode == 1 || o->mode == 2) { /* tryShowUp: the hidden partner rises (WaitToShowUp 20, ShowUp 30) */
+                if (pipe_hide == p->partner) pipe_hide = -1; /* (taken again before it went down) */
                 row_step[o->row] = 1;
                 pipe_out = o->mode == 1 ? p->partner : -1;
                 game_rebind();
@@ -42318,10 +42348,12 @@ static int pipe_bind(Player *m)
         m->pos = o->top;
         if (pipe_t == 21) se_start(SE_SY_ITEM_APPEAR, NULL); /* the partner's exeShowUp first step (after WaitToShowUp 20) */
         if (pipe_t >= 21) lv = se_level(SE_OJ_LV_PIPE_APPEAR_MAGMA, &o->top.x, lv); /* its isLessStep 30 */
+        pipe_trans(o, pipe_t >= 21 ? ease_in_f((pipe_t - 21) / 30.0f) : 0.0f, pipe_t >= 21 ? "LavaAppear" : NULL); /* calcTrans */
         if (pipe_t >= 50) { pipe_seq = 4; pipe_t = 0; }
     } else if (pipe_seq == 4) { /* exePlayerOut: at the partner's base matrix */
         if (pipe_t == 1) { se_start(SE_DM_DOKAN_WARP, NULL); pipe_bgm(&sc->objs[o->row], 1); } /* exePlayerOut first step */
         if (pipe_t == 1 && mario_anim) mario_play("earthenpipeout", 1.0f, 0);
+        if (pipe_t == 1 && (o->mode == 1 || o->mode == 2)) pipe_trans(o, 1.0f, NULL); /* ShowUp's step 30: calcTrans(1), Show */
         m->pos = o->top; m->up = o->up;
         if (vlen(vtangent(o->front, o->up)) > 1e-3f) m->face = vnorm(vtangent(o->front, o->up));
         if (pipe_t > 1 && (!mario_anim || mario_anim->done)) {
@@ -42335,6 +42367,7 @@ static int pipe_bind(Player *m)
             if (row_camset[o->row] != -1) camera_event_stop(); /* the partner's tryHideDown: endMultiActorCamera 出現
                                                                  * (none started without its camera info) */
             { const Row *pr = &sc->objs[p->row]; if (pr->sw[SW_B] >= 0 && gw_pipe_switch()) sw_set(pr, SW_B, 1); } /* onSwitchB (_194: not before the rabbits' chase) */
+            if (pipe_out >= 0) { pipe_hide = pipe_out; pipe_hide_t = 0; pipe_out = -1; } /* the partner's tryHideDown: WaitToHideDown */
             pipe_seq = 0; pipe_wait = 1;
         }
     }
@@ -42343,12 +42376,17 @@ static int pipe_bind(Player *m)
 
 static void update_pipes(void)
 {
+    static const Scene *seen;
+    if (seen != sc) { seen = sc; pipe_hide = -1; }
+    pipe_hide_tick();
+    for (int i = 0; i < npipes; i++) { /* control: the water pipe's stream sound (_19C) */
+        Pipe *p = &pipes[i];
+        const Row *r = &sc->objs[p->row];
+        if (p->water && row_shown(p->row) && (r->sw[SW_A] < 0 || sw_on(r, SW_A))) p->lv = se_level(SE_OJ_LV_PIPE_IN_WATER, &p->top.x, p->lv);
+    }
     if (pipe_seq) return;
     if (pipe_wait) { /* exeInvalid: re-armed once Mario is on ground after 30 frames */
-        if (++pipe_wait > 30 && mario->grounded) {
-            pipe_wait = 0;
-            if (pipe_out >= 0) { row_step[pipes[pipe_out].row] = 0; pipe_out = -1; game_rebind(); } /* tryHideDown */
-        }
+        if (++pipe_wait > 30 && mario->grounded) pipe_wait = 0;
         return;
     }
     if (mario->launch >= 0) return;
@@ -42356,6 +42394,7 @@ static void update_pipes(void)
     for (int i = 0; i < npipes; i++) {
         const Pipe *p = &pipes[i];
         if (p->partner < 0 || vlen(vsub(c, vsub(p->top, vmul(p->up, 50.0f)))) > 70.0f + HIT_BODY_R) continue;
+        if (i == pipe_hide || (row_step && (p->mode == 1 || p->mode == 2) && !row_step[p->row])) continue; /* WaitToHideDown / HideDown / Hide */
         V3 d = vsub(mario->pos, p->top);
         if (vlen(vtangent(d, p->up)) > 50.0f && vdot(d, p->up) < -5.0f) continue; /* beside the pipe, below its top */
         /* receiveOtherMsg AutoRushBegin: bound, Ready (from his matrix to the top, up the pipe, facing the camera) */
