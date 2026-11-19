@@ -175,6 +175,13 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   nowhere. doFlipJump sets the jump kind 3. PCSX2: a plain build XF=-DSINK_TEST=10 HellProminenceGalaxy 1 (put on a
   DamageFire floor): the dance takes a life at each landing on it, at the last `mario down (non stop)` and he dances
   on under the layout and the wipe, then the stage again. The route's star at f 4281.
+- BumpAppearPlanet (feat/703-bump-appear-planet, #703, 2026-11-18): MapObj/BumpAppearPlanet.cpp in
+  `engine/src/bump_appear_planet.inc` (update_bump_planet): RabbitMoonZone's planet (ReverseKingdomGalaxy). Its SW_A
+  on: BumpOut (BumpAppearPlanetPush, SE_OJ_BUMP_APPEAR_PLN_OUT, its B collision on); off: BumpIn (BumpAppearPlanetPull,
+  SE_OJ_BUMP_APPEAR_PLN_IN), Wait at the clip's end (B off). Its B / C collisions on the joints of those names:
+  `tools/slice.py` SKINNED_OBJ, KCL_PARTS, JOINT_KCL_INDEXED. Its nerve in row_turn / row_step. Its clips' keys cut to bumpappearplanet/push and /pull (slice.py clip_key: the full names met at 31 characters). Test: plain
+  `XF=-DBUMP_TEST` (ReverseKingdomGalaxy/1: Mario over it at 900, its SW_A on / off every 300 frames): in PCSX2 the nerves follow the switch with the skin's pose in; **the clip's end, the B collision and the skinned planet's look were not seen** (the first runs left Mario away from its zone). ponytail: the switch is read each frame, not listened to. Cost: under 1 KB of the ELF (update_bump_planet, no state of its own); memcheck on a plain build of main with the six classes of this batch: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB; route test with them: star got. **Release: slice_all.py
+  ReverseKingdomGalaxy + sound.py --pack ReverseKingdomGalaxy.**
 - Mario's death cameras and the forced jump floors (feat/726-death-cameras, #726, 2026-11-19): the stage cameras
   carry neither 昇天カメラ nor 奈落カメラ (only e:引き戻し is in the bcams): MarioActor declares them in code
   (MarioActor.cpp:388: declareGlobalEventCameraDead(0.35, 0x78, 0x3C), declareGlobalEventCameraAbyss). camera.c:

@@ -92,6 +92,7 @@ SKINNED_OBJ += ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp")  # TicoShop: NPCDat
 SKINNED_OBJ += ("CircleShell", "CircleStrawberry")  # SmallStone.cpp: WindLoop / WindEnd, CircleShell's Kind BVA (game.c stone_pose)
 SKINNED_OBJ += ("IceMerameraKingShock", "IceMerameraKingBreak")  # IceMerameraKing: its ShockWave's Shock, its break model's Break
 SKINNED_OBJ += ("Banekiti",)  # Banekiti.cpp: Wait / Repel (game.c banekiti.inc)
+SKINNED_OBJ += ("BumpAppearPlanet",)  # BumpAppearPlanet.cpp: BumpAppearPlanetPush / Pull, its B / C collisions on their joints (game.c bump_appear_planet.inc)
 SKINNED_OBJ += ("DashRing",)  # DashRing.cpp: Loop / Start / End / Revival (game.c update_drings)
 SKINNED_OBJ += ("QuarterRollGravityRoomArrow",)  # its RollGravityA / B (Reverse) clips (game.c statics.inc st_qrarrow)
 SKINNED_OBJ += ("DeadLeaves", "DesertMovingLandSmall")  # DeadLeaves.cpp: Spin (game.c update_givers); DesertMovingLand's small one: Vibration (update_dlands)
@@ -338,8 +339,10 @@ KCL_PARTS = {"SnowMan": {"headcol.kcl": "Head", "bodycol.kcl": "Body"},  # SnowM
                             "larm02.kcl": "LArm02", "lfoot001.kcl": "LFoot001", "rarm01.kcl": "RArm01",
                             "rarm02.kcl": "RArm02", "rfoot001.kcl": "RFoot001", "tactile.kcl": "Tactile"},
              # BeamGoRoundPlanet::init: createCollisionPartsFromLiveActor "Move" on joints move1 and move2 (JOINT_KCL_INDEXED)
-             "BeamGoRoundPlanet": {"move.kcl": ("move1", "move2")}}
-JOINT_KCL_INDEXED = {"BeamGoRoundPlanet"}  # its joint parts named by index as JOINT_KCL_ONLY's, its own collision kept (MapObjActor::initialize)
+             "BeamGoRoundPlanet": {"move.kcl": ("move1", "move2")},
+             # BumpAppearPlanet::init: createCollisionPartsFromLiveActor BumpAppearPlanetB / C on the joints of those names
+             "BumpAppearPlanet": {"bumpappearplanetb.kcl": ("BumpAppearPlanetB",), "bumpappearplanetc.kcl": ("BumpAppearPlanetC",)}}
+JOINT_KCL_INDEXED = {"BeamGoRoundPlanet", "BumpAppearPlanet"}  # its joint parts named by index as JOINT_KCL_ONLY's, its own collision kept (MapObjActor::initialize)
 # the joint a MapObjActor's own collision follows (SKIN pad 1: game.c Inst.kmove), "Move" unless named here
 COLL_JOINT = {"Shellfish": "Lid"}  # initCollisionPartsAutoEqualScaleOne "Hi" on getJointMtx(Lid)
 HOME_POS = "\u5408\u4f53\u30d6\u30ed\u30c3\u30af\u6545\u90f7\u70b9"  # 合体ブロック故郷点: AssemblyBlock's home (Petari sReturnPosName)
@@ -2670,7 +2673,9 @@ def clip_key(c, clip):
     k = f"{c.lower()}/{clip}"
     if len(k) > 31:  # (SkeletalFishBossHeadA's too: game.c sf_clip; polta.inc pol_key)
         for a, b in (("demobosskameck", "dbk"), ("skeletalfish", "sf"), ("poltaleftarm", "pla"), ("poltarightarm", "pra"),
-                     ("poltaformationrock", "pfr"), ("dodoryuleadhill/", "ddlh/"), ("trickrabbitfreerunchild/", "trfc/")):
+                     ("poltaformationrock", "pfr"), ("dodoryuleadhill/", "ddlh/"), ("trickrabbitfreerunchild/", "trfc/"),
+                     ("bumpappearplanet/bumpappearplanet", "bumpappearplanet/")):  # BumpAppearPlanetPush / Pull: "push" / "pull" (game.c bump_appear_planet.inc)
+
             k = k.replace(a, b)
     return k
 
