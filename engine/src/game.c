@@ -32846,8 +32846,8 @@ static void bomb_update(Kuribo *k)
     if (k->nrv != BH_THROWN || k->step >= 30) k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f); /* (Thrown: offCalcGravity for hThrownOffCalcGravityTime) */
     V3 up = vmul(k->grav, -1.0f);
     int st = ++k->step;
-#ifdef BH_TEST /* XF="-DBH_TEST -DPUT_TEST=BombHei" (CannonFleetGalaxy/1): the first Bob-omb near Mario spun (100 frames on),
-                * touched once it rolls, thrown 90 frames after he took it; its nerves logged */
+#ifdef BH_TEST /* XF=-DBH_TEST (CannonFleetGalaxy/1): the first Bob-omb, brought to Mario (update_kuribo), spun (100 frames
+                * on), touched once it rolls, thrown 90 frames after he took it; its nerves logged */
     {
         static int t, took, last = -1;
         if (!launcher && vlen(vsub(mario->pos, k->pos)) < 800.0f) {
@@ -32978,7 +32978,7 @@ static void bomb_update(Kuribo *k)
         if (msg == MSG_TRAMPLE) mario_trample();
         return;
     }
-    if (msg == MSG_HITALL && !bomb && k->nrv != BH_SPINHIT && !(k->nrv == BH_THROWN && st < SPIN_TIME)) { /* (not the spin that threw it) */ m_punch(k, body, 0); w_nrv(k, BH_SPINHIT); bh_light(k); scene_stop = 3; return; }
+    if (msg == MSG_HITALL && !bomb && k->nrv != BH_SPINHIT && !(k->nrv == BH_THROWN && k->step < SPIN_TIME)) { /* (not the spin that threw it) */ m_punch(k, body, 0); w_nrv(k, BH_SPINHIT); bh_light(k); scene_stop = 3; return; }
     if (mario_touch(body, 60.0f * scl)) { /* sendMsgPushAndKillVelocityToTarget */
         /* isMsgItemGet (Mario's body on it): Stop, Physics, Thrown past hThrownCanNotGotTime, SpinHit past hSpinHitCanGetTime */
         if ((k->nrv == BH_STOP || k->nrv == BH_PHYSICS || (k->nrv == BH_THROWN && st > 120) || (k->nrv == BH_SPINHIT && st > 30)) &&
@@ -34199,7 +34199,30 @@ static void walker_push_pass(void) /* ponytail: the first WP_MAX walkers with se
 }
 static void update_kuribo(void)
 {
+#ifdef BH_TEST /* the first Bob-omb dropped 200 before Mario, 120 frames after he is free, and updated here from then
+                * on (its zone may not be streamed in: update_kuribo_one would wait for its ground) */
+    static int bh_ti = -1;
+    {
+        static int t;
+        int game_test_free(void);
+        int go = game_test_free() && t < 120 && ++t == 120;
+        if (bh_ti >= 0 && kuribo[bh_ti].state != KURIBO_DEAD) bomb_update(&kuribo[bh_ti]);
+        for (int i = 0; go && i < nkuribo; i++) {
+            Kuribo *k = &kuribo[i];
+            if (k->kind != WALK_BOMBHEI || bh_launcher(k) || k->state == KURIBO_DEAD) continue;
+            k->pos = vadd(vadd(mario->pos, vmul(mario->face, 200.0f)), vmul(mario->up, 100.0f));
+            k->vel = v3(0, 0, 0); k->grav = vmul(mario->up, -1.0f); k->clipped = 0; k->timer = -1;
+            w_nrv(k, BH_LAUNCH);
+            printf("bh test: row %d brought to Mario%c", k->row, 10);
+            bh_ti = i;
+            break;
+        }
+    }
+#endif
     for (int i = 0; i < nkuribo; i++) {
+#ifdef BH_TEST
+        if (i == bh_ti) continue;
+#endif
         Kuribo *k = &kuribo[i];
         if (k->state == KURIBO_DEAD || !row_shown(k->row)) continue;
         if (k->clipped && k->kind != WALK_KARIKARI && !test_noclip && !(k->kind == WALK_BOMBTERESA && !k->lvt[1]) && !(k->kind == WALK_MERAKING && mk_noclip(k)) && !(k->kind == WALK_MERAMERA && k->lvt[2]) && !(k->kind == WALK_TERESA && k->lvt[1]) && !(k->kind == WALK_MKOOPA && k->lvt[2]) && !(k->kind == WALK_BOMBBIRD && bbd_noclip(k)) && !(k->kind == WALK_POIHANA && k->dir)) { if (k->kind == WALK_MERAMERA) k->sstep = -1; continue; } /* startClipped: no movement (Karikari may ride on Mario; a BombTeresa's invalidateClipping: lvt[1] 0) */
