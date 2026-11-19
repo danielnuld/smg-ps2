@@ -11,6 +11,14 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- CameraRepulsiveCylinder (feat/585-camera-repulsive, #585, 2026-11-18): camera.c view_interp, after
+  interpolateCameraSwitching: translateByRepulsion (`camera_repulsion` -> game.c cam_repulsion:
+  CameraRepulsiveCylinder::getRepulsion, the eye's part across the cylinder's axis over (2 x its length / radius)
+  cubed; the sphere's is zero) and lookAtCenter (the view turned back on the watch point, its up with it). No stage
+  of RMGE01 places a CameraRepulsiveCylinder / Sphere (every StageData archive read: the names are only in
+  ObjNameTable), so nothing changes in play and no pack needs it; slice.py LOGIC carries them all the same. Test:
+  plain with `XF=-DCAM_REPULSE_TEST=3000` (EggStarGalaxy/1: a test cylinder of that radius about Mario's up from
+  frame 300, "cam repulsion: eye a off the axis, pushed b").
 - The seesaws (feat/614-seesaws, #614, 2026-11-18): SimpleSeesawObj (SimpleMapObj.cpp: KoopaShipSeesawStep,
   IceVolcanoBalanceStepA / B, IceMountainSeesawSlipA-D / NoSlipA; 16 placed, they turned as plain MapPartsRotators)
   and LavaHomeSeesaw in update_seesaws beside PhantomShipHandle (Inst.seesaw 1-4): MapPartsSeesaw1AxisRotator for
