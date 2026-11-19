@@ -136,8 +136,7 @@ static void mkoopa_update(Kuribo *k, V3 to, float d)
             mkm_to_player(k, 1.3f, 2.0f, 0.8f, 2.0f);
             if (mkm_wall_ahead(k)) mkm_nrv(k, MKM_JUMPSTART);
         } else mkm_to_player(k, 0.2f, 2.0f, 0.98f, 2.0f);
-        if (k->nrv != MKM_PURSUE) break;
-        float dist = vlen(vsub(mp, k->pos));
+        float dist = vlen(vsub(mp, k->pos)); /* (after a JumpStart set above too: MechanicKoopaMini.cpp:292-306) */
         V3 g = vnorm(k->grav);
         if (dist > 1100.0f) mkm_nrv(k, MKM_WALKONRAIL);
         else if (dist < 300.0f && mkm_near_angle(vtangent(vsub(mp, k->pos), g), vtangent(k->qz, g), 5.729578f) && w_on_ground(k))
@@ -214,17 +213,7 @@ static void mkoopa_update(Kuribo *k, V3 to, float d)
     }
     if (mario->hip != HIP_FALL && vlen(vsub(mc, body)) < br + HIT_BODY_R && !(HIT_BODY_R + br - 130.0f < vdot(vsub(mc, body), up)))
         mario_push_out(body, br); /* sendMsgPush (hPushUpRangeSub) */
-    for (int i = 0; i < nkuribo; i++) {
-        Kuribo *e = &kuribo[i];
-        if (e == k || e->kind != WALK_MKOOPA || e->state == KURIBO_DEAD || e->lvt[0] || !row_shown(e->row)) continue;
-        V3 dv = vsub(e->pos, k->pos); /* receiveMsgPush: addVelocityFromPush(3) */
-        if (vlen(dv) >= br + 130.0f * sc->objs[e->row].scale[1] || vlen(dv) < 1e-6f) continue;
-        if (3.0f < vdot(e->vel, vmul(vnorm(e->grav), -1.0f))) dv = vtangent(dv, vnorm(e->grav));
-        if (vlen(dv) < 1e-6f) continue;
-        V3 n = vnorm(dv);
-        float f1 = vdot(n, e->vel);
-        if (f1 < 3.0f) e->vel = vadd(e->vel, vmul(n, 3.0f - f1)); /* addVelocityLimit */
-    }
+    /* (its push on the other enemies, addVelocityFromPush 3: walker_push_pass) */
 }
 #ifdef MKOOPA_TEST
 void game_mkm_state(char *out, int n) /* the first live MechanicKoopaMini: its nerve, step */

@@ -131,8 +131,7 @@ static void ts_normal_vel(Kuribo *k) /* updateNormalVelocity */
 }
 static int ts_ascension(Kuribo *k) /* tryAscension: GlaringLightArea (or out of the sun's shade: ponytail, never) */
 {
-    int a = area_obj("GlaringLightAreaCylinder", k->pos);
-    if (a < 0 || (sc->objs[a].sw[SW_A] >= 0 && !sw_on(&sc->objs[a], SW_A))) return 0; /* GlaringLightArea::movement: valid on its SW_A */
+    if (!in_glaring_light(k->pos)) return 0;
     ts_set_nrv(k, TS_ASCENSION);
     return 1;
 }
@@ -201,7 +200,7 @@ static void ts_update(Kuribo *k)
         k->vel = vmul(k->vel, 0.9f);
         float t = bt_rate(k, 60);
         k->len = 80.0f * (1.0f - (1.0f - t) * (1.0f - t));
-        if (st > 0 && w_bck_stopped(k)) ts_start(k);
+        if (st > 0 && w_bck_stopped(k)) { ts_end_appear(k); ts_start(k); } /* the appear nerves' onEnd */
         break;
     }
     case TS_WAIT:
@@ -372,7 +371,7 @@ static void ts_update(Kuribo *k)
     if (!k->bind_off) {
         V3 up = vmul(vnorm(k->grav), -1.0f), want = vadd(k->pos, k->vel), c = want, gn = up, wn = up;
         int wall = 0, gt = ghost_through;
-        ghost_through = k->nrv != TS_DRIFT;
+        ghost_through = k->nrv == TS_DRIFT; /* filterBind: a GhostThrough wall is invalid only while it drifts */
         k->on_ground = collide_n(&c, up, 60.0f * sx, &gn, &wn, &wall);
         ghost_through = gt;
         k->gn = k->on_ground ? gn : up; k->on_wall = wall; k->wn = wn;
