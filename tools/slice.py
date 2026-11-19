@@ -24,7 +24,10 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
   'PATH'  u32 n, n × {u16 zone, u16 closed, s32 id, u32 npts, u32 nraw, s32 stop_type (path_arg1), s32 path_arg0 (RaceRail's race id),
           f32 pts[npts][3], f32 raw[nraw][3], nraw × {f32 coord, s32 arg0, s32 arg5}, nraw × {s32 arg1, s32 arg2}}:
           pts the rail as a polyline (Bezier parts sampled, bezier_polyline), raw its JMap points (pnt0), each with its
-          distance along pts and its point_arg0 / point_arg5 (map parts: speed, stop time), point_arg1 / 2 (Rock)
+          distance along pts and its point_arg0 / point_arg5 (map parts: speed, stop time), point_arg1 / 2 (Rock).
+          The arg5 word of a rail whose points set point_arg7 1 (MapPartsRailMover's speed from a time) or whose
+          path_arg4 is set (its RailInitPosType): max(arg5, 0) | bit 30 (point_arg7 1) | on the first point
+          (path_arg4 + 1) << 28 (rail_arg5)
   'MODL'  u32 n, n × {char[32] name, f32 bounding radius}
   'KCL '  u32 n, n × {char[32] model, u32 size, bytes[size] (little-endian KCL, kcl_to_le), pad to 4}
   'VUMD'  u32 n, 12 pad, n × {char[32] name, u32 ngroups, f32 qscale, 8 pad, ngroups × {u32 nverts (3 per
@@ -393,22 +396,35 @@ def rows(b):
 def map_parts(b, rs):
     """mappartsinfo rows: Obj_arg0-3 as usual, the MapPartsRotator columns in args 4-7: RotateSpeed, RotateAngle,
     RotateAxis, then bit 30 (a map part) | RotateType (bits 0-3, default 1) | RotateAccelType << 4 | MoveConditionType
-    << 8 | RotateStopTime << 12 (unset: Petari's defaults, 0 but the type). A seesaw's RotateAccelType is its inertia
-    (100-2000, over the four bits): written whole to arg 3, which those classes do not read."""
+    << 8 | RotateStopTime << 12 | SignMotionType << 26 (unset: Petari's defaults, 0 but the type). A seesaw's
+    RotateAccelType is its inertia (100-2000, over the four bits): written whole to arg 3, which those classes do
+    not read."""
     n = len(rs)
     seesaws = {"PhantomShipHandle", "LavaHomeSeesaw", "KoopaShipSeesawStep", "IceVolcanoBalanceStepA", "IceVolcanoBalanceStepB",
                "IceMountainSeesawSlipA", "IceMountainSeesawSlipB", "IceMountainSeesawSlipC", "IceMountainSeesawSlipD",
                "IceMountainSeesawNoSlipA"}  # MapPartsSeesaw1AxisRotator / 2AxisRotator / LavaHomeSeesawRotator hosts
     col = {f: int_or(b, f, n, -1) for f in ("RotateSpeed", "RotateAngle", "RotateAxis", "RotateType", "RotateAccelType",
-                                           "MoveConditionType", "RotateStopTime")}
+                                           "MoveConditionType", "RotateStopTime", "SignMotionType")}
     for i, r in enumerate(rs):
         g = lambda f, d: col[f][i] if col[f][i] >= 0 else d
         r["args"][4:8] = [col["RotateSpeed"][i], col["RotateAngle"][i], col["RotateAxis"][i],
                           1 << 30 | g("RotateType", 1) & 15 | (g("RotateAccelType", 0) & 15) << 4 |
-                          (g("MoveConditionType", 0) & 15) << 8 | min(g("RotateStopTime", 0), 0x3FFF) << 12]
+                          (g("MoveConditionType", 0) & 15) << 8 | min(g("RotateStopTime", 0), 0x3FFF) << 12 |
+                          (g("SignMotionType", 0) & 7) << 26]
         if r["name"] in seesaws:
             r["args"][3] = col["RotateAccelType"][i]
     return rs
+
+
+def rail_arg5(a5, a7, init):
+    """A rail's point_arg5 words with MapPartsRailMover's point_arg7 (1: point_arg0 is the time to the next point)
+    and path_arg4 (RailInitPosType) folded in (the PATH chunk's header); untouched where neither is set."""
+    out = list(a5)
+    for i, v in enumerate(out):
+        bits = (1 << 30 if a7[i] == 1 else 0) | ((init + 1) << 28 if i == 0 and 0 <= init <= 2 else 0)
+        if bits:
+            out[i] = (max(v, 0) & 0xFFFF) | bits
+    return out
 
 
 def stage_files(path):
@@ -478,7 +494,8 @@ def scene(fs, galaxy, scenario):
             paths.append(dict(zone=zid, id=pid, camera=i < len(usage) and usage[i] == "Camera", closed=int(str(closed[i] if i < len(closed) else "").lower() == "close"),
                               pts=list(zip(*p0)), cin=list(zip(*p1)) or list(zip(*p0)), cout=list(zip(*p2)) or list(zip(*p0)),
                               stop=int_or(info, "path_arg1", len(ids), -1)[i], parg0=int_or(info, "path_arg0", len(ids), -1)[i], arg0=int_or(pts, "point_arg0", npt, -1),
-                              arg5=int_or(pts, "point_arg5", npt, -1), arg1=int_or(pts, "point_arg1", npt, -1),
+                              arg5=rail_arg5(int_or(pts, "point_arg5", npt, -1), int_or(pts, "point_arg7", npt, -1), int_or(info, "path_arg4", len(ids), -1)[i]),
+                              arg1=int_or(pts, "point_arg1", npt, -1),
                               arg2=int_or(pts, "point_arg2", npt, -1)))
     for o in objs:
         if o["name"].startswith("AssemblyBlock") and (o["zone"], o["l_id"]) in homes:

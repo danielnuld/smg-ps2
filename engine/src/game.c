@@ -809,8 +809,11 @@ static float *row_coord, *row_speed; /* per OBJS row: a rail-moving map part's d
 static signed char *row_rdir;    /* its direction (+1 / -1; 0 not started, 2 stopped) */
 static unsigned char *row_mp_a;  /* per OBJS row: 1 its SW_A came on once (MapObjActor::exeWait started its parts), 2 its
                                   * rail mover worked last frame (RailMoveObj _D0), 4 its rotator turned last frame
-                                  * (RotateMoveObj in Move): the StageEffect edges, kept over a rebind */
+                                  * (RotateMoveObj in Move): the StageEffect edges, kept over a rebind; 8 - 128 the
+                                  * rail mover's nerves (update_railers) */
 static unsigned short *row_rhold; /* frames it still waits at a rail point */
+static unsigned short *row_rstep; /* MapPartsRailMover's step in Move / MoveStart (0: its speed is worked out again) */
+static float *row_racc;           /* its mAcceleration */
 static const unsigned char *scene_blob_g; /* the scene blob (PATH) for rebinds */
 static int hip_hit, hip_inst;   /* Mario landed a hip drop this frame, on instance hip_inst (-1 none) */
 static int ngst; /* update_gaps: the GapSt rows */
@@ -2683,6 +2686,8 @@ void game_init(const Scene *s, const unsigned char *blob)
     row_rdir = mem_alloc(MEM_OBJECTS, s->nobjs);
     row_mp_a = mem_alloc(MEM_OBJECTS, s->nobjs);
     row_rhold = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(unsigned short));
+    row_rstep = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(unsigned short));
+    row_racc = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(float));
     for (u32 i = 0; i < s->nobjs; i++) /* ShootingStar: star pieces it still holds (declareStarPiece arg3) */
         if (strcmp(s->types + 32 * s->objs[i].type, "ShootingStar") == 0)
             row_hold[i] = s->objs[i].arg[3] >= 0 ? s->objs[i].arg[3] : 5;
@@ -5073,12 +5078,80 @@ static void update_jumpstands(void)
 /* a rail-moving part's translation: its rail at row_coord */
 static V3 rail_at(const float *p, u32 n, float d);
 static int st_turtle_rail(Inst *in, V3 p), st_turtle_moving(int row); /* statics.inc */
+static float rail_dense_len(const float *p, u32 n) /* the length of the rail's points along it */
+{
+    float l = 0.0f;
+    for (u32 i = 0; i + 1 < n; i++) l += vlen(vsub(v3(p[3 * i + 3], p[3 * i + 4], p[3 * i + 5]), v3(p[3 * i], p[3 * i + 1], p[3 * i + 2])));
+    return l;
+}
+/* BezierRail::getTotalLength: an open rail's last point; a closed one's with its last part, back to its start (the
+ * pack's points along it stop one short of the start) */
+static float railer_len(const unsigned char *e)
+{
+    u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
+    const float *p = (const float *)(e + 24);
+    if (!*(const unsigned short *)(e + 2) || np < 2) return *(const float *)(e + 24 + 12 * np + 12 * nr + 12 * (nr - 1));
+    return rail_dense_len(p, np) + vlen(vsub(v3(p[0], p[1], p[2]), v3(p[3 * np - 3], p[3 * np - 2], p[3 * np - 1])));
+}
+/* a rail point's point_arg5 word (pa: the pack's nr x {coord, arg0, arg5}): its stop time in the low 16 bits, bit 30
+ * point_arg7 1 (MapPartsRailSpeedCalcType: point_arg0 is a time), bits 28-29 of the first point the rail's path_arg4 +
+ * 1 (RailInitPosType); a pack older than these bits has neither */
+static int railer_a5(const unsigned char *pa, int k)
+{
+    int v = *(const int *)(pa + 12 * k + 8);
+    return v < 0 ? 0 : v;
+}
+/* RailRider's mCurPoint (BezierRail::getCurrentCtrlPointIndex): going to the end the last point at or behind coord c,
+ * coming back the first at or beyond it; the first one at the start, the last one (a closed rail: the first) at the end */
+static int railer_point(const unsigned char *pa, u32 nr, float c, int dir, int closed, float len)
+{
+    if (fabsf(c) < 0.001f) return 0;
+    if (fabsf(len - c) < 0.001f) return closed ? 0 : (int)nr - 1;
+    if (dir > 0) {
+        for (u32 k = 1; k < nr; k++) if (!(*(const float *)(pa + 12 * k) <= c)) return (int)k - 1;
+        return (int)nr - 1;
+    }
+    for (u32 k = 0; k < nr; k++) if (c <= *(const float *)(pa + 12 * k)) return (int)k;
+    return closed ? 0 : (int)nr - 1;
+}
 static void railer_place(Inst *in)
 {
     const unsigned char *e = in->railer;
-    V3 p = rail_at((const float *)(e + 24), *(const u32 *)(e + 8), row_coord[in->row]);
+    const float *pts = (const float *)(e + 24);
+    u32 np = *(const u32 *)(e + 8);
+    V3 p = rail_at(pts, np, row_coord[in->row]);
+    if (*(const unsigned short *)(e + 2) && np >= 2) { /* a closed rail's last part, back to its start */
+        float dl = rail_dense_len(pts, np), over = row_coord[in->row] - dl;
+        V3 a = v3(pts[3 * np - 3], pts[3 * np - 2], pts[3 * np - 1]), b = v3(pts[0], pts[1], pts[2]);
+        float l = vlen(vsub(b, a));
+        if (over > 0.0f && l > 0.0f) p = vadd(a, vmul(vsub(b, a), over < l ? over / l : 1.0f));
+    }
     if (st_turtle_rail(in, p)) return; /* OceanSmallTurtle: its rail in the Mercator plane (statics.inc) */
     in->m[12] = p.x; in->m[13] = p.y; in->m[14] = p.z;
+}
+/* MapPartsRailMover::init, once a row (row_mp_a 128): RailInitPosType (path_arg4) 0 or unset the rail's place nearest
+ * to its placement (moveCoordAndTransToNearestRailPos), 1 its nearest point, 2 its start. (EyeBeamer and
+ * OceanSmallTurtle start their own way.) ponytail: a closed rail's last part is not searched */
+static float w_rail_nearest(const float *p, u32 n, V3 q);
+static void railer_init(Inst *in)
+{
+    const unsigned char *e = in->railer;
+    u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
+    const unsigned char *pa = e + 24 + 12 * np + 12 * nr;
+    if (row_mp_a[in->row] & 128) return;
+    row_mp_a[in->row] |= 128;
+    if (in->eyebeamer || st_turtle_moving(in->row) >= 0 || !nr) return;
+    int type = (railer_a5(pa, 0) >> 28 & 3) - 1;
+    V3 at = v3(in->m[12], in->m[13], in->m[14]);
+    if (type <= 0) row_coord[in->row] = w_rail_nearest((const float *)(e + 24), np, at);
+    else if (type == 1) {
+        const float *raw = (const float *)(e + 24 + 12 * np);
+        float best = 1e30f;
+        for (u32 k = 0; k < nr; k++) {
+            float d = vlen(vsub(at, v3(raw[3 * k], raw[3 * k + 1], raw[3 * k + 2])));
+            if (d < best) { best = d; row_coord[in->row] = *(const float *)(pa + 12 * k); }
+        }
+    } else row_coord[in->row] = 0.0f;
 }
 
 /* SmallStone.cpp (SmallStone / CircleShell / CircleStrawberry): 8 members on a ring of hCircleRadius 300 across its
@@ -5783,7 +5856,7 @@ static void game_rebind_(void)
         /* NPCActor _A0 / _B0: initDefaultPosAndQuat's placement turn (its matrix's axes, set just above) */
         in->nu = in->nu0 = vnorm(v3(in->m[4], in->m[5], in->m[6])); in->nf = in->nf0 = vnorm(v3(in->m[8], in->m[9], in->m[10]));
         if (in->rotor && row_angle) rotor_matrix(in);
-        if (in->railer && row_coord) railer_place(in);
+        if (in->railer && row_coord) { railer_init(in); railer_place(in); }
         if (in->npc && row_rdir && row_rdir[i]) npc_rail_place(in); /* its RailRider kept: back at its coord */
         if (in->tsuki && row_coord && row_turn[i]) tsuki_place(in);
         if (in->ticorail && row_coord && row_turn[i]) ticorail_place(in);
@@ -38242,10 +38315,20 @@ static void update_rotors(void)
     }
 }
 
-/* MapPartsRailMover.cpp: a map part on a rail moves along it at the speed of the last point that set one (point_arg0),
- * waits point_arg5 frames at a point, and at an end MoveStopType (path_arg1, default 1): 0 stops, 1 turns back, 2
- * starts over, 3 vanishes; MoveConditionType other than 0 waits for Mario on it. It carries Mario like a rotating
- * part. ponytail: no acceleration (point_arg1), no time-based speed (point_arg7), no rail posture */
+/* MapPartsRailMover.cpp: a map part on a rail. Each time Move starts (the start, a point passed, an end left) its
+ * speed is worked out from its current point (railer_point: the one it passed last, going either way): point_arg0,
+ * kept where a point sets none; with point_arg1 (mAccelTime) it eases there over that many frames from the speed it
+ * had (updateAccel); with point_arg7 1 point_arg0 is the frames to the next point (calcMoveSpeedTime). A point's
+ * point_arg5 stops it for two nerves of mStopTime + 1 frames (StopAtPoint Before / AfterRotate), where it passed the
+ * point. A closed rail goes round; at an open one's end MoveStopType (path_arg1, default 1): 0 stops, 1 turns back,
+ * 2 starts over, 3 vanishes, after the end point's stop; MoveConditionType other than 0 waits for Mario on it, and 1
+ * (PlayerOnStopEnd) waits at each end until he has stepped off and on again. SignMotionType 1 / 2 / 4 / 5: MoveStart
+ * first, 50 frames shaking 7 x (step % 3) along the rail. It starts where MapPartsRailMover::init puts it
+ * (railer_init). It carries Mario like a rotating part. row_rstep its nerve step, row_racc its acceleration,
+ * row_mp_a: 8 at an end (restartAtEnd due), 16 waiting for Mario there, 32 he has not stepped off yet, 64 MoveStart,
+ * 128 placed by railer_init.
+ * ponytail: no rail posture / MapPartsRailRotator (the ACTMES_MAPPARTS_START_ROTATE_* answers: 6 placements);
+ * MoveStart shakes the collision with the model (offUpdateCollisionParts); GeneralMapParts' own sign motions */
 /* StageEffectDataTable.cpp's start / moving / stop SEs of the rail movers (stage_se kinds R, D, K):
  * RailMoveObj::exeMove's tryStageEffectStart as its rail mover starts working (startMoveInner), tryStageEffectMoving
  * while it works, tryStageEffectStop at an end (doAtEndPoint); RailDemoMoveObj the three SEs alone;
@@ -38330,13 +38413,33 @@ static void update_railers(void)
         if (!st_rail_go(in)) continue; /* RailDemoMoveObj: its demo started first (statics.inc) */
         u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
         const unsigned char *pa = e + 24 + 12 * np + 12 * nr; /* nr x {f32 coord, s32 arg0, s32 arg5} */
-        float len = *(const float *)(pa + 12 * (nr - 1));
+        int closed = *(const unsigned short *)(e + 2), sign = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) ? r->arg[7] >> 26 & 7 : 0;
+        float len = railer_len(e);
+        sign = sign == 1 || sign == 2 || sign == 4 || sign == 5; /* hasMapPartsMoveStartSignMotion */
         if (!row_rdir[row]) {
             if (cond && mario_ground != i) continue;
             row_rdir[row] = 1;
+            if (sign) { row_mp_a[row] |= 64; row_rstep[row] = 0; } /* start: MoveStart */
         }
         if (row_rdir[row] == 2) continue;
-        if (row_rhold[row]) { row_rhold[row]--; continue; }
+        if (row_mp_a[row] & 16) { /* StopAtEndWithPlayerOn until he steps off, WaitForRestartByPlayerOn until he is back */
+            if (row_mp_a[row] & 32) { if (mario_ground != i) row_mp_a[row] &= ~32; continue; }
+            if (mario_ground != i) continue;
+            row_mp_a[row] = (unsigned char)((row_mp_a[row] & ~16) | 8); /* tryRestartAtEnd */
+        }
+        int held = 0;
+        if (row_rhold[row]) { /* StopAtPoint / StopAtEnd */
+            if (--row_rhold[row] || !(row_mp_a[row] & 8)) continue;
+            held = 1; /* exeStopAtEnd's last step: restartAtEnd now, Move from the next frame */
+        }
+        if (row_mp_a[row] & 8) { /* restartAtEnd */
+            row_mp_a[row] &= ~8;
+            if ((stop >= 0 ? stop : 1) == 3) { row_kill(row); game_rebind(); return; } /* Vanish: ACTMES_MAPPARTS_DISAPPEAR_WITH_BLINK, RailMoveObj kills itself */
+            if ((stop >= 0 ? stop : 1) == 2) { row_coord[row] = 0.0f; railer_place(in); } /* moveCoordToStartPos */
+            else if (sign) row_mp_a[row] |= 64; /* MoveStart again */
+            row_rstep[row] = 0;
+            if (held) continue;
+        }
         int se = in->stage ? stage_se[in->stage - 1].kind : 0; /* isRailMoverWorking: its SEs by name */
         if (se == 'I') { /* IceVolcanoUpDownPlane::move: a RailMoveObj whose moving SE needs tryCalcNearestPosToPlayer
                           * (Mario not 380 under its plane). ponytail: the sound at its place, not at its point nearest
@@ -38353,34 +38456,65 @@ static void update_railers(void)
         else if (se == 'D' || se == 'K') in->lv[0] = se_level(stage_se[in->stage - 1].mv, &in->m[12], in->lv[0]); /* getMovingSe */
         else if (!strcmp(sc->types + 32 * r->type, "UFOStrongA")) /* UFOBase::control: while its rail mover works (its end SE at isDone) */
             in->lv[0] = se_level(SE_OJ_LV_UFO_MOVE, &in->m[12], in->lv[0]);
-        float c = row_coord[row];
-        int dir = row_rdir[row];
-        for (u32 k = 0; k < nr; k++) /* the speed of the last point behind it that sets one */
-            if (*(const float *)(pa + 12 * k) <= c + 0.01f && *(const int *)(pa + 12 * k + 4) >= 0)
-                row_speed[row] = (float)*(const int *)(pa + 12 * k + 4);
-        float n = c + row_speed[row] * dir, old[16];
+        float c = row_coord[row], old[16];
+        int dir = row_rdir[row], type = stop >= 0 ? stop : 1;
+        const unsigned char *pb = pa + 12 * nr; /* nr x {s32 arg1, s32 arg2} */
         memcpy(old, in->m, 64);
-        for (u32 k = 1; k + 1 < nr; k++) { /* passing a point that holds */
-            float pc = *(const float *)(pa + 12 * k);
-            int hold = *(const int *)(pa + 12 * k + 8);
-            if (hold > 0 && ((c < pc && n >= pc) || (c > pc && n <= pc))) { n = pc; row_rhold[row] = hold; break; }
+        if (row_mp_a[row] & 64) { /* exeMoveStart: the start sign, MapParts::getMoveStartSignalTime 50 frames */
+            int st = row_rstep[row]++;
+            float v = ((st / 3) % 2 == 0 ? 1.0f : -1.0f) * (dir > 0 ? -1.0f : 1.0f);
+            row_coord[row] = st == 50 ? c : c + 7.0f * (v * (float)(st % 3));
+            if (!closed) row_coord[row] = row_coord[row] > len ? len : row_coord[row] < 0.0f ? 0.0f : row_coord[row];
+            railer_place(in);
+            row_coord[row] = c; /* _48 */
+            if (st == 50) { row_mp_a[row] &= ~64; row_rstep[row] = 0; }
+            if (mario_ground == i) carry(old, in);
+            continue;
         }
-        if (n >= len || n <= 0) { /* an end */
+        if (row_rstep[row] == 0) { /* exeMove's first step: updateAccel, calcMoveSpeed */
+            int cur = railer_point(pa, nr, c, dir, closed, len);
+            int a0 = *(const int *)(pa + 12 * cur + 4), acc = *(const int *)(pb + 8 * cur);
+            row_racc[row] = acc > 0 && a0 >= 0 ? ((float)a0 - row_speed[row]) / (float)acc : 0.0f; /* mAcceleration */
+            if (fabsf(row_racc[row]) < 0.0001f && a0 >= 0) {
+                if (railer_a5(pa, cur) >> 30 & 1) { /* calcMoveSpeedTime: its part's length in point_arg0 frames */
+                    int part = dir > 0 ? cur : cur - 1, parts = closed ? (int)nr : (int)nr - 1;
+                    part = part < 0 ? parts - 1 : part >= parts ? parts - 1 : part;
+                    float q0 = *(const float *)(pa + 12 * part), q1 = part + 1 < (int)nr ? *(const float *)(pa + 12 * (part + 1)) : len;
+                    row_speed[row] = (q1 - q0) / (float)a0;
+                } else row_speed[row] = (float)a0; /* calcMoveSpeedDirect */
+            }
+        }
+        if (fabsf(row_racc[row]) >= 0.0001f && (int)row_rstep[row] < *(const int *)(pb + 8 * railer_point(pa, nr, c, dir, closed, len)))
+            row_speed[row] += row_racc[row];
+        if (row_rstep[row] < 0xFFFF) row_rstep[row]++;
+        float n = c + row_speed[row] * dir;
+        if (closed) { n = fmodf(n, len); if (n < 0.0f) n += len; } /* BezierRail::normalizePos */
+        else n = n > len ? len : n < 0.0f ? 0.0f : n;
+        if (!closed && fabsf(n - (dir > 0 ? len : 0.0f)) < 0.001f) { /* isRailReachedGoal (tryPassPoint, the frame after) */
             if (se) stage_edge(in, 1, se == 'D' || se == 'K'); /* doAtEndPoint: tryStageEffectStop */
             if (cam >= 0 && stage_cam[cam].in > 0.0f) camera_shake_stop(in); /* stopShakingCameraMoving */
-            int type = stop >= 0 ? stop : 1;
-            n = n >= len ? len : 0;
-            int hold = *(const int *)(pa + 12 * (n > 0 ? nr - 1 : 0) + 8);
-            if (hold > 0) row_rhold[row] = hold;
-            if (type == 0) { /* restartAtEnd: Wait */
+            if (type == 0) { /* MoveStopType 0: Wait */
                 row_rdir[row] = 2;
                 if (!strncmp(sc->types + 32 * r->type, "UFO", 3)) { /* UFOBase::control: isDone the first time */
                     pad_rumble(RUMBLE_MIDDLE); camera_shake(SHAKE_NORMAL); se_start(SE_OJ_UFO_MOVE_END, &in->m[12]);
                 }
+            } else { /* reachedEnd */
+                int hold = railer_a5(pa, dir > 0 ? (int)nr - 1 : 0) & 0xFFFF;
+                if (type == 1) row_rdir[row] = (signed char)-dir; /* reverseRailDirection */
+                row_speed[row] = 0.0f; row_racc[row] = 0.0f; row_rstep[row] = 0;
+                if (cond == 1) row_mp_a[row] |= 16 | (mario_ground == i ? 32 : 0); /* reachedEndPlayerOn */
+                else {
+                    row_mp_a[row] |= 8; /* setStateStopAtEndBeforeRotate, then restartAtEnd */
+                    if (hold > 0) row_rhold[row] = (unsigned short)(2 * hold + 2);
+                }
             }
-            else if (type == 1) row_rdir[row] = -dir;
-            else if (type == 2) n = 0;
-            else { row_kill(row); game_rebind(); return; }
+        } else if (railer_point(pa, nr, n, dir, closed, len) != railer_point(pa, nr, c, dir, closed, len)) { /* isPassed (passPoint, the frame after) */
+            int hold = railer_a5(pa, railer_point(pa, nr, n, dir, closed, len)) & 0xFFFF;
+            row_rstep[row] = 0; /* Move again: its speed and acceleration from this point */
+            if (hold > 0) { /* StopAtPointBeforeRotate, then StopAtPointAfterRotate: mStopTime + 1 frames each */
+                row_rhold[row] = (unsigned short)(2 * hold + 2);
+                row_speed[row] = 0.0f; row_racc[row] = 0.0f;
+            }
         }
         row_coord[row] = n;
         railer_place(in);
