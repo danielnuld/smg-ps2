@@ -11,6 +11,19 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Sound packs: the classes made by plain create functions (fix/sfxcut-create-functions, #698, 2026-11-18):
+  tools/sfxcut.py create_classes took a placement's class from the template argument of its create function; 44 of
+  the 47 placements made by a plain function (KoopaFunction::createKoopaVs1 / 2 / 3, MR::createDinoPackunVs1 / Vs2,
+  createBossKameck1 / 2, createTripodBoss / createTripod2Boss, createExterminationPowerStar / KeySwitch, the
+  SuperSpinDrivers, the coins, TamakoroWithTutorial, the Kameck beams, BigBubbleGenerator...) got no class, so
+  sound.py's scenario_keep dropped every SE only their class names where the placed name starts no file's name:
+  the whole Koopa fight in KoopaBattleVs1 / Vs2 / Vs3Galaxy (31 SE ids answered `se?` in a KP_TEST run of Vs3:
+  SE_BM_KOOPA_*, SE_BV_KOOPA_*, SE_OJ_KOOPA_FIRE_EXPLODE...), DinoPackunVs2's battle files, BossKameck2, Tripod2Boss.
+  code_index now reads each plain function's body (the class of its `return new X`) and create_classes maps the
+  placement to it (selftest: KoopaVs3 -> Koopa, DinoPackunVs2 -> DinoPackun, Tripod2Boss -> TripodBoss, BossKameck2
+  -> BossKameck). tools/sndgaps.py: SE_OJ_TSPIDER_COCOON_BOUND is never played (TombSpiderActionCocoon plays it for
+  a sender that is no ATYPE_SPRING_ATTACKER; SlingShooter's attack sensor, that type, is the only sender);
+  docs/sound-gaps.md regenerated.
 - Koopa Vs3's stair meteors (feat/se-koopa-vs3-meteor, #644, 2026-11-18): KoopaParts::initVs3 makes its
   KoopaFireStairs with mIsKoopaJr (createFireStairs(true)) and the port flew them as Vs1's (a straight line timed to
   the break, SE_OJ_KOOPA_FIRE_SHOT). koopa.inc kp_fire_stairs / kp_fire_stairs_update (kpfst.jr): no velocity, each
