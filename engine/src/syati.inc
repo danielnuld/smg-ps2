@@ -19,8 +19,8 @@
  * Its Head joint turned to Mario on the shore (calcHeadJoint: sy_head_turn); its sensors in the HitSensor list and
  * pushing the walkers' (sendMsgPush); OceanPhantomCave's retry: the stage BGM stopped / MBGM_GALAXY_05.
  * ponytail: no BTK / BRK colours on these models (PrizeRing at Loop's frame 0: slice.py BRK_POSE; the BRK's lengths
- * kept), no flat-model shadow volume (ShadowVolumeOval: no model volume, as Snakehead's), tryPlayerKillTakingActor
- * (the port's damageDropThrowMemoSensor is empty: drop_carried), pushes only to the walkers (their receiveMsgPush) */
+ * kept), no flat-model shadow volume (ShadowVolumeOval: no model volume, as Snakehead's), pushes only to the walkers
+ * (their receiveMsgPush) */
 static int sy_bgm_05(void) /* isPlayingStageBgmName("STM_GALAXY_05") */
 {
     const char *t = bgm_track("STM_GALAXY_05");
@@ -270,6 +270,7 @@ static void sy_exe(Syati *s)
         if (st == 0) {
             s->off = ring ? v3(6.0f, -33.0f, -776.0f) : v3(6.0f, -176.0f, -590.0f); /* sMarioMoveLocalOffsetRing / DeepSea */
             sy_pose_mario(s);
+            drop_damage(); /* tryPlayerKillTakingActor */
             sy_mario_bck("swimwait", s->req_demo);
             s->q = s->q0; /* makeQuatFromRotate */
         }

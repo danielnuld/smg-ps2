@@ -20,6 +20,21 @@ from sound import scene_types  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 PACKS = Path("out/packs")
+# Names Petari's code holds but the game never plays (read from the code: a nerve nothing sets, an unused string), or
+# plays only for the Wii's second player (the co-star pointer): not gaps.
+NOT_PLAYED = {
+    "SE_EM_KURIBOCHIEF_TRAMPLE": "KuriboChief's Trample nerve is never set",
+    "SE_EM_KARIKARI_CRUSH_CRYSTAL_L": "Karikari's Release nerve is never set (so no SpinAttacked / Frozen)",
+    "SE_EM_KARIKARI_CRUSH_CRYSTAL_M": "Karikari's Release nerve is never set (FrozenRecover)",
+    "SE_EM_KARIKARI_FREEZE_CRYSTAL": "Karikari's Release nerve is never set (Frozen)",
+    "SE_EM_LV_KARIKARI_TORNADO": "Karikari's InTornado nerve is never set",
+    "SE_EM_BOMBHEI_HIT": "BombHei's PursueHit nerve is never set",
+    "SE_BV_BOSS_BUG_ANGRY_LAND": "BossStinkBugActionFlyHigh's ToGround nerve is never set",
+    "SE_BV_BOSS_BUG_ANGRY_TAKEOFF": "BossStinkBugActionFlyHigh's ToFly nerve is never set",
+    "SE_BV_POLTA_SHOUT": "an unused string (PoltaActionBase.cpp poltaShoutUnused)",
+    "SE_EM_BOMBTERE_BOUND": "BombTeresa's BallAppear nerve is never set",
+    "SE_EM_FIRE_BUBBLE_REFLECT": "the second player's pointer (FireBubble / FireBall Reflect, KoopaFireShort Erase2P)",
+}
 
 
 def mario_keys_in(src):
@@ -63,6 +78,7 @@ def bgm_calls():
 def main(out_md="docs/sound-gaps.md"):
     cut = C.Cutter()
     have, keys, src = port_names()
+    have |= set(NOT_PLAYED)
     gal = defaultdict(set)  # galaxy -> placed names (every scenario)
     for sb in sorted(PACKS.glob("*/*/scene.bin")):
         gal[sb.parts[-3]] |= scene_types(sb)
@@ -138,6 +154,8 @@ def main(out_md="docs/sound-gaps.md"):
         if miss:
             L.append(f"| {n}{'' if impl else ' *'} | {k} | {len(miss)}/{tot} | {' '.join(miss[:12])}"
                      f"{' ...' if len(miss) > 12 else ''} |")
+    L += ["", "## Names Petari never plays (not counted as gaps)", "", "| name | why |", "|---|---|"]
+    L += [f"| {n} | {w} |" for n, w in sorted(NOT_PLAYED.items())]
     L += ["", "## Global code", "", "| file | missing SE names |", "|---|---|"]
     for f, m in sorted(glob_miss.items(), key=lambda kv: -len(kv[1])):
         L.append(f"| {f} | {' '.join(sorted(m))} |")
