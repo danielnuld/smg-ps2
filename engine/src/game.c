@@ -41758,13 +41758,13 @@ static void update_leakpipes(void)
     {
         static int tf, t0 = -1;
         tf++;
-        int ty = scene_type(sc, "WaterLeakPipe");
+        int ty = game_frame >= 900 ? scene_type(sc, "WaterLeakPipe") : -1; /* (once Mario is free of the start's demo) */
         for (u32 q = 0; ty >= 0 && q < sc->nobjs && t0 < 0; q++)
             if ((int)sc->objs[q].type == ty) { V3 p = row_pos(&sc->objs[q]); mario->pos = vadd(p, vmul(up_at(p, mario->up), 1500.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; break; }
         FOR_KIND(i, leakpipe) {
             Inst *in = &insts[i];
             float tm[16];
-            if (in->leakpipe != 1) continue;
+            if (in->leakpipe != 1 || ty < 0) continue;
             leak_top(in, tm);
             V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), top = v3(tm[12], tm[13], tm[14]);
             if (t0 < 0) { t0 = tf; set_player_mode(PM_ICE, 1); printf("leak test: pipe row %d in at f %d, kcl %p%c", in->row, tf, (const void *)scene_kcl(sc, "IceStepNoSlip"), 10); }
