@@ -11,6 +11,36 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Enemy and boss sounds, first batch (feat/589-enemy-sounds, #589, 2026-11-18), from docs/sound-gaps.md's rows under
+  Enemy / Boss, each read in Petari:
+  - BombHei: SE_EM_LV_BOMB_FUSE with the alarm while its fuse burns (control).
+  - StringSpider: SE_EM_LV_STRSPIDER_SWING2, and both swing sounds' volume from its speed (startSwingLevelSound:
+    2..12 / 5..25 as levelA 0..100, modifySe_Takezawa).
+  - BossStinkBugBomb: the ground sound's volume from the impact (10.5..30 as 0.3..1), SE_BM_BOSS_BUG_BOMB_GROUND_WATER
+    (from level 50) and BANG_WATER when its ground is a water floor (isBindedGroundWater: floor codes 20-23).
+  - BossStinkBug: SE_BM_LV_BOSS_BUG_RUN_ADD_WATER in GroundRun / CoolDown while a leg stands on a water floor
+    (isLegInWater; the port has no leg ground checkers: the floor within 30 of each foot joint, bsb_leg_in_water).
+  - BegomanSpringHead: its nerves kept in the walker (jc: Wait, hopping, HopEnd) from the body's tryHopStart /
+    tryHopJump / tryHopEnd calls (Turn, Shake, Trample, HitReaction, Blow, Hide): SE_EM_BEGOMAN_CLOSE_SPRING at
+    HopEnd's first step; Blow's HopEnd at sBlowFrame less the clip. The head is still drawn in one pose.
+  - TripodBossFixParts: the parts with a Warning BRK (BodyA, Foot, Leg2A and their Bloom models: TBP_WARN) start
+    SE_BM_TRIPOD_MARKER once Mario rides the boss on the ground and stop it when he has just left (tb_marker; the BRK
+    not drawn, the stop without its 60 frame fade).
+  - KoopaJr on his ship: a star piece on his sensor (175 at 175 up) is reflected and starts his reaction from Wait
+    (SE_OJ_STAR_PIECE_HIT_ENM_F, Damage with SE_BV_KOOPAJR_DAMAGE_S and his 20 star pieces once, Recovery).
+  - tools/sndgaps.py NOT_PLAYED: names Petari holds but never plays are no longer counted (KuriboChief's Trample and
+    BombHei's PursueHit nerves are never set, nor Karikari's Release (so no Frozen sounds) / InTornado, BossStinkBug
+    FlyHigh's ToGround / ToFly, BombTeresa's BallAppear; Polta's shout is an unused string; the fire bubble's reflect
+    is the second player's pointer).
+  Tests (XF=-DSE_LOG, the `se+` / `se?` lines): `strspider` KoopaJrShipLv1Galaxy/1 (SWING1 plays, SWING2 asked: `se?`,
+  not in the pack yet), `begoman` with the BEGO_SPRING recipe of #350 (CLOSE_SPRING 180 frames less the clip into each
+  Trample), plain with -DKJ_TEST (the hook shoots Koopa Jr. every 200 frames: `koopajr: reaction`), plain with -DTB_TEST
+  (`tripod boss: warning on`). A sound pack holds the SEs the engine names: the new names are `se?` until their packs
+  are cut again. Not run: BossStinkBug's water sounds (no `bsb` run found a water floor under it). Left:
+  BegomanSpringHide's baby (SE_EM_BEGOMAN_LAUNCH_BABY: slice.py has no BegomanBaby for it), BombHei's
+  carrying (next PR), HomingKiller's Torpedo sounds (the map objects' list). Repack: sound.py --pack BattleShipGalaxy,
+  CannonFleetGalaxy, TamakoroExLv2Galaxy, KoopaJrShipLv1Galaxy, OceanRingGalaxy, PhantomGalaxy, HoneyBeeKingdomGalaxy,
+  OceanFloaterLandGalaxy, TriLegLv1Galaxy, FloaterOtaKingGalaxy.
 - The lava hazards' sounds (feat/593-lava-se, #593, 2026-11-18): update_prom / update_steam / update_geyser had the
   nerves and no sound. LavaProminence: SE_OJ_LV_PROMINENCE_SIGN through Sign (at the rail's start) and
   MoveStartExtra, SE_OJ_PROMINENCE_START at MoveStartExtra's first step, SE_OJ_LV_PROMINENCE_MOVE from there on,

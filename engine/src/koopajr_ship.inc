@@ -14,12 +14,13 @@
  * scale 1) and main shells (9, scale 1.2, 300 steps, FireStrong on Mario, explode on a wall after 60), six HomingKillers
  * (chase 5500 / 6500) from its cannons, two FireBallBeamKamecks (its ChildKameck rows, dead until it calls them).
  * ponytail: the joint transforms (Propeller00 about Y, Screw00 / 01 about Z) put on the posed joints' world matrices,
- * no KoopaJr reaction to star pieces / spins (NPCActor tryStartReaction: Damage / Recovery, 20 star pieces), its turn
+ * Koopa Jr.'s reaction (NPCActor _13C "Damage": isReactionStart, a star piece on his sensor) only to star pieces (the
+ * JetTurtle attack that sets _E5 / _E6 too has no sender here), no AnimScaleController on him, its turn
  * to Mario at 5 degrees a step (NPCActor::turnToPlayer's own speed), the event cameras on the ship's placement (not the
  * moving ship), no shadows, no star pointer freeze of shells / killers, killers not exploding other actors */
 enum { KJ_DEAD, KJ_APPEAR, KJ_MOVE, KJ_FRONT, KJ_SHOOT1, KJ_SHOOT2, KJ_SHOOTMAIN, KJ_STOPEND, KJ_POWERUP, KJ_DAMAGE,
        KJ_BREAKSTART, KJ_BREAK, KJ_BREAKEND, KJ_TURNFRONT, KJ_DONE };
-enum { JR_WAIT, JR_APPEAR, JR_POWERUP, JR_ESCAPE, JR_SHIPDAMAGE, JR_TALKSTART, JR_TALKWAIT };
+enum { JR_WAIT, JR_APPEAR, JR_POWERUP, JR_ESCAPE, JR_SHIPDAMAGE, JR_TALKSTART, JR_TALKWAIT, JR_REACTION, JR_REACTIONEND };
 #define KJ_SHELLS 18
 #define KJ_MAINS 9
 #define KJ_KILLERS 6
@@ -34,6 +35,7 @@ static struct {
     const Model *md, *mbreak, *mpod, *mjr, *mshell, *mmain, *mkiller;
     const unsigned char *kcl;
     int jr_on, jr_nrv, jr_st, jr_hidden, jr_angry, jr_talked, talk, jr_row; /* jr_row: its owner (KoopaJrShip / DemoKoopaJrShip) */
+    int jr_e5, jr_e0, jr_pieces; /* NPCActor _E5 (a star piece hit him this frame) / _E0 (the frame before); his 20 declared star pieces are out */
     int hidden, break_on, pod_on, pod_hidden;
     int smoke1, smoke2, eye, sign;
     float base[16], shipm[16], podm[16], jrm[16];
@@ -274,6 +276,7 @@ static void kj_update_killers(void)
 /* --- KoopaJr (NPCActor "KoopaJr": its talk KoopaJrShipBattleLv1Tmp1Zone_KoopaJr000 on the ship's row) --- */
 static void jr_play(const char *clip, int loop) { char n[40]; snprintf(n, sizeof n, "koopajr/%s", clip); if (kj.jranim && kj.jranim->skin) { if (loop) anim_play(kj.jranim, n, 1.0f, 1, 0); else { kj.jranim->clip_id = -1; anim_start(kj.jranim, n, 0); } } }
 static int jr_done(void) { return !kj.jranim || !kj.jranim->skin || kj.jranim->done; } /* isBckStopped */
+static int jr_clip(const char *clip) { char n[40]; int mode; snprintf(n, sizeof n, "koopajr/%s", clip); return anim_clip_info(n, &mode) >= 0; } /* (in this pack) */
 static void jr_talk_start(void) /* startShipBattleTalk: tryTalkTimeKeepDemo(mMsgCtrl), ShipBattleDemoTalkStart */
 {
     if (kj.jr_talked) return;
@@ -283,12 +286,45 @@ static void jr_talk_start(void) /* startShipBattleTalk: tryTalkTimeKeepDemo(mMsg
     else printf("koopajr: no talk\n");
     jr_set(JR_TALKSTART);
 }
+/* KoopaJr's sensor (NPCActorCaps: 175 at 175 up) takes a star piece (NPCActor::receiveMsgPlayerAttack
+ * isMsgStarPieceReflect: _E5, the piece reflected) */
+int kj_jr_shot(V3 at)
+{
+    if (!kj.jr_on || kj.jr_hidden) return 0;
+    V3 c = vadd(kj_col(kj.jrm, 3), vmul(vnorm(kj_col(kj.jrm, 1)), 175.0f));
+    if (vlen(vsub(at, c)) > 175.0f + 40.0f) return 0;
+    kj.jr_e5 = 1;
+    return 1;
+}
 static void jr_update(void)
 {
     if (!kj.jr_on) return;
     int s = ++kj.jr_st;
+    int react = kj.jr_e5 && !kj.jr_e0; /* NPCActor::updateReaction: _DB (isReactionStart) */
+    kj.jr_e0 = kj.jr_e5; kj.jr_e5 = 0;
     switch (kj.jr_nrv) {
-    case JR_WAIT: jr_play(kj.jr_angry ? "waitangry" : "wait", 1); break; /* mParam.setSingleAction(Wait / WaitAngry) */
+    case JR_WAIT: /* exeWait: tryStartReaction (_13C Damage), else its action (mParam.setSingleAction(Wait / WaitAngry)) */
+        if (react) {
+            jr_play("damage", 0);
+            se_start(SE_OJ_STAR_PIECE_HIT_ENM_F, &kj.jrm[12]); /* (!_E6: not a JetTurtle's) */
+            jr_set(JR_REACTION);
+            printf("koopajr: reaction%c", 10);
+            break;
+        }
+        jr_play(kj.jr_angry ? "waitangry" : "wait", 1);
+        break;
+    case JR_REACTION: /* exeReaction: his declared 20 star pieces once (appearStarPiece) */
+        if (s == 0) {
+            jr_play("damage", 0);
+            se_start(SE_BV_KOOPAJR_DAMAGE_S, &kj.jrm[12]);
+            if (!kj.jr_pieces) {
+                kj.jr_pieces = 1;
+                launch_pieces(kj_col(kj.jrm, 3), vnorm(kj_col(kj.jrm, 1)), 20, 10.0f, 40.0f);
+                se_start(SE_OJ_STAR_PIECE_BURST, &kj.jrm[12]);
+            }
+        } else if (jr_done() || !jr_clip("damage")) jr_set(JR_REACTIONEND);
+        break;
+    case JR_REACTIONEND: if (s == 0) jr_play("recovery", 0); else if (jr_done() || !jr_clip("recovery")) jr_set(JR_WAIT); break;
     case JR_APPEAR: if (s == 0) jr_play(!strncmp(game_stage_name, "TriLegLv1Galaxy/", 16) ? "roboappeardemo" : "appeardemo", 0); /* isEqualStageName */ else if (jr_done()) jr_set(JR_WAIT); break;
     case JR_POWERUP: if (s == 0) jr_play("angrydemo", 0); else if (jr_done()) { kj.jr_angry = 1; jr_set(JR_WAIT); } break;
     case JR_ESCAPE: if (s == 0) jr_play("runawaydemo", 0); else if (jr_done()) jr_set(JR_WAIT); break;
@@ -620,6 +656,8 @@ int game_test_kj(int frame) /* XF=-DKJ_TEST, KoopaJrShipLv1Galaxy/1: Mario put a
             if (insts[i].item == ITEM_STAR && star_wait[insts[i].row] == kj.row + 1) { int st; V3 p = star_pos(&insts[i], &st); if (st) { mario->pos = p; mario->hvel = v3(0, 0, 0); mario->vup = 0; } }
         return 100;
     }
+    if (kj.jr_on && kj.jr_nrv == JR_WAIT && frame % 200 == 100) /* a star piece on Koopa Jr.: his reaction */
+        printf("kj test f %d: a star piece at Koopa Jr.: %d%c", frame, kj_jr_shot(vadd(kj_col(kj.jrm, 3), vmul(vnorm(kj_col(kj.jrm, 1)), 175.0f))), 10);
     if (!dx.on && frame - hit_at > 300 && (kj.nrv == KJ_MOVE || kj.nrv == KJ_FRONT || kj.nrv == KJ_SHOOT1 || kj.nrv == KJ_SHOOT2 || kj.nrv == KJ_STOPEND || kj.nrv == KJ_SHOOTMAIN)) {
         hit_at = frame; /* (a JetTurtle thrown at it from Mario: its hit as the turtle's message, test only) */
         float m[16];
