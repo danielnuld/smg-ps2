@@ -145,6 +145,24 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   piece). Seen in PCSX2: Tico (EggStarGalaxy/1: trampled, spun, pointed, Delight), Rosetta (AstroGalaxy/1); the other
   classes share the code and were not run. EggStarGalaxy 1's sound pack answers `se?` (not in the pack) for
   SE_SV_TICO_TRAMPLED / SE_SV_TICO_POINT although docs/sfx-cut.csv keeps them: the sound packs need cutting again.
+- MarioLauncher, the cannon Mario rides (feat/566-mario-launcher, #566, 2026-11-18): engine/src/mario_launcher.inc
+  (ml_*) after MapObj/MarioLauncher.cpp, its nerves in Petari's order (Wait, Ready, PlayerIn, Prep, Aim, Flight, Kill,
+  Land, Reject) with their frames and sounds; the model's Wait / Active / LookUp were already packed (WAIT_SKINNED):
+  no repack. The aim is CameraDPD (the right stick's pointer turns the view, A = X shoots along the pointer's ray,
+  B = O gets out), the flight CameraObjParallel, both through camera_prog_start every frame. The shell flies straight at
+  40 (no MarioLauncherAttractor is placed anywhere) until its binder (80 at 180 ahead) meets a face that is not the
+  launcher's, water, or 360 frames (the abyss miss). The end of the bind is MarioActor::endRush's: landing type 1
+  (m->land_type 1, his last bound move as the jump): checkHeadPoint's blow (already there for the ScenarioStarter),
+  Mario.cpp:1948's snap to the ground going down head first, doLanding's SuperSpinDriverEnd + 共通着地大 and the hard
+  landing when his head was against the ground (ml_head). An enemy's attack, a push or a black hole in flight ends
+  the bind (doLanding). Test: `build.sh launcher "" KoopaJrShipLv1Galaxy/1` (XF=-DLAUNCHER_N=k the k-th launcher,
+  -DLAUNCHER_B the reject). Seen in PCSX2: KoopaJrShipLv1 1 (row 7: ready, aim after 2.4 s, the shot along the
+  pointer's ray, 360 frames of straight flight into space, the abyss miss) and BattleShip 2 (rows 142 / 143, type Up,
+  both inside a BreakableCage the test does not break: the shell binds on the cage 5 frames out, then the type 1
+  flight's blows inside it). Not seen: a flight that ends on a planet's ground (the head-down hard landing), the
+  flight in a build with the miss events. Left: MarioSukekiyo for that landing on Sand / Ice / Wet (suke_start(m, 0)
+  of #565, not merged yet), and (ponytail in the file) the Sight layout (Sight.arc is not in layout.py's LAYOUTS: the
+  pointer's cursor marks the aim), the guidance layout, the DPD fovy, the push's punch back.
 - #9 (issue #3) EE performance: Good Egg bench, EE time a frame (render_begin's flip / VIF / clear wait now printed
   apart: ~3.4 ms of the old "draw" was that wait): start view 19.9 -> 12.5 ms (logic 6.7 -> 5.1, draw 12.7 -> 7.0),
   path 16.4 -> 11.5, worst 38-42 -> 26. Clip cache sized per clip (inflates 8300-15000 -> 7-22 a bench), skinned

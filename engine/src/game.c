@@ -444,6 +444,10 @@ static int tmk_riding(void), tmk_enemy_attack(int msg, V3 from), tmk_trample_on(
 static float tmk_reach(void);
 static V3 tmk_body(void);
 static int tmk_offence;
+/* mario_launcher.inc: MarioLauncher (the cannon Mario rides) */
+static void ml_init(const Scene *s), ml_update(void), ml_landing(int damage), ml_draw_sight(void);
+static int ml_bind(Player *m), ml_bound(void), ml_flying(void);
+static V3 ml_head(void);
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle);
 static void dome_init(void);
 /* slice.py BRK_ARG: a class whose colour is its BRK stopped at the frame one of its args gives (setBrkFrameAndStop) draws
@@ -2707,6 +2711,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     wz_init(s);
     pol_init(s);
     tmk_init(s);
+    ml_init(s);
     snow_init(s);
     gh_reset(); /* GhostPlayer: init at its first update */
     rm_reset(); /* RaceManager: init at its first update (race.inc) */
@@ -13773,6 +13778,7 @@ static void talk_draw(void)
         meter_number(meter_eaten, 193, -98, 32.0f, 1);
         meter_number(meter_total, 208, -97, 19.2f, 0);
     }
+    ml_draw_sight();
     render_quads(tkq, ntkq);
 }
 
@@ -17295,7 +17301,19 @@ static void m_do_landing(Player *m)
             }
         return;
     }
-    if (m->air_timer > 10) mario_smoke(SMOKE_LAND); /* 共通着地普通 */
+    if (m->land_type == 1) { /* MarioActor::endRush off a MarioLauncher: head down (_1FC against the ground) the hard landing */
+        m->land_type = 0;
+        mario_named_fx("SuperSpinDriverEnd", NULL); mario_smoke(SMOKE_LAND_BIG); /* スーパースピンドライバ終了, 共通着地大 */
+        if (!(m_sz > 0.9f)) keep = 1; /* !isStickFull */
+        hard = 1;
+        if (vdot(ml_head(), m->ground_n) < 0.0f) {
+            m_stop_walk(m);
+            camera_shake(SHAKE_STRONG); /* startCamVib(4) */
+            m_anim("ハード着地"); /* (, 基本) */
+            m->land_timer += 16; /* _3CE; forceSetHeadVecKeepSide(_368): his head is his up */
+            return;
+        }
+    } else if (m->air_timer > 10) mario_smoke(SMOKE_LAND); /* 共通着地普通 */
     switch (m->jump_kind) { /* _430 */
     case 0: case 0xA: case 0xB: case 0xE: m_pad_vib(0); break;
     case 2: case 4: case 6: m_pad_vib(3); break;
@@ -18677,6 +18695,10 @@ static int mario_attack(int msg, V3 from)
     Player *m = mario;
     if (player_mode == PM_TERESA) { if (msg == ATK_HEATBEAM) { set_player_mode(PM_NORMAL, 1); return 1; } return 0; }
     if (tmk_riding()) return tmk_enemy_attack(msg, from); /* _934: sendArbitraryMsg to the rush host (Tamakoro) */
+    if (ml_bound()) { /* MarioLauncher::receiveMsgEnemyAttack on its Shell sensor (valid in flight): doLanding(msg) */
+        if (!ml_flying()) return 0;
+        ml_landing(1);
+    }
     if (player_mode == PM_ICE && msg == ATK_FREEZE) msg = ATK_ENEMY;
     if (msg == ATK_EXTRA_DAMAGE) { if (player_mode == PM_INVINCIBLE) return 0; dm_dec_life(); return 1; }
     switch (msg) {
@@ -22353,6 +22375,7 @@ static void bh_start(Player *m, const Inst *in)
 {
     memset(&bh, 0, sizeof bh);
     drop_damage(); /* MarioActorBlackHole: damageDropThrowMemoSensor */
+    ml_landing(0); /* MarioActor::receiveOtherMsg ACTMES_INHALE_BLACK_HOLE in a MarioLauncher: its ACTMES_RUSH_CANCEL (doLanding) */
     bh.on = 1; bh.scale = 1.0f;
     bh.pos = v3(in->m[12], in->m[13], in->m[14]);
     if (row_camset[in->row] != -1) { /* BlackHole::tryStartDemoCamera: startActorCameraTargetSelf */
@@ -22652,7 +22675,7 @@ static void update_mario_(void)
         }
         return;
     }
-    if (pipe_bind(m) || qcoin_bind(m)) {
+    if (pipe_bind(m) || qcoin_bind(m) || ml_bind(m)) {
         if (mario_anim) anim_update(mario_anim);
         return;
     }
@@ -22906,6 +22929,12 @@ static void update_mario_(void)
     if (pgc) {
         int was = m->grounded;
         m->grounded = m_check_ground(m);
+        /* Mario::updateGroundInfo (Mario.cpp:1948): off a MarioLauncher (_3E 1) going down head first (_1FC along
+         * gravity) within 170 of the ground under him, into it: he is put on it (setTrans(mShadowPos)) */
+        if (!m->grounded && m->land_type == 1 && m->height < 170.0f && vdot(m_jv(m), m->up) < 0.0f && vdot(ml_head(), m->up) < 0.0f) {
+            V3 at, gn;
+            if (map_drop(m->pos, m->up, 0.0f, 170.0f, &at, &gn) && vdot(m_jv(m), gn) < 0.0f) { m->pos = at; m->grounded = m_check_ground(m); }
+        }
         if (m->grounded) m_floor_code(m, tri_attr(&m_gtri), m->ground_n);
         else m->slip_poly = 0;
         if (m->grounded && !was && m->jumping) { /* procJump: on the ground, doLanding (the hip drop's) */
@@ -43719,6 +43748,7 @@ static void foo_hit_wall(Player *m, V3 n);
 static void mario_push_out(V3 c, float r)
 {
     if (tmk_riding()) return; /* receiveMsgPush while bound: to the Tamakoro, which takes none */
+    if (ml_bound()) { if (ml_flying()) ml_landing(0); return; } /* MarioLauncher::receiveMsgPush on its Shell sensor: doLanding(-1) */
     V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), delta = vsub(c, mc), radial = vtangent(delta, mario->up);
     float axial = vdot(delta, mario->up), sp = 100.0f + r - vlen(delta);
     if (sp < 0.0f || axial <= -r) return;
@@ -53758,6 +53788,7 @@ int game_test_bk(int frame)
 #include "water_bazooka.inc" /* WaterBazooka / ElectricBazooka: wz_*, game_test_wz */
 #include "polta.inc" /* Polta (Bouldergeist): pol_*, game_test_pol */
 #include "tamakoro.inc" /* Tamakoro (the star ball), TamakoroTutorial: tk_*, game_test_tk */
+#include "mario_launcher.inc" /* MarioLauncher (the cannon Mario rides): ml_*, game_test_launcher */
 #include "snow_floor.inc" /* SnowFloor, SnowplowSwitch: snow_* */
 #include "clip_area.inc" /* ClipArea*, ClipFieldSwitch, FallOutFieldDraw, SimpleClipPartsObj, ClipAreaDropLaser: ca_* */
 #include "statics.inc" /* placed classes once drawn still (Flag ...): st_* */
@@ -55561,6 +55592,7 @@ void game_update(void)
     LQ(62, update_fire());
     LQ(63, place_waterplants());
     LQ(64, update_pipes());
+    LQ(64, ml_update());
     update_warppods(); /* (WarpPod: its own demo's cast) */
     update_launch_appear();
     LQ(65, update_switches());
