@@ -38518,6 +38518,11 @@ static void update_railers(void)
         }
         row_coord[row] = n;
         railer_place(in);
+#ifdef RAILER_LOG
+        if (game_frame % 20 == 0 || row_rhold[row] || (row_mp_a[row] & (8 | 16)))
+            printf("railer %d %s: f %u coord %d / %d speed %d.%02d dir %d hold %d bits %x%c", row, sc->types + 32 * r->type, game_frame, (int)n, (int)len,
+                   (int)row_speed[row], (int)(row_speed[row] * 100) % 100, row_rdir[row], row_rhold[row], row_mp_a[row], 10);
+#endif
         if (mario_ground == i) carry(old, in);
     }
 }
