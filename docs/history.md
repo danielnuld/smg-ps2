@@ -11,6 +11,13 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- OceanFloaterLandParts (feat/509-ocean-floater, #509, 2026-11-18): OceanFloaterTypeU was a still model. statics.inc
+  st_floater_u after OceanFloaterLandParts.cpp: Wait on its rail, Move from its demo's action (the rail mover runs
+  only then: st_floater_rail in update_railers), SE_OJ_HUGE_FLOATER_MOVE_ST / LV / ED and RiseBubble, Done at the
+  demo's last step with フローター浮上 set (seq_done_setup: after a miss it starts risen, its SW_A on). Test
+  XF=-DFU_TEST, OceanFloaterLandGalaxy/1: the fixation broken, "move", "risen", "done, set", after the miss "already
+  done". Needed #601 (it vanished at its rail's end). Repack: OceanFloaterLandGalaxy's effects (jpa.py NAMED).
+  Left out: LodCtrlPlanet, the rail mover's acceleration (point_arg1) and time speeds (point_arg7).
 - Enemy and boss sounds, first batch (feat/589-enemy-sounds, #589, 2026-11-18), from docs/sound-gaps.md's rows under
   Enemy / Boss, each read in Petari:
   - BombHei: SE_EM_LV_BOMB_FUSE with the alarm while its fuse burns (control).
