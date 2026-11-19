@@ -1105,6 +1105,22 @@ static int nhhps;
 static void seesaw_matrix(Inst *in);
 static u32 seesaw_se(const char *name);
 static int nseesaws;
+/* RainCloud (update_rainclouds): a cloud's state, a table of the scene's from the arena (game_init: row_table) */
+typedef struct {
+    int row, step;
+    signed char nrv;
+    unsigned char on_player; /* mIsOnPlayer */
+    unsigned char wrapped;   /* its rail mover went back to its start (isMapPartsRailMovePassedStartPointRepeat) */
+    unsigned char sens_off, col_off, cyl_dead; /* invalidateHitSensors, invalidateCollisionParts, mCloudCylinder dead */
+    unsigned char proj;      /* isShadowProjected: at / n its place and normal */
+    float coord, len;        /* its rail coord last frame (-1 none yet), mRainLength */
+    V3 at, n;
+    u32 lv;
+} RainCloud;
+#define MAX_RCLOUDS 96
+static RainCloud *rclouds;
+static int nrclouds, rcloud_max;
+static int rc_rail_stop(const Row *r, int row);
 #define MAX_BRIDGES 4
 static int nbridges; /* PhantomShipBridge (update_bridges) */
 static struct { int row, nrv, t; Anim anim; } *bridges; /* (game_init: row_table) */
@@ -2904,6 +2920,9 @@ void game_init(const Scene *s, const unsigned char *blob)
     nseesaws = 0;
     nbridges = 0;
     bridges = row_table("PhantomShipBridge", MAX_BRIDGES, sizeof *bridges);
+    nrclouds = 0; rcloud_max = count_type("RainCloud", 0);
+    if (rcloud_max > MAX_RCLOUDS) rcloud_max = MAX_RCLOUDS;
+    rclouds = row_table("RainCloud", MAX_RCLOUDS, sizeof *rclouds);
     nfollows = 0;
     nflows = 0;
     kari_cling = 0;
@@ -38536,6 +38555,7 @@ static void update_railers(void)
         if (fu >= 0 ? !fu : in->eyebeamer ? !eb_patrol(row) : st_turtle_moving(row) >= 0 ? !st_turtle_moving(row) : !mp_running(r, row)) continue;
         if (in->gap == GAP_ELEVATOR && gap_st(row)->n != EV_MOVE) continue; /* BattleShipElevator::control: not in Wait */
         if (in->gap == GAP_UFOKINOKO && gap_st(row)->n != UK_MOVE) continue; /* UFOKinoko: startRailMover at startMove */
+        if (rclouds && rc_rail_stop(r, row)) continue; /* RainCloud::control: no rail movement in End */
         if (!st_rail_go(in)) continue; /* RailDemoMoveObj: its demo started first (statics.inc) */
         u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
         const unsigned char *pa = e + 24 + 12 * np + 12 * nr; /* nr x {f32 coord, s32 arg0, s32 arg5} */
@@ -38546,6 +38566,14 @@ static void update_railers(void)
         }
         if (row_rdir[row] == 2) continue;
         if (row_rhold[row]) { row_rhold[row]--; continue; }
+        if (row_rdir[row] == 3) { /* MoveStopType 2 after its stop at the end (exeStopAtEnd): restartAtEnd, moveCoordToStartPos */
+            float old[16];
+            memcpy(old, in->m, 64);
+            row_rdir[row] = 1; row_coord[row] = 0;
+            railer_place(in);
+            if (mario_ground == i) carry(old, in);
+            continue;
+        }
         int se = in->stage ? stage_se[in->stage - 1].kind : 0; /* isRailMoverWorking: its SEs by name */
         if (se == 'I') { /* IceVolcanoUpDownPlane::move: a RailMoveObj whose moving SE needs tryCalcNearestPosToPlayer
                           * (Mario not 380 under its plane). ponytail: the sound at its place, not at its point nearest
@@ -38588,12 +38616,204 @@ static void update_railers(void)
                 }
             }
             else if (type == 1) row_rdir[row] = -dir;
-            else if (type == 2) n = 0;
+            else if (type == 2) { if (n > 0 && hold > 0) row_rdir[row] = 3; else n = 0; } /* (it stops at the end first: 3, above) */
             else { row_kill(row); game_rebind(); return; }
         }
         row_coord[row] = n;
         railer_place(in);
         if (mario_ground == i) carry(old, in);
+    }
+}
+
+/* RainCloud.cpp after Petari: a cloud to stand on, on a rail that starts over (MoveStopType 2), raining under it
+ * unless arg3 is set. Wait (the Wait clip); Mario's floor touch in Wait: HardTouch (not a bee: its collision off for
+ * 60 frames, a middle rumble, a normal shake) or SoftTouch (a bee not yet on it: OnBee, again as he leaves). Its rail
+ * mover at its end: Disappear (the clip, sensors and collision off, the rain cylinder dead at the clip's end), End once
+ * the mover is back at its start (and still there), Appear when every cloud of its group is in End or just started
+ * Appear (the clip, the collision back, THUNDER at step 140, the sensors back at its end). The rain: mRainLength the
+ * shadow's projection under it (arg0 its drop length; unset: no shadow, 2000), the Splash effect at the projection,
+ * Line20 over 1500 else Line10, the RainCloudCylinder model on the Shadow joint scaled (width by the Appear /
+ * Disappear clip, 0.1 at least; length / 1000), SE_OJ_LV_FOREST_RAIN while the cylinder lives; the drop_water sensor
+ * (150, on the rain's line nearest to Mario) takes a bee's form away with a strong rumble.
+ * ponytail: no BPK (Rain / Fine / Appear colours: BPK at run time), no LOD model, no shadow volume;
+ * ACTMES_PUDDLE_TOUCH_GROUND is not sent (Mario's _3A8 is not ported); the projection is read every 8th frame and,
+ * as the effects and the rain's sound, only in view (Petari: while not clipped, with its group). */
+enum { RC_WAIT, RC_APPEAR, RC_DISAPPEAR, RC_END, RC_SOFT, RC_HARD };
+static RainCloud *rc_of(int row, int make)
+{
+    for (int k = 0; k < nrclouds; k++) if (rclouds[k].row == row) return &rclouds[k];
+    if (!make || nrclouds >= rcloud_max) return NULL;
+    RainCloud *c = &rclouds[nrclouds++];
+    memset(c, 0, sizeof *c);
+    c->row = row; c->coord = -1.0f; c->len = 2000.0f;
+    return c;
+}
+static int rc_rail_stop(const Row *r, int row)
+{
+    if (strcmp(sc->types + 32 * r->type, "RainCloud")) return 0;
+    const RainCloud *c = rc_of(row, 0);
+    return c && c->nrv == RC_END;
+}
+static void rc_nrv(RainCloud *c, int n)
+{
+#ifdef RAINCLOUD_TEST
+    printf("rain cloud %d: nerve %d -> %d at step %d (frame %d)%c", c->row, c->nrv, n, c->step, game_frame, 10);
+#endif
+    c->nrv = (signed char)n; c->step = 0;
+}
+static int rc_stopped(const Inst *in) { return !in->anim || (in->anim->done && !in->anim->loop); } /* isBckStopped */
+static int rc_next_ok(const RainCloud *c) /* isNextStartOK: the clouds of its group (雲集団) */
+{
+    int g = sc->objs[c->row].group;
+    if (g < 0) return 1;
+    for (int k = 0; k < nrclouds; k++) {
+        const RainCloud *o = &rclouds[k];
+        if (sc->objs[o->row].group != g || sc->objs[o->row].zone != sc->objs[c->row].zone) continue;
+        if (!(o->nrv == RC_END || (o->nrv == RC_APPEAR && o->step == 0))) return 0;
+    }
+    return 1;
+}
+static int rc_view(const RainCloud *c, V3 pos, V3 g) /* in view: its clipping sphere (the model's radius taken as 600) */
+{
+    V3 ce = vadd(pos, vmul(g, 0.5f * c->len));
+    return !render_clip_judge(&ce.x, 600.0f + 0.5f * c->len, 1e9f);
+}
+static void rc_cylinder(const Inst *in, const RainCloud *c, float m[16]) /* updateRainCylinder: mRainCylinderMtx */
+{
+    float w = 1.0f, ls = c->len / 1000.0f; /* sRainCylinderBaseLength */
+    if (in->anim && in->anim->skin && in->anim->skin->njoints > 1) mat_mul(m, in->m, in->anim->world[1]); /* Shadow */
+    else memcpy(m, in->m, 64);
+    if ((c->nrv == RC_APPEAR || c->nrv == RC_DISAPPEAR) && in->anim && c->step > 0) {
+        int len = anim_clip_info(c->nrv == RC_APPEAR ? "raincloud/appear" : "raincloud/disappear", NULL);
+        float t = len > 0 ? in->anim->frame / (float)len : 1.0f;
+        w = c->nrv == RC_APPEAR ? t : 1.0f - t;
+        w = w < 0.1f ? 0.1f : w > 1.0f ? 1.0f : w;
+    }
+    for (int k = 0; k < 3; k++) { m[k] *= w; m[4 + k] *= ls; m[8 + k] *= w; } /* preScaleMtx */
+}
+static void update_rainclouds(void)
+{
+    if (!rclouds) return;
+    int ty = scene_type(sc, "RainCloud");
+#ifdef RAINCLOUD_TEST /* XF=-DRAINCLOUD_TEST=k (plain): from frame 400 Mario held 400 over the k-th RainCloud row (its zone streams
+                       * in), dropped onto it at 700 and every 300 frames after; its state every 60 frames */
+    if (game_frame >= 400) {
+        int nth = 0;
+        for (u32 j = 0; ty >= 0 && j < sc->nobjs; j++) {
+            if ((int)sc->objs[j].type != ty || nth++ != RAINCLOUD_TEST) continue;
+            const Inst *in = row_inst((int)j);
+            const RainCloud *c = rc_of((int)j, 0);
+            V3 p = in ? v3(in->m[12], in->m[13], in->m[14]) : row_pos(&sc->objs[j]);
+            if (game_frame < 700 || game_frame % 300 == 0) {
+                test_nolost = 1;
+                mario->up = up_at(p, mario->up); mario->pos = vadd(p, vmul(mario->up, 400.0f));
+                mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
+            }
+            if (game_frame % 60 == 0)
+                printf("rain cloud test f %d: row %d inst %d nerve %d step %d coord %d len %d proj %d cyl dead %d col off %d, Mario on %d height %d, clouds %d%c",
+                       game_frame, (int)j, in != NULL, c ? c->nrv : -1, c ? c->step : -1, c ? (int)c->coord : -1, c ? (int)c->len : -1, c ? c->proj : -1,
+                       c ? c->cyl_dead : -1, c ? c->col_off : -1, in && mario_ground == (int)(in - insts), (int)vdot(vsub(mario->pos, p), mario->up), nrclouds, 10);
+        }
+    }
+#endif
+    const u8 *kcl = scene_kcl(sc, "RainCloud");
+    for (int i = 0; ty >= 0 && i < ninsts; i++) {
+        Inst *in = &insts[i];
+        const Row *r = &sc->objs[in->row];
+        if ((int)r->type != ty || !in->md || !row_shown(in->row)) continue;
+        RainCloud *c = rc_of(in->row, 1);
+        if (!c) continue;
+        int norain = r->arg[3] != -1, on = mario_ground == i, bee = player_mode == PM_BEE;
+        V3 pos = v3(in->m[12], in->m[13], in->m[14]), g = vmul(up_at(pos, v3(0, 1, 0)), -1.0f);
+        if (c->nrv == RC_WAIT && on) { /* receiveOtherMsg: isMsgFloorTouch */
+            if (!bee) rc_nrv(c, RC_HARD);
+            else if (!c->on_player) rc_nrv(c, RC_SOFT);
+        }
+        int st = c->step++;
+        switch (c->nrv) {
+        case RC_APPEAR:
+            if (st == 0) { obj_play(in, "Appear", 0, 0); c->col_off = 0; c->cyl_dead = 0; se_start(SE_OJ_RAIN_CLOUD_APPEAR, &in->m[12]); }
+            if (st == 140) se_start(SE_OJ_RAIN_CLOUD_THUNDER, &in->m[12]); /* sThunderStep */
+            if (st > 0 && rc_stopped(in)) { c->sens_off = 0; rc_nrv(c, RC_WAIT); }
+            break;
+        case RC_WAIT:
+            if (st == 0) obj_play(in, "Wait", 1, 0);
+            if (!on && c->on_player) { c->on_player = 0; rc_nrv(c, RC_SOFT); }
+            break;
+        case RC_DISAPPEAR:
+            if (st == 0) { obj_play(in, "Disappear", 0, 0); c->sens_off = 1; c->col_off = 1; se_start(SE_OJ_RAIN_CLOUD_DISAPPEAR, &in->m[12]); }
+            if (st > 0 && rc_stopped(in)) { c->cyl_dead = 1; c->on_player = 0; }
+            if (c->wrapped) { c->wrapped = 0; rc_nrv(c, RC_END); }
+            break;
+        case RC_END:
+            if (rc_stopped(in) && rc_next_ok(c)) { c->cyl_dead = 1; rc_nrv(c, RC_APPEAR); }
+            break;
+        case RC_SOFT:
+            if (st == 0) obj_play(in, "OnBee", 0, 0);
+            if (st > 0 && rc_stopped(in)) { c->on_player = (unsigned char)on; rc_nrv(c, RC_WAIT); }
+            break;
+        case RC_HARD:
+            if (st == 0) { c->col_off = 1; pad_rumble(RUMBLE_MIDDLE); camera_shake(SHAKE_NORMAL); }
+            if (st == 60) { c->col_off = 0; rc_nrv(c, RC_WAIT); }
+            break;
+        }
+        in->kcl = c->col_off ? NULL : kcl; /* validateCollisionParts / invalidateCollisionParts */
+        /* control: its rail mover's end (isMapPartsRailMovePassedEndPointRepeat) */
+        if (in->railer && row_coord && c->nrv != RC_END && *(const int *)(in->railer + 16) == 2) {
+            const unsigned char *e = in->railer;
+            u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
+            float len = *(const float *)(e + 24 + 12 * np + 12 * nr + 12 * (nr - 1)), co = row_coord[in->row];
+            if (c->coord >= 0.0f) {
+                if (co < c->coord - 0.5f) { c->wrapped = 1; if (c->nrv != RC_DISAPPEAR) rc_nrv(c, RC_DISAPPEAR); } /* at its start again */
+                else if (co >= len && c->coord < len) rc_nrv(c, RC_DISAPPEAR);
+            }
+            c->coord = co;
+        }
+        if (norain) continue;
+        int view = rc_view(c, pos, g), changing = c->nrv == RC_APPEAR || c->nrv == RC_DISAPPEAR || c->nrv == RC_END;
+        if (r->arg[0] == -1) { c->proj = 0; c->len = 2000.0f; } /* sNoShadowDropLengthMax, the shadow invalid */
+        else if (view && (game_frame + i) % 8 == 0) { /* getShadowProjectionLength (not on its own collision) */
+            float drop = (float)r->arg[0], lo = 0.0f, d = 0.0f;
+            Hit h[1];
+            for (; d <= drop && !(kcl_query(vadd(pos, vmul(g, d)), 20.0f, h, 1) && h[0].inst != i); d += 30.0f) lo = d;
+            c->proj = d <= drop;
+            for (int k = 0; c->proj && k < 4; k++) {
+                float mid = (lo + d) * 0.5f;
+                if (kcl_query(vadd(pos, vmul(g, mid)), 20.0f, h, 1) && h[0].inst != i) d = mid; else lo = mid;
+            }
+            if (c->proj && kcl_query(vadd(pos, vmul(g, d)), 20.0f, h, 1)) { c->n = h[0].n; c->at = vadd(pos, vmul(g, d + 20.0f)); c->len = d + 20.0f; }
+            else { c->proj = 0; c->len = drop; }
+        }
+        if (view && !changing) { /* switchEffect */
+            float m[16];
+            if (c->proj) { basis_matrix(m, c->at, c->n, v3(0, 0, 1), 0); fx_named("RainCloud", "Splash", m, NULL, &c->at); }
+            if (!c->proj || c->len > 1500.0f) fx_named("RainCloud", "Line20", in->m, NULL, c); /* sSwitchEffectBorder */
+            else fx_named("RainCloud", "Line10", in->m, NULL, &c->len);
+        }
+        if (view && !c->cyl_dead) c->lv = se_level(SE_OJ_LV_FOREST_RAIN, &in->m[12], c->lv); /* updateRainCylinder */
+        if (!c->sens_off) { /* drop_water (updateHitSensor: on the rain's line nearest to him), attackSensor */
+            V3 a = vadd(pos, vmul(g, 150.0f)), ab = vmul(g, c->len - 300.0f), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+            float l2 = vdot(ab, ab), t = l2 > 1e-3f ? vdot(vsub(mario->pos, a), ab) / l2 : 0.0f;
+            V3 foot = vadd(a, vmul(ab, t < 0 ? 0 : t > 1 ? 1 : t));
+            if (c->len > 300.0f && bee && vlen(vsub(mc, foot)) < 150.0f + HIT_BODY_R) { mode_touch_water(); pad_rumble(RUMBLE_STRONG); } /* curePlayerElementMode */
+        }
+    }
+}
+static void rc_draw(void) /* the rain cylinders (mCloudCylinder) */
+{
+    if (!rclouds || !nrclouds) return;
+    int ty = scene_type(sc, "RainCloud");
+    const Model *cyl = scene_model(sc, "RainCloudCylinder");
+    for (int i = 0; cyl && ty >= 0 && i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        const Row *r = &sc->objs[in->row];
+        if ((int)r->type != ty || r->arg[3] != -1 || !row_shown(in->row)) continue;
+        const RainCloud *c = rc_of(in->row, 0);
+        V3 pos = v3(in->m[12], in->m[13], in->m[14]);
+        if (!c || c->cyl_dead || !rc_view(c, pos, vmul(up_at(pos, v3(0, 1, 0)), -1.0f))) continue;
+        float m[16];
+        rc_cylinder(in, c, m);
+        render_model(cyl, m, 0x80, 0x80, 0x80);
     }
 }
 
@@ -56725,6 +56945,7 @@ void game_update(void)
     update_airs(); /* registerDemoSimpleCastAll: they move in demos too */
     ca_update();
     LQ(3, update_railers());
+    update_rainclouds(); /* after the rail movers: its mover's end */
     LQ(4, update_talkers());
     fat_rings_talk(); /* TicoGalaxy's TicoStarRing */
     update_bees();
@@ -58652,6 +58873,7 @@ void game_draw(void)
         draw_bigbubbles(ce, right, vcross(back, right));
     }
     st_draw();
+    rc_draw();
     draw_syati_rings();
     RESTQ(6);
     gw_draw();

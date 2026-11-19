@@ -11,6 +11,20 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- RainCloud (feat/692-raincloud, #692, 2026-11-18): 69 placed (OceanRingZone layers C / D, ReverseForestHomeZone),
+  generic rail parts before. update_rainclouds after RainCloud.cpp: Wait / Appear / Disappear / End / SoftTouch /
+  HardTouch (Mario falls through a cloud for 60 frames unless he is a bee; OnBee under a bee; Disappear at its rail's
+  end, End back at the start until its whole group is there, Appear with THUNDER at 140), the rain (its length from
+  the ground under it up to arg0, the Splash and Line10 / Line20 effects, the RainCloudCylinder model on the Shadow
+  joint drawn by rc_draw, SE_OJ_LV_FOREST_RAIN), the drop_water sensor (a bee's form washed away). Its state
+  (RainCloud, 60 B a cloud) comes from the arena at game_init (row_table), no static table and no Inst field.
+  Shared change, as Petari's MapPartsRailMover: a MoveStopType 2 mover with a stop time at its last point now
+  waits there and then starts over (row_rdir 3); before it jumped to its start and waited there. slice.py: RainCloud
+  skinned (its four clips, its AutoEffectList rows), RainCloudCylinder its EXTRA model. Test:
+  `XF=-DRAINCLOUD_TEST=k` on a plain build (Mario dropped on the k-th cloud; nerve changes logged). ponytail: no BPK
+  colours, no LOD model, no shadow volume, ACTMES_PUDDLE_TOUCH_GROUND not sent, the projection read every 8th frame
+  and (with the effects and the rain's sound) only in view. **Release: slice_all.py** OceanRingGalaxy and
+  ReverseKingdomGalaxy **+ sound.py --pack** for them (the four RainCloud SEs are new in game.c).
 - WaterRoad (feat/567-water-road, #567, 2026-11-18): Map/WaterRoad.cpp in `engine/src/water_road.inc` (wrd_*): the
   tube of water of OceanRingGalaxy (one placement; its demo ウォーターロード出現デモ[ブッシュポンプ], sheet
   WaterRoadAppear, starts on SW 1003, the ValveSwitch of scenarios 3 and 6). A demo cast, dead until the sheet's
