@@ -5236,6 +5236,7 @@ static void update_coconuts(void)
                 }
             }
         }
+        if (*ph == 1 && in->cstrong && *t == 2) scene_stop = 4; /* exeMove: _13C at its step 1: stopScene(4) */
         int am = coco_am_of(in, 0);
         if (*ph != 1 || *t == 1) { if (am >= 0) coco_am[am].in = NULL; am = -1; } /* exeMove's first step: _14C false, _150 zero */
         if (*ph == 0) { coco_place(in); continue; }
@@ -15696,6 +15697,7 @@ static void update_jets(void)
             continue;
         }
         if (jet.inst < 0 && vlen(vsub(c, vadd(in->head, vmul(mario->up, 50.0f)))) < 80.0f + HIT_BODY_R) {
+            if (mario->hip == HIP_FALL) { jet_reset(in, 0); continue; } /* receiveMsgPlayerAttack in Wait: a hip drop resets it */
             /* receiveMsgTaken: startJet by its body sensor's type: ATYPE_JET_TURTLE for the red shell (arg0 1:
              * mShellType RED), ATYPE_JET_TURTLE_SLOW (1) for the green one (becomeSlowType) and the golden one */
             int slow = in->jet == 1 ? !(r->arg[0] == 1 && !jet_gold(in)) : in->jet == 2 ? r->arg[0] != 1 : type == 1;
