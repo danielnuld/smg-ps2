@@ -3777,7 +3777,7 @@ static void update_assembly(void)
  * BWait (WaitBack: before it goes forward) or FWait, Sign FSign (SignForward) or BSign */
 static void tsuki_bva(const Inst *in, const char **key, float *frame) /* startBva of its nerve, from the nerve's first step */
 {
-    if (!in->tsuki) return;
+    if (!in->tsuki || !in->md || !in->md->skin || !in->anim) return; /* (a pack without its clips: drawn as it was) */
     int n = row_turn[in->row], fwd = row_rdir[in->row] >= 0;
     *key = n == 2 ? (fwd ? "tsukidashikun/bwait" : "tsukidashikun/fwait") : n == 3 ? (fwd ? "tsukidashikun/fsign" : "tsukidashikun/bsign") :
            n == 4 ? (fwd ? "tsukidashikun/fsign" : "tsukidashikun/bsign") : "tsukidashikun/bsign";
