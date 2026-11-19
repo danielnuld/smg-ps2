@@ -149,9 +149,9 @@ static void mm_body(Kuribo *k, int t) /* emitEffectHeatBody / CoolDownBody / Col
 static void mm_effects(Kuribo *k) /* the kept effects on _98 (up _144 at Sin) / mExtinguishMtx */
 {
     static const char *head[] = {NULL, "Wait", "Chase", "Escape"};
+    if (k->nrv == MM_SINK && mm_ice(k)) mm_fx(k, "Revival", k->pos, vmul(k->grav, -1.0f), &k->lvt[1]); /* deleted at Float (its model is hidden in Sink) */
     if (k->phase) return;
     if (k->lvt[0]) mm_fx(k, head[k->lvt[0]], mm_sin(k), k->mm[MM_FIRE_], &k->lvt[0]);
-    if (k->nrv == MM_SINK && mm_ice(k)) mm_fx(k, "Revival", k->pos, vmul(k->grav, -1.0f), &k->lvt[1]); /* deleted at Float */
 }
 static void mm_reset_appear(Kuribo *k);
 static void mm_kill(Kuribo *k) /* kill */
@@ -504,7 +504,7 @@ static void mm_update(Kuribo *k)
     case MM_IGNITIONFORCE:
         if (st == 0) {
             k->lvt[2] = 1; w_act(k, "FloatIgnition");
-            k->vel = vsub(vtangent(k->vel, vnorm(k->grav)), vmul(k->grav, 15.0f)); /* setVelocityJump */
+            k->vel = vmul(k->grav, -15.0f); /* setVelocityJump: setVelocity(-gravity x 15) */
             mm_head(k, MME_WAIT); mm_body(k, MMB_HEAT);
         }
         mm_keep_height(k, 130.0f, 0.5f, 0.1f, 15.0f);
@@ -592,12 +592,7 @@ static void mm_update(Kuribo *k)
             return;
         }
     }
-    for (int i = 0; i < nkuribo; i++) { /* its body's push on the other Meramera (receiveMsgPush) */
-        Kuribo *e = &kuribo[i];
-        if (e == k || e->kind != WALK_MERAMERA || e->state == KURIBO_DEAD || e->phase || !mm_push_moved(e)) continue;
-        V3 d = vsub(e->pos, body);
-        if (vlen(d) < br + 55.0f * w_scale(e) && vlen(d) > 1e-6f) e->vel = vadd(e->vel, vmul(vnorm(d), 0.5f));
-    }
+    /* (its body's push on the other enemies: walker_push_pass) */
 }
 static void mm_btp(Kuribo *k, const Model *md) /* its body's texture pattern (OnFire / RedToBlack / OffFire) */
 {
