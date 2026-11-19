@@ -1606,6 +1606,7 @@ static int miss_race; /* the next miss is forceKillPlayerByGroundRace's (EventRa
 static void rm_reset(void), update_race(void); /* RaceManager and its racers (race.inc) */
 static void update_syati(void), draw_syati_rings(void); static int sy_took(int row), sy_bva(const Inst *in, const char **key, float *frame), sy_miss_anim(void); /* Syati (syati.inc) */
 static void update_surf(void); static int sr_try(Player *m), sr_hold(Player *m), pcs_talk(int k, Inst *in), pcs_of(int row), pcs_branch(u32 v); static float sr_reach(void); static V3 sr_body(void); /* SurfRay, SurfRayTutorial, the surfing PenguinCoach (surf.inc) */
+static int glr_hold(Player *m); static void glr_update(void), glr_init(void); /* GravityLightRoad (gravity_light_road.inc) */
 static int wrd_hold(Player *m); static void wrd_update(void), draw_water_road(void), wrd_init(void), wrd_cast_hook(int type); /* WaterRoad (water_road.inc) */
 static void or_init(void), or_update(void), draw_oceanrings(void); static int or_in_water(V3 p, V3 up, float *depth), or_row(V3 p); /* OceanRing (ocean_ring.inc) */
 static int rm_ctrl_off(void), pg_jet_hit(V3 p); static void rm_note_star(void); static const char *rm_bck(void); /* offPlayerControl; its startBckPlayer clip on Mario */
@@ -3341,6 +3342,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     os_init();
     or_init();
     wrd_init();
+    glr_init();
     bgb_init();
     { /* GameDataHolder: this galaxy's scenario visited (setAlreadyVisitedStage) */
         char gal[48];
@@ -23742,6 +23744,10 @@ static void update_mario_(void)
         }
     }
     if (ss_hold(m)) { /* in a Sandstorm */
+        if (mario_anim) anim_update(mario_anim);
+        return;
+    }
+    if (glr_hold(m)) { /* drawn by a GravityLightRoad */
         if (mario_anim) anim_update(mario_anim);
         return;
     }
@@ -55808,6 +55814,7 @@ int game_test_bk(int frame)
 #include "race.inc" /* RaceManager, RaceRail (PlayerRacer), TeresaRacer: rm_*, game_test_race */
 #include "ocean_ring.inc" /* OceanRing: or_* */
 #include "water_road.inc" /* WaterRoad: wrd_* */
+#include "gravity_light_road.inc" /* GravityLightRoad: glr_* */
 #include "syati.inc" /* Syati / TalkSyati, PrizeRing: sy_*, prg_* */
 #include "surf.inc" /* SurfRay, SurfRayTutorial, PenguinCoach 2 / 3: sr_*, srt_*, pcs_* */
 /* Test builds: Mario in the boss's SwitchCylinder until it starts, then dropped in a hip drop on its BodyHipDrop part
@@ -57442,6 +57449,7 @@ void game_update(void)
     update_pressures();
     update_trapezes();
     wrd_update();
+    glr_update();
     swr_update();
     update_onimasu();
     update_lavarocks();

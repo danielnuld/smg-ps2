@@ -11,6 +11,15 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- GravityLightRoad (feat/651-gravity-light-road, #651, 2026-11-18): MapObj/GravityLightRoad.cpp in
+  `engine/src/gravity_light_road.inc` (glr_*): KoopaBattleVs3Galaxy's five beams. Its body sensor (250 at the foot of
+  Mario's centre on the beam's line, 2500 x scale y long) binds him inside its cylinder (390 round the axis): Fall,
+  Draw (SE_PM_GRAV_LIGHT_DRAWN_ST, + 2 a frame along its up to 20, 2 a frame towards the axis, his up turned to -up by
+  0.2), until its SW_A (the SwitchCube at its top) or 1800 frames: endBindAndPlayerForceJump(up x 2), Disappear, kill
+  after 59. State in MEM_OBJECTS. Test: plain `XF=-DGLR_TEST`, KoopaBattleVs3Galaxy/1: bound at once, drawn 20 a
+  frame onto the axis, its switch at the top, Disappear, dead (seen in PCSX2; no log line seen for its SE). ponytail:
+  the pack carries no joint box (the BDL's read offline) and one BRK track a model: Wait.brk / Disappear.brk are not
+  played; the matrix blend is of his up vector. Cost: about 2.8 KB of the ELF (nm glr_*), its state in MEM_OBJECTS; memcheck on a plain build of main with this and the five classes after it: no FAIL, region 19200 KB, 102784 B left before it loses 256 KB. No repack.
 - HipDropMoveObj / HipDropDemoMoveObj (feat/621-hipdrop-move, #621, 2026-11-18): LavaObstacleRockShell,
   LavaObstacleRockHomeA and ForestObstacleWoodA (one placed each; still models before) as gap classes (GAP_HIPMOVE /
   GAP_HIPDEMO, update_hipmove): Wait (no clip: Move's first frame held) until Mario's hip drop lands on its collision
