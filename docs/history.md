@@ -11,6 +11,17 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
+  ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
+  placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /
+  `ys` / `ws` (32 KB; `snow_xs` ..., snow_init with a SnowFloor), SeaGullGroup's `ggs` (20 KB; `gg_alloc`), Onimasu /
+  OnimasuPivot's `onis` (16 KB; `oni_alloc`), Mogucchi's `mhills` (15 KB; `mhill_alloc`: the whole table, it is keyed
+  by the walker) and NoteFairy's `notes` (12 KB; notes_spawn). memcheck: 163640 B of bss gone (_end 11815040, 112512 B
+  before the region loses a step, the region 19456 KB; main's code had grown 71 KB meanwhile); route EggStarGalaxy/1
+  (NoteFairy) f 4281. Arena at boot: OceanRingGalaxy/1 3202 KB, SnowCapsuleGalaxy/1 3033 KB, HeavenlyBeachGalaxy/3
+  (gulls, Onimasu) 3156 KB, ReverseKingdomGalaxy/1 (Mogucchi) 2999 KB, PhantomGalaxy/3 (TrampleStar) 4613 KB of
+  5376 KB; each ran 45 s, the objects not driven. Left: plant_pose / stone_pose's shared `Anim a` (24 KB each: plants
+  are in most galaxies, the arena would pay nearly everywhere), `wp_done` (8 KB, its sizeof is read), `rbms`.
 - Per-class tables out of bss, 3 (perf/tables-arena-3, #709, 2026-11-19; the rule: the note of #630 below):
   CoconutTreeLeaf's `lfs` (52 KB; `lf_alloc`, row_table), the FishGroups' `fgs` (29 KB; `fg_alloc`: a group a
   FishGroupA..F row), the WaterPlants' `wplants` (44 KB; game_init: arg0 or 16 plants a row, `wplants_cap`, at most
