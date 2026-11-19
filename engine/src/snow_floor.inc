@@ -245,10 +245,12 @@ static void snow_check_update(typeof(snow.f[0]) *f) /* updateCheckList: the firs
 {
     if (!f->ncheck) return;
     int row = f->check[0], found = 0, k = snow_sw_idx(row);
-    V3 l;
-    if (snow_local(f, row_pos(&sc->objs[row]), &l)) {
+    V3 l, at = row_pos(&sc->objs[row]);
+    int rabbit = snc_snow_found(row, &at) >= 0; /* a TrickRabbitSnow's Body (trick.inc) */
+    if (snow_local(f, at, &l)) {
         float pt[2];
         snow_tex_point(l, pt);
+        if (rabbit && snow_cover(f, pt, 70.0f / SNOW_CELL) < 100.0f * 70.0f) found = snc_snow_found(row, NULL) == 1; /* ACTMES_NOTIFY_DISCOVER_SNOW */
         if (snow_cover(f, pt, 70.0f / SNOW_CELL) < 100.0f * 70.0f && k >= 0 && !snow.found[k]) {
             snow.found[k] = 1; /* SnowplowSwitch::receiveOtherMsg ACTMES_NOTIFY_DISCOVER_SNOW: onSwitchA */
             sw_set(&sc->objs[row], SW_A, 1);
@@ -315,6 +317,16 @@ static void snow_attack(typeof(snow.f[0]) *f)
         int in = 0;
         for (int i = 0; i < f->ncheck; i++) in |= f->check[i] == row;
         if (!in && f->ncheck < SNOW_CHECK) f->check[f->ncheck++] = row;
+    }
+    for (int i = 0;; i++) { /* TrickRabbitSnow (Body 70 at Spine): on the check list while the snow hides it, else the snow dug 20 wide at its feet */
+        V3 body, up;
+        int row, hid = snc_snow_body(i, &body, &up, &row), in = 0;
+        if (hid < 0) break;
+        if (vlen(vsub(body, f->pos)) >= eye + 70.0f) continue;
+        for (int j = 0; j < f->ncheck; j++) in |= f->check[j] == row;
+        if (in) continue;
+        if (hid) { if (f->ncheck < SNOW_CHECK) f->check[f->ncheck++] = row; }
+        else snow_erase(f, vsub(body, vmul(up, 70.0f - 20.0f)), 20.0f, 200.0f);
     }
 }
 static int snow_clipped(const typeof(snow.f[0]) *f) /* setClippingTypeSphere(1.414 x 1024), setClippingFar100m */

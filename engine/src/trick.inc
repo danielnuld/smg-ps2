@@ -27,7 +27,7 @@
 enum { TF_WAITSTART, TF_TRYDEMO, TF_RUNSTART, TF_RUNAWAY, TF_BLOW, TF_CAUGHT, TF_STARDEMO, TF_GIVEUP };
 enum { RWS_WAIT, RWS_SMALLTURN, RWS_HIT, RWS_TRAMPLE, RWS_SPIN, RWS_POINTING, RWS_TALK };
 enum { TC_TRY, TC_CAUGHT, TC_LAND, TC_EVENT };
-static struct {
+typedef struct {
     GwRabbit r;
     int on, kind;                     /* kind 1: TrickRabbit (its rail graph) */
     int ws, wst, kill_at_talk, storm; /* RabbitStateWaitStart: its nerve, step, _1C; Mario's spin storm a step ago */
@@ -36,7 +36,10 @@ static struct {
     int star;                         /* 0, 1 its star asked for, 2 the appear demo seen, 3 over */
     u32 lvp;
     NpcReact re;
-} trk;
+    int nostar, fix;                  /* RabbitStateCaught::unusePowerStarModel; RabbitStateWaitStart's _1D off */
+    int nopiece; V3 fpos, fup, ffront; /* TrickRabbitSnow: !mIsValidAppearStarPiece, mFinishPos, mFinishQuat */
+} Trk;
+static Trk trk;
 
 static V3 trk_spine(void) { return vadd(trk.r.k.pos, vmul(trk.r.k.qy, 50.0f)); }
 static void trk_zero(void) { trk.r.k.vel = v3(0, 0, 0); }
@@ -86,7 +89,8 @@ static int rws_update(void) /* RabbitStateWaitStart: 1 once it is dead */
     switch (trk.ws) {
     case RWS_WAIT:
         if (st == 0) { gw_ract(r, "Wait"); trk_zero(); }
-        if (!k->on_ground) gw_grav_vel(r, 0.1f); /* sGravityAccel */
+        if (trk.fix) ; /* _1D */
+        else if (!k->on_ground) gw_grav_vel(r, 0.1f); /* sGravityAccel */
         else trk_zero();
         if (rws_try_talk()) break;
         if (st > 30) { /* trySmallTurn: sSmallTurnTime, sSmallTurnStartDegree */
@@ -160,26 +164,26 @@ static int tc_update(void) /* RabbitStateCaught: 1 once it is dead */
     }
     case TC_LAND:
         if (st == 0) {
-            tos_appear(k->row, "TrickRabbitLand"); /* mPowerStarModel at mCaughtLandMarioBaseMtx (its own base) */
+            if (!trk.nostar) tos_appear(k->row, "TrickRabbitLand"); /* mPowerStarModel at mCaughtLandMarioBaseMtx (its own base) */
             gw_ract(r, "CaughtLand"); mario_play("catchland", 1.0f, 0);
         }
         r->mpos = k->pos; r->mup = k->qy; r->mfront = k->qz;
         k->lv = se_level(SE_SM_LV_RABBIT_STRUGGLE, &k->pos.x, k->lv);
         if (st > 1 && gw_stopped(k->row)) {
-            if (r->talk < 0) { tos_row = -1; return 1; }
+            if (r->talk < 0) { if (!trk.nostar) tos_row = -1; return 1; }
             trk.cs = TC_EVENT; trk.cst = -1;
         }
         break;
     case TC_EVENT:
         if (st == 0) {
             gw_ract(r, "CaughtWait"); mario_play("catchwait", 1.0f, 1);
-            star_bck(tos_anim(), "PStar", "TrickRabbitWait");
+            if (!trk.nostar) star_bck(tos_anim(), "PStar", "TrickRabbitWait");
             gw_talk_place(r->talk, k->row);
             talk_force(r->talk, 1); /* tryTalkForceWithoutDemoMarioPuppetableAtEnd */
         }
         r->mpos = k->pos; r->mup = k->qy; r->mfront = k->qz;
         k->lv = se_level(SE_SM_LV_RABBIT_STRUGGLE, &k->pos.x, k->lv);
-        if (st > 0 && talk_end(r->talk)) { tos_row = -1; return 1; } /* mPowerStarModel->kill() */
+        if (st > 0 && talk_end(r->talk)) { if (!trk.nostar) tos_row = -1; return 1; } /* mPowerStarModel->kill() */
         break;
     }
     return 0;
@@ -595,8 +599,436 @@ static void trm_update(void)
     }
     if (k->nrv == TRM_CAUGHT && trk.cs != TC_TRY) { mario->pos = r->mpos; mario->up = r->mup; mario->face = vnorm(vtangent(r->mfront, r->mup)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
 }
+/* TrickRabbitFreeRunCollect (Petari NPC/TrickRabbitSnowCollect.cpp; SnowCapsuleGalaxy 1) and its child rabbits, the
+ * TrickRabbitFreeRunChild rows of its zone (NPC/TrickRabbitSnow.cpp: initChildObj). Each rabbit a Trk of its own
+ * (snc.r, from the arena), loaded into trk for its step (RabbitStateWaitStart / RabbitStateCaught run on trk).
+ * TrickRabbitSnow: Body 70 and Catch 30 at Spine, binder 60 / 60, its talk (SnowRabbit) 120 up; WaitSnow (StartEvent,
+ * turned to Mario 15 degrees a step) -> StartHideSnow (requestStartHideSnow: Run, escapeFromPlayer 1.4 / 1 / 0.9 / 4,
+ * 120 steps) -> Vanish (Change, SE_SM_RABBIT_HIDE; at its end SE_SM_METAMORPHOSE_SMOKE, moved to its 隠れ位置, hidden)
+ * -> HideSnow (turned from Mario 15; its SW_A on, or without one the SnowFloor uncovering it: ACTMES_ASK_HIDDEN_BY_SNOW
+ * / ACTMES_NOTIFY_DISCOVER_SNOW) -> AppearFromSnow (Jump, up 25 and 20 ahead, gravity 1, 0.99, until the ground past
+ * step 5) -> Runaway (WalkerStateRunaway at sNormalAccel 0.7, sPressureAccel 1.2 with Mario within 600 across) ->
+ * BlowDamage (a star piece: 20 / 20) -> Runaway; Catch on Mario or his spin: Caught (RabbitStateCaught without the
+ * star model), at its end the 捕まり demo over, forwardNode, SE_OJ_STAR_PIECE_BURST, GiveUp (RabbitStateWaitStart,
+ * GiveUpTalk, _1D on), 6 star pieces (10 / 40) but for the last one. While one is being caught the others can not be
+ * for 5 steps (noticeCaught: setNotCaughtable).
+ * The collector: Wait (Mario within sInStartEventRange 700 on the ground) -> StartWipeOut (closeWipeFade, then the
+ * 雪ウサギ開始 demo) -> StartWipeIn (BattleWait, the ウサギと会話 camera, Mario at マリオ位置, openWipeFade) -> StartTalk
+ * (its talk, SnowRabbitCollect) -> WaitHideSnow (every rabbit hidden: the camera and the demo end) -> Start
+ * (MBGM_GALAXY_02_CHASE, the timer arg0 seconds (180), its danger 20 s; SE_SY_E3_TIMER_COUNT_1 each second under 20 s,
+ * _2 under 6 s, _4 under 2 s, _TIME_UP at 0; time up: the 雪ウサギ集め失敗 demo) -> FailedWipeOut (stopStageBGM 60) ->
+ * FailedWipeIn (setFinishPosition, startLastStageBGM; the branch right) -> FailedTalk (at its end SE_PM_LAST_DAMAGE,
+ * forceKillPlayerByGroundRace) -> End. Every rabbit in GiveUp (noticeGiveUp): SE_SY_TOTAL_COMPLETE, the 雪ウサギ集め成功
+ * demo -> SuccessWipeOut (stopStageBGM 120) -> SuccessWipeIn (the branch left) -> SuccessTalk -> TakeOutStar (the
+ * third rabbit's and the star model's TakeOutStarTrickRabbit) -> AppearPowerStar (the star out of the model,
+ * startAfterBossBGM; at the appear demo's end the camera and the demo end) -> End.
+ * ponytail: the i-th rabbit's 隠れ位置 is the i-th one of the GPOS chunk (the placement lists them by ChildObjId 0 .. 2
+ * = the children's l_id: the chunk keeps no link); BombTimerLayout is not on main yet (PR #733): the count runs here
+ * and nothing is drawn; no AppearSmoke effect, SpotMarkLight, foot prints (SW_B: clearFootPrint), Light effect; a
+ * star piece on a rabbit that is not running away makes no hit sound; the star's demo is the port's own after the
+ * success demo (appearPowerStarContinueCurrentDemo) */
+#define SNC_MAX 4
+enum { SNR_WAITSNOW, SNR_STARTHIDE, SNR_VANISH, SNR_HIDESNOW, SNR_APPEAR, SNR_RUNAWAY, SNR_BLOW, SNR_CAUGHT, SNR_GIVEUP };
+enum { SNC_TRYDEMO, SNC_WAIT, SNC_STARTWIPEOUT, SNC_STARTWIPEIN, SNC_STARTTALK, SNC_WAITHIDE, SNC_START, SNC_FAILEDWIPEOUT, SNC_FAILEDWIPEIN,
+       SNC_FAILEDTALK, SNC_SUCCESSWIPEOUT, SNC_SUCCESSWIPEIN, SNC_SUCCESSTALK, SNC_TAKEOUTSTAR, SNC_APPEARSTAR, SNC_END };
+static struct {
+    int on, row, n, talk;
+    int nrv, step;
+    int limit, rest, timing;      /* mTimeLimit (seconds); BombTimerLayout: its rest time, alive */
+    int demo, star;               /* mIsDemo; 0, 1 its star asked for, 2 the appear demo seen, 3 over */
+    const char *want; int next;   /* requestStartDemoMarioPuppetableWithoutCinemaFrame: the demo asked, its nerve */
+    Trk *r;                       /* mRabbit (game_init: row_table) */
+} snc;
+static void snr_set(int n) { w_nrv(&trk.r.k, n); printf("snow rabbit row %d: nerve %d\n", trk.r.k.row, n); }
+static void snc_set(int n) { snc.nrv = n; snc.step = -1; printf("snow rabbit collect: nerve %d\n", n); }
+static void snc_request(const char *name, int next) { snc.want = name; snc.next = next; snc_set(SNC_TRYDEMO); }
+static void snr_show(int on) { row_demo_hide[trk.r.k.row] = on ? 0 : 255; sw_changed = 1; } /* showModel / hideModel (the rebind) */
+static const float *snr_hide_pos(int i) /* tryFindLinkNamePos(隠れ位置) */
+{
+    const u8 *q = sc->gpos;
+    for (u32 j = 0; j < sc->ngpos; j++, q += 48 + 24)
+        if (!strcmp((const char *)q, "隠れ位置") && i-- == 0) return (const float *)(q + 48);
+    return NULL;
+}
+static void snr_base(V3 pos, V3 up, V3 front) /* resetPosition with its quat and front */
+{
+    Kuribo *k = &trk.r.k;
+    k->pos = pos; k->qy = up; k->qz = front; k->front = front;
+    k->grav = vmul(up, -1.0f);
+    trk_zero();
+}
+static int snr_catchable(const Trk *t) { return t->r.notc == 0 && (t->r.k.nrv == SNR_RUNAWAY || t->r.k.nrv == SNR_BLOW); } /* isEnableCaught */
+static void snr_finish(void) /* setFinishPosition */
+{
+    snr_base(trk.fpos, trk.fup, trk.ffront);
+    snr_show(1);
+    if (trk.r.talk >= 0) talk_forward_node(trk.r.talk);
+    trk.fix = 1;
+    snr_set(SNR_GIVEUP);
+}
+static void snr_update(int i)
+{
+    GwRabbit *r = &trk.r;
+    Kuribo *k = &r->k;
+    const Row *row = &sc->objs[k->row];
+    if (r->notc > 0) r->notc--; /* control */
+    int st = ++k->step;
+    switch (k->nrv) {
+    case SNR_WAITSNOW:
+        if (st == 0) gw_ract(r, "StartEvent");
+        gw_turn_to_player(r, 15.0f); trk_zero();
+        break;
+    case SNR_STARTHIDE:
+        if (st == 0) gw_ract(r, "Run");
+        w_move_turn(k, vsub(k->pos, mario->pos), 1.4f, 1.0f, 0.9f, 4.0f); /* escapeFromPlayer(sStartAwayParam) */
+        if (trk_bck_pass(3.0f)) trk_jump_sound();
+        if (st > 120) snr_set(SNR_VANISH);
+        break;
+    case SNR_VANISH: {
+        if (st == 0) { gw_ract(r, "Change"); w_se(k, SE_SM_RABBIT_HIDE); trk_zero(); }
+        if (st < 2 || !gw_stopped(k->row)) break; /* isBckStopped */
+        w_se(k, SE_SM_METAMORPHOSE_SMOKE);
+        const float *g = snr_hide_pos(i);
+        if (g) {
+            float m[16], one[3] = {1, 1, 1};
+            mat_translate_rot_scale(m, g, g + 3, one);
+            snr_base(v3(m[12], m[13], m[14]), vnorm(v3(m[4], m[5], m[6])), vnorm(v3(m[8], m[9], m[10]))); /* makeQuatAndFrontFromRotate, resetPosition */
+        }
+        trk_zero();
+        snr_show(0); /* hideModelAndOnCalcAnim */
+        snr_set(SNR_HIDESNOW);
+        break;
+    }
+    case SNR_HIDESNOW:
+        trk_zero();
+        w_turn_to(k, vadd(k->pos, vsub(k->pos, mario->pos)), 15.0f); /* turnDirectionFromPlayerDegree */
+        if (row->sw[SW_A] >= 0 && sw_on(row, SW_A)) { snr_show(1); snr_set(SNR_APPEAR); }
+        break;
+    case SNR_APPEAR:
+        if (st == 0) {
+            gw_ract(r, "Jump");
+            k->vel = vadd(vmul(k->grav, -25.0f), vmul(k->front, 20.0f)); /* setVelocityJump(25), addVelocityMoveToDirection(mFrontVec, 20) */
+            w_se(k, SE_SM_RABBIT_APPEAR); se_start(SE_SM_RUNAWAY_RABBIT_APP_ME, NULL);
+        }
+        gw_grav_vel(r, 1.0f);
+        k->vel = vmul(k->vel, 0.99f); /* sBrakeAccelRate */
+        if (st > 5 && k->on_ground) snr_set(SNR_RUNAWAY);
+        break;
+    case SNR_RUNAWAY: {
+        if (st == 0) w_snrv(k, RS_WAIT); /* appear */
+        rr_state(r);
+        int pass = trk_bck_pass(3.0f);
+        if (k->snrv == RS_RUNAWAY && pass) trk_jump_sound();
+        r->speed = vlen(vtangent(vsub(mario->pos, k->pos), k->grav)) < 600.0f ? 1.2f : 0.7f; /* sPressureRange: sPressureAccel, sNormalAccel */
+        break;
+    }
+    case SNR_BLOW: /* WalkerStateBlowDamage, as TrickRabbitFreeRun's */
+        if (k->snrv == 0) {
+            if (st == 0) gw_ract(r, "Damage");
+            k->vel = vmul(k->vel, 0.99f);
+            gw_grav_vel(r, 1.0f);
+            turn_on_plane(&k->front, vmul(k->vel, -1.0f), k->grav, cosf(15.0f * 0.0174533f));
+            if (st > 5 && k->on_ground) { gw_ract(r, "DamageLand"); trk_zero(); w_snrv(k, 1); }
+        } else if (++k->sstep > 30) w_nrv(k, SNR_RUNAWAY);
+        break;
+    case SNR_CAUGHT:
+        if (st == 0) trk.cs = TC_TRY;
+        if (tc_update()) {
+            pd_end("捕まり");
+            if (r->talk >= 0) talk_forward_node(r->talk);
+            w_se(k, SE_OJ_STAR_PIECE_BURST);
+            trk.fix = 0; /* _1D */
+            snr_set(SNR_GIVEUP);
+            int all = 1; /* noticeGiveUp: every rabbit in GiveUp (this one's state is still in trk) */
+            for (int j = 0; j < snc.n; j++) all &= j == i || snc.r[j].r.k.nrv == SNR_GIVEUP;
+            if (all) {
+                trk.nopiece = 1;
+                if (!snc.demo) { /* startSuccessDemo */
+                    snc.demo = 1;
+                    se_start(SE_SY_TOTAL_COMPLETE, NULL);
+                    snc_request("雪ウサギ集め成功", SNC_SUCCESSWIPEOUT);
+                }
+            }
+            if (!trk.nopiece) launch_pieces(k->pos, vmul(k->grav, -1.0f), 6, 10.0f, 40.0f); /* appearStarPiece(6, sStarPieceHitAccelH, sStarPieceHitAccelV) */
+        }
+        break;
+    case SNR_GIVEUP:
+        if (st == 0) { trk.talk_act = "GiveUpTalk"; trk.kill_at_talk = 0; rws_set(RWS_WAIT); }
+        rws_update();
+        break;
+    }
+    /* attackSensor (none in HideSnow): its Catch (30 at Spine) on Mario or his spin on its Body catch it; else, while
+     * it can not be caught, its body pushes him */
+    if (k->nrv != SNR_HIDESNOW) {
+        V3 spine = trk_spine();
+        if (snr_catchable(&trk)) {
+            if (!dx_busy() && !pd.name && (mario_touch(spine, 30.0f) || mario_offence(NULL, spine, 70.0f, k->grav) == MSG_HITALL)) { /* requestCaught */
+                for (int j = 0; j < snc.n; j++) if (j != i) snc.r[j].r.notc = 5; /* noticeCaught: setNotCaughtable */
+                drop_damage(); /* tryPlayerDropTakingActor */
+                snr_set(SNR_CAUGHT);
+            }
+        } else if (k->nrv != SNR_CAUGHT) mario_push_out(spine, 70.0f);
+    }
+    gw_move(r);
+    if (k->nrv == SNR_CAUGHT && trk.cs != TC_TRY) { mario->pos = r->mpos; mario->up = r->mup; mario->face = vnorm(vtangent(r->mfront, r->mup)); mario->hvel = v3(0, 0, 0); mario->vup = 0; } /* setPlayerBaseMtx */
+}
+static void snc_player_at(void) /* setPlayerLinkPosAndWait(マリオ位置) */
+{
+    const float *g = scene_gpos("マリオ位置");
+    float m[16], one[3] = {1, 1, 1};
+    if (!g) return;
+    mat_translate_rot_scale(m, g, g + 3, one);
+    m_set_trans(v3(m[12], m[13], m[14])); mario->up = vnorm(v3(m[4], m[5], m[6])); mario->face = vnorm(v3(m[8], m[9], m[10]));
+    mario->hvel = v3(0, 0, 0); mario->vup = 0;
+}
+static void snc_camera(void) /* startMultiActorCameraTargetPlayer(ウサギと会話) */
+{
+    if (row_camset[snc.row] != -1) camera_actor_start("TrickRabbitFreeRunCollect", "ウサギと会話", (unsigned short)row_camset[snc.row], mario->up, mario->face, mario->pos);
+}
+static void snc_camera_end(void) { if (row_camset[snc.row] != -1) camera_event_stop(); } /* endMultiActorCamera */
+static void snc_finish(void) /* setFinishPosition */
+{
+    for (int i = 0; i < snc.n; i++) { trk = snc.r[i]; snr_finish(); snc.r[i] = trk; }
+    snc_player_at();
+}
+static void snc_talk_place(void) /* its talk at mBaseMtx */
+{
+    const Row *row = &sc->objs[snc.row];
+    float m[16], one[3] = {1, 1, 1};
+    mat_translate_rot_scale(m, row->pos, row->rot, one);
+    talk_place(snc.talk, m);
+}
+static void snc_nerve(void)
+{
+    int st = ++snc.step;
+    switch (snc.nrv) {
+    case SNC_TRYDEMO:
+        if (pd_try_start(snc.want, snc.row)) snc_set(snc.next);
+        break;
+    case SNC_WAIT:
+        if (gw_near_player(row_pos(&sc->objs[snc.row]), 700.0f) && mario->grounded) snc_set(SNC_STARTWIPEOUT); /* sInStartEventRange, isOnGroundPlayer */
+        break;
+    case SNC_STARTWIPEOUT:
+        if (st == 0) menu_wipe(1, -1, 0); /* closeWipeFade */
+        if (menu_wipe_active()) break;
+        snc_request("雪ウサギ開始", SNC_STARTWIPEIN);
+        break;
+    case SNC_STARTWIPEIN:
+        if (st == 0) {
+            drop_damage(); /* tryPlayerKillTakingActor */
+            mario_play("battlewait", 1.0f, 1);
+            snc_camera();
+            snc_player_at(); /* setStartPosition */
+            menu_wipe(0, -1, 0); /* openWipeFade */
+        }
+        if (!menu_wipe_active()) snc_set(SNC_STARTTALK);
+        break;
+    case SNC_STARTTALK:
+        if (st == 0) snc_player_at();
+        snc_talk_place();
+        if (snc.talk < 0 || talk_force_at_end(snc.talk, 1)) snc_set(SNC_WAITHIDE); /* tryTalkForceWithoutDemoMarioPuppetableAtEnd */
+        break;
+    case SNC_WAITHIDE: {
+        int all = 1;
+        for (int i = 0; i < snc.n; i++) {
+            Kuribo *k = &snc.r[i].r.k;
+            if (st == 0 && k->nrv == SNR_WAITSNOW) { w_nrv(k, SNR_STARTHIDE); printf("snow rabbit row %d: nerve %d\n", k->row, SNR_STARTHIDE); } /* requestStartHideSnow */
+            all &= k->nrv == SNR_HIDESNOW;
+        }
+        if (all) {
+            snc_camera_end();
+            pd_end("雪ウサギ開始");
+            snc_set(SNC_START);
+        }
+        break;
+    }
+    case SNC_START:
+        if (st == 0) {
+            bgm_start("MBGM_GALAXY_02_CHASE"); /* startEventBGM(1): EventBgmID_Chase */
+            snc.rest = snc.limit * 60; snc.timing = 1; /* setTimeLimit, mDangerTransFrame 20 * 60, appear */
+        }
+        if (snc.rest > 0 && !pd.name && !dx_busy()) snc.rest--; /* BombTimerLayout::update */
+        if (life > 0 && !pd.name) { /* !isPlayerDead && !isPlayerConfrontDeath */
+            int rest = snc.rest;
+            if (rest == 0) se_start(SE_SY_E3_TIMER_TIME_UP, NULL);
+            else if (rest % 60) ;
+            else if (rest <= 120) se_start(SE_SY_E3_TIMER_COUNT_4, NULL);
+            else if (rest <= 360) se_start(SE_SY_E3_TIMER_COUNT_2, NULL);
+            else if (rest <= 1200) se_start(SE_SY_E3_TIMER_COUNT_1, NULL);
+        }
+        if (snc.rest == 0 && !snc.demo) { /* isReadyToTimeUp: startFailedDemo */
+            snc.demo = 1;
+            snc_request("雪ウサギ集め失敗", SNC_FAILEDWIPEOUT);
+        }
+        break;
+    case SNC_FAILEDWIPEOUT:
+        if (st == 0) { bgm_stop(60); menu_wipe(1, -1, 0); }
+        if (menu_wipe_active()) break;
+        change_item_status(8); /* curePlayerElementMode */
+        drop_damage();
+        snc.timing = 0; /* mTimerLayout->kill() */
+        snc_set(SNC_FAILEDWIPEIN);
+        break;
+    case SNC_FAILEDWIPEIN:
+        if (st == 0) {
+            snc_finish();
+            mario_play("battlewait", 1.0f, 1);
+            snc_camera();
+            bgm_return(); /* startLastStageBGM */
+            menu_wipe(0, -1, 0);
+        }
+        if (menu_wipe_active()) break;
+        gw_branch(snc.talk, 1, 0); /* forwardNodeNextBranchRight */
+        snc_set(SNC_FAILEDTALK);
+        break;
+    case SNC_FAILEDTALK:
+        snc_talk_place();
+        if (snc.talk < 0 || talk_force_at_end(snc.talk, 1)) {
+            snc_camera_end();
+            pd_end("雪ウサギ集め失敗");
+            se_start(SE_PM_LAST_DAMAGE, &mario->pos.x);
+            miss_race = 1; miss(); /* forceKillPlayerByGroundRace */
+            snc_set(SNC_END);
+        }
+        break;
+    case SNC_SUCCESSWIPEOUT:
+        if (st == 0) { bgm_stop(120); menu_wipe(1, -1, 0); }
+        if (menu_wipe_active()) break;
+        change_item_status(8);
+        drop_damage();
+        snc_finish();
+        snc_set(SNC_SUCCESSWIPEIN);
+        break;
+    case SNC_SUCCESSWIPEIN:
+        if (st == 0) {
+            snc.timing = 0;
+            mario_play("battlewait", 1.0f, 1);
+            snc_camera();
+            bgm_return();
+            menu_wipe(0, -1, 0);
+        }
+        if (menu_wipe_active()) break;
+        gw_branch(snc.talk, 1, 1); /* forwardNodeNextBranchLeft */
+        snc_set(SNC_SUCCESSTALK);
+        break;
+    case SNC_SUCCESSTALK:
+        snc_talk_place();
+        if (snc.talk < 0 || talk_force_at_end(snc.talk, 1)) snc_set(SNC_TAKEOUTSTAR);
+        break;
+    case SNC_TAKEOUTSTAR: {
+        GwRabbit *r = &snc.r[snc.n > 2 ? 2 : snc.n - 1].r; /* mRabbit[2] */
+        if (st == 0) { tos_appear(r->k.row, "TakeOutStarTrickRabbit"); gw_ract(r, "TakeOutStarTrickRabbit"); }
+        if (st > 1 && gw_stopped(r->k.row)) { gw_ract(r, "Wait"); snc_set(SNC_APPEARSTAR); } /* isActionEnd */
+        break;
+    }
+    case SNC_APPEARSTAR:
+        if (st == 0) {
+            tos_kill(); /* the star out of the model's joint */
+            note_star_row = snc.row; /* (its declarer: the collector) */
+            pd_end("雪ウサギ集め成功"); /* (the star's own demo: appearPowerStarContinueCurrentDemo) */
+            snc.star = 1; sw_changed = 1;
+            bgm_after_boss();
+        }
+        if (snc.star == 1 && pd.name && !strcmp(pd.name, "パワースター出現")) snc.star = 2;
+        if (snc.star == 2 && !pd.name) { /* isEndPowerStarAppearDemo */
+            snc.star = 3;
+            snc_camera_end();
+            snc_set(SNC_END);
+        }
+        break;
+    case SNC_END: break;
+    }
+}
+/* SnowFloor::attackSensor on a rabbit's Body (70 at Spine): 1 hidden by the snow (ACTMES_ASK_HIDDEN_BY_SNOW: in
+ * HideSnow without a SW_A), 0 not (the floor digs at its feet), -1 no such rabbit */
+static int snc_snow_body(int i, V3 *body, V3 *up, int *row)
+{
+    if (!snc.on || i >= snc.n) return -1;
+    const Kuribo *k = &snc.r[i].r.k;
+    *body = vadd(k->pos, vmul(k->qy, 50.0f)); *up = k->qy; *row = k->row;
+    return sc->objs[k->row].sw[SW_A] < 0 && k->nrv == SNR_HIDESNOW;
+}
+/* ACTMES_NOTIFY_DISCOVER_SNOW to the rabbit of that row: 1 it comes out; with body only its sensor's place (0);
+ * -1 not a rabbit's row */
+static int snc_snow_found(int row, V3 *body)
+{
+    for (int i = 0; snc.on && i < snc.n; i++) {
+        Kuribo *k = &snc.r[i].r.k;
+        if (k->row != row) continue;
+        if (body) { *body = vadd(k->pos, vmul(k->qy, 50.0f)); return 0; }
+        if (sc->objs[row].sw[SW_A] >= 0 || k->nrv != SNR_HIDESNOW) return 0;
+        row_demo_hide[row] = 0; sw_changed = 1; /* showModel */
+        w_nrv(k, SNR_APPEAR);
+        printf("snow rabbit row %d: found under the snow\n", row);
+        return 1;
+    }
+    return -1;
+}
+static int snc_moves(int row) /* setStartPosition / setFinishPosition: requestMovementOn(mRabbit[i]) in its own demos */
+{
+    if (!snc.on || !pd.name || (strncmp(pd.name, "雪ウサギ", strlen("雪ウサギ")) && !(snc.star && snc.star < 3))) return 0;
+    for (int i = 0; i < snc.n; i++) if (snc.r[i].r.k.row == row) return 1;
+    return 0;
+}
+static int snc_shot(V3 p) /* a star piece on a rabbit's Body: receiveMsgBlowDamage in Runaway (sAppearSnowJumpH / V 20) */
+{
+    for (int i = 0; i < snc.n; i++) {
+        Kuribo *k = &snc.r[i].r.k;
+        V3 spine = vadd(k->pos, vmul(k->qy, 50.0f));
+        if (k->nrv != SNR_RUNAWAY || vlen(vsub(p, spine)) > 70.0f + 30.0f) continue;
+        w_se(k, SE_SM_RABBIT_STAR_PIECE_HIT); w_se(k, SE_SV_RABBIT_STAR_PIECE_HIT);
+        V3 side = vtangent(vsub(spine, p), k->grav);
+        k->vel = vadd(vmul(vlen(side) > 1e-6f ? vnorm(side) : v3(0, 0, 0), 20.0f), vmul(k->grav, -20.0f)); /* setVelocitySeparateHV */
+        w_nrv(k, SNR_BLOW); w_snrv(k, 0);
+        printf("snow rabbit row %d: star piece, BlowDamage\n", k->row);
+        return 1;
+    }
+    return 0;
+}
+#ifdef TRICK_TEST
+static void snc_test(void);
+#endif
+static void snc_update(void)
+{
+#ifdef TRICK_TEST
+    snc_test();
+#endif
+    for (int i = 0; i < snc.n; i++) {
+        if (!w_zone_ground(&snc.r[i].r.k)) return; /* (its zone's collision not loaded yet) */
+        trk = snc.r[i];
+        snr_update(i);
+        snc.r[i] = trk;
+    }
+    snc_nerve();
+}
+static void snc_init(void)
+{
+    memset(&snc, 0, sizeof snc);
+    int t = scene_type(sc, "TrickRabbitFreeRunCollect"), c = scene_type(sc, "TrickRabbitFreeRunChild");
+    snc.r = t < 0 ? NULL : row_table("TrickRabbitFreeRunChild", SNC_MAX, sizeof(Trk));
+    if (!snc.r) return;
+    for (u32 i = 0; i < sc->nobjs; i++) if ((int)sc->objs[i].type == t) { snc.row = (int)i; break; }
+    for (u32 i = 0; i < sc->nobjs && snc.n < SNC_MAX; i++) { /* initRabbits: its children */
+        if ((int)sc->objs[i].type != c) continue;
+        Trk *q = &snc.r[snc.n++];
+        memset(q, 0, sizeof *q);
+        gw_body_init(&q->r, (int)i);
+        q->r.talk = gw_talker((int)i, 120.0f);
+        q->re.c158 = 1024;
+        q->nostar = q->fix = 1; /* unusePowerStarModel; _1C, _1D false */
+        q->fpos = q->r.k.pos; q->fup = q->r.k.qy; q->ffront = q->r.k.qz;
+        w_nrv(&q->r.k, SNR_WAITSNOW);
+        printf("snow rabbit row %u: talker %d, SW_A %d\n", i, q->r.talk, sc->objs[i].sw[SW_A]);
+    }
+    snc.talk = gw_talker(snc.row, 120.0f);
+    snc.limit = sc->objs[snc.row].arg[0] != -1 ? sc->objs[snc.row].arg[0] : 180; /* getJMapInfoArg0NoInit */
+    snc.on = 1;
+    snc.nrv = SNC_WAIT; snc.step = -1;
+    printf("snow rabbit collect row %d: %d rabbits, talker %d, %d s, camera set %d\n", snc.row, snc.n, snc.talk, snc.limit, row_camset[snc.row]);
+}
 static void trk_update(void)
 {
+    if (snc.on) { snc_update(); return; }
     if (!trk.on || !row_shown(trk.r.k.row)) return;
 #ifdef TRICK_TEST
     trk_test();
@@ -610,6 +1042,7 @@ static void trk_update(void)
 static int trk_shot(V3 p)
 {
     Kuribo *k = &trk.r.k;
+    if (snc.on) return snc_shot(p);
     if (!trk.on || vlen(vsub(p, trk_spine())) > 70.0f + 30.0f) return 0;
     if (trk.kind) {
         if (k->nrv == TRM_WAITSTART || k->nrv == TRM_GIVEUP) return 0; /* (RabbitStateWaitStart's: npc_shot) */
@@ -623,11 +1056,17 @@ static int trk_shot(V3 p)
     printf("trick rabbit row %d: star piece, BlowDamage\n", k->row);
     return 1;
 }
-static int trk_star_out(int row) { return trk.on && trk.r.k.row == row && trk.star; }
-static int trk_puppet(void) { return trk.on && pd.name && (!strcmp(pd.name, "逃走") || !strcmp(pd.name, "捕まり")); } /* Mario's clip is the demo's own */
+static int trk_star_out(int row) { return (trk.on && trk.r.k.row == row && trk.star) || (snc.on && snc.row == row && snc.star); }
+static int trk_puppet(void) /* Mario's clip is the demo's own */
+{
+    if (snc.on && pd.name && (!strcmp(pd.name, "捕まり") || !strncmp(pd.name, "雪ウサギ", strlen("雪ウサギ")))) return 1;
+    return trk.on && pd.name && (!strcmp(pd.name, "逃走") || !strcmp(pd.name, "捕まり"));
+}
 static void trk_init(void)
 {
     memset(&trk, 0, sizeof trk);
+    snc_init();
+    if (snc.on) return;
     for (u32 i = 0; i < sc->nobjs && !trk.on; i++)
         if (!strcmp(sc->types + 32 * sc->objs[i].type, "TrickRabbitFreeRun")) {
             gw_body_init(&trk.r, (int)i);
@@ -706,5 +1145,48 @@ static void trk_test(void)
     if (t % 61 == 0) printf("trick test: Mario %d %d %d up %d %d %d grounded %d, placed %d %d %d\n", (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z,
                             (int)(mario->up.x * 100), (int)(mario->up.y * 100), (int)(mario->up.z * 100), mario->grounded,
                             (int)sc->objs[k->row].pos[0], (int)sc->objs[k->row].pos[1], (int)sc->objs[k->row].pos[2]);
+}
+/* XF=-DTRICK_TEST (plain, SnowCapsuleGalaxy/1): Mario put at マリオ位置 (the start event), A through the talks; in the
+ * hunt each rabbit in turn (700 steps apart): its SW_A on (without one Mario dropped onto its snow, at 300 forced out),
+ * a star piece at it at 400, Mario onto it from 550 (the catch). XF=-DTRICK_TEST=2: nothing caught, the time up after
+ * 10 s (the failed demo) */
+static void snc_test(void)
+{
+    static int t, go;
+    if (!snc.on || in_opening || mario->launch >= 0) return;
+    t++;
+    pad_force = 0;
+    if (snc.nrv == SNC_WAIT && t > 60 && t % 120 == 61) {
+        const float *g = scene_gpos("マリオ位置");
+        if (g) { m_set_trans(vadd(v3(g[0], g[1], g[2]), vmul(snc.r[0].r.k.qy, 30.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+    }
+    if ((snc.nrv == SNC_STARTTALK || snc.nrv == SNC_FAILEDTALK || snc.nrv == SNC_SUCCESSTALK) && t % 45 < 5) pad_force = PAD_CROSS;
+    for (int i = 0; i < snc.n; i++) if (snc.r[i].r.k.nrv == SNR_CAUGHT && t % 45 < 5) pad_force = PAD_CROSS;
+    if (snc.nrv == SNC_START) {
+        go++;
+#if TRICK_TEST == 2
+        if (go == 1) snc.rest = 600;
+#else
+        for (int i = 0; i < snc.n; i++) {
+            Kuribo *k = &snc.r[i].r.k;
+            const Row *row = &sc->objs[k->row];
+            int at = go - 700 * i;
+            if (at == 60 && row->sw[SW_A] >= 0) sw_set(row, SW_A, 1);
+            if (row->sw[SW_A] < 0 && at >= 60 && at < 300 && at % 30 == 0 && k->nrv == SNR_HIDESNOW) { m_set_trans(vadd(k->pos, vmul(k->qy, 150.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+            if (at == 300 && k->nrv == SNR_HIDESNOW) printf("trick test: rabbit %d forced out (%d)\n", i, snc_snow_found(k->row, NULL));
+            if (at == 400 && k->nrv == SNR_RUNAWAY) { V3 sp = vadd(k->pos, vmul(k->qy, 50.0f)); shots[0].pos = vadd(sp, vmul(k->front, 200.0f)); shots[0].vel = vmul(k->front, -40.0f); shots[0].t = 1; shots[0].col = 0; }
+            if (at >= 550 && at < 700 && at % 30 == 0 && (k->nrv == SNR_RUNAWAY || k->nrv == SNR_BLOW)) { m_set_trans(vadd(k->pos, vmul(k->qy, 10.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+        }
+#endif
+    }
+    if (t % 61 == 0) {
+        printf("trick test t %d go %d: collect %d step %d, rest %d, star %d, demo %s, Mario %d %d %d grounded %d;", t, go, snc.nrv, snc.step, snc.rest, snc.star, pd.name ? pd.name : "-",
+               (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z, mario->grounded);
+        for (int i = 0; i < snc.n; i++) {
+            const Kuribo *k = &snc.r[i].r.k;
+            printf(" [%d: nerve %d step %d wait %d caught %d shown %d ground %d pos %d %d %d]", i, k->nrv, k->step, snc.r[i].ws, snc.r[i].cs, row_shown(k->row), k->on_ground, (int)k->pos.x, (int)k->pos.y, (int)k->pos.z);
+        }
+        printf("\n");
+    }
 }
 #endif
