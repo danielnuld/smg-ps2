@@ -550,6 +550,9 @@ static int area_obj(const char *cls, V3 p);
 static int in_glaring_light(V3 p);
 static int in_dark_matter(V3 p);
 static void col_areas_init(const Scene *s);
+static void vg_init(const Scene *s, const unsigned char *blob);
+static int vg_of(int row);
+enum { VG_IN = 1, VG_HIGH = 2, VG_MIDDLE = 4, VG_LOW = 8, VG_HIDE = 16 }; /* ViewGroupCtrlDataEntry _0 .. _4 */
 static void mario_set_raster(int t, int x, int y); /* MR::setRasterScroll (race.inc) */
 /* clip_area.inc */
 static void snow_init(const Scene *s), snow_update(void), snow_draw(V3 eye); /* snow_floor.inc */
@@ -1114,6 +1117,22 @@ static int nhhps;
 static void seesaw_matrix(Inst *in);
 static u32 seesaw_se(const char *name);
 static int nseesaws;
+/* RainCloud (update_rainclouds): a cloud's state, a table of the scene's from the arena (game_init: row_table) */
+typedef struct {
+    int row, step;
+    signed char nrv;
+    unsigned char on_player; /* mIsOnPlayer */
+    unsigned char wrapped;   /* its rail mover went back to its start (isMapPartsRailMovePassedStartPointRepeat) */
+    unsigned char sens_off, col_off, cyl_dead; /* invalidateHitSensors, invalidateCollisionParts, mCloudCylinder dead */
+    unsigned char proj;      /* isShadowProjected: at / n its place and normal */
+    float coord, len;        /* its rail coord last frame (-1 none yet), mRainLength */
+    V3 at, n;
+    u32 lv;
+} RainCloud;
+#define MAX_RCLOUDS 96
+static RainCloud *rclouds;
+static int nrclouds, rcloud_max;
+static int rc_rail_stop(const Row *r, int row);
 #define MAX_BRIDGES 4
 static int nbridges; /* PhantomShipBridge (update_bridges) */
 static struct { int row, nrv, t; Anim anim; } *bridges; /* (game_init: row_table) */
@@ -1238,8 +1257,8 @@ static struct { V3 pos; float coord; short row, alive, t; } notes[MAX_NOTES]; /*
 static int nnotes;
 static int note_force_row = -1; /* test builds: the fairy taken as switched on */
 #define MAX_WPLANTS 1024 /* WaterPlant (place_waterplants, draw_waterplants) */
-static struct { V3 pos, up, dir; float h; short row, type; } wplants[MAX_WPLANTS];
-static int nwplants;
+static struct { V3 pos, up, dir; float h; short row, type; } *wplants; /* [wplants_cap] (game_init) */
+static int nwplants, wplants_cap;
 typedef struct { int row; V3 pos, front, up, fpos; int freeze, ftime; float rotz; } Killer; /* HomingKiller: its bullet
                                                      * (update_killers): mUp, mFreezePos, mFreezeTime, mRotation.z */
 typedef struct { int first, n; const float *pts; u32 np; float len, step, speed, last; } Flow; /* StarPieceFlow (update_flows);
@@ -1311,7 +1330,7 @@ static int breakable(const char *name, const Row *r, int *coins, int *pieces)
         return 7;
     }
     if (strcmp(name, "SpiderMapBlock") == 0) { *coins = 1; return 2; } /* SpiderMapBlock.cpp: isMsgPlayerHipDropFloor kills it */
-    if (strcmp(name, "BreakableTrash") == 0) return 5; /* BreakableCage.cpp (CAGE_TRASH): any enemy attack but fire breaks it */
+    if (strcmp(name, "BreakableTrash") == 0 || strcmp(name, "BreakableFixation") == 0) return 5; /* BreakableCage.cpp (CAGE_TRASH / CAGE_FIX): any enemy attack but fire breaks it */
     if (strcmp(name, "SpiderCoin") == 0) { *coins = 1; return 6; }     /* SpiderCoin.cpp: the pointer frees it (spider_coins; a row, no instance) */
     if (strcmp(name, "KoopaStatue") == 0) {
         if (r->arg[3] == -1) *coins = r->arg[6] > 0 ? r->arg[6] : 1;
@@ -1619,6 +1638,8 @@ static void update_syati(void), draw_syati_rings(void); static int sy_took(int r
 static void update_surf(void); static int sr_try(Player *m), sr_hold(Player *m), pcs_talk(int k, Inst *in), pcs_of(int row), pcs_branch(u32 v); static float sr_reach(void); static V3 sr_body(void); /* SurfRay, SurfRayTutorial, the surfing PenguinCoach (surf.inc) */
 static int trs_hold(Player *m); static void trs_update(void), trs_init(void), trs_draw(void); /* TrampleStar (trample_star.inc) */
 static void ljs_init(void), ljs_update(void); /* LavaJamboSunPlanet (lava_jambo_sun.inc) */
+static void lpt_init(void), lpt_update(void); /* LavaProminenceTriple (lava_prominence_triple.inc) */
+static void update_banekiti(void); /* banekiti.inc */
 static int glr_hold(Player *m); static void glr_update(void), glr_init(void); /* GravityLightRoad (gravity_light_road.inc) */
 static int wrd_hold(Player *m); static void wrd_update(void), draw_water_road(void), wrd_init(void), wrd_cast_hook(int type); /* WaterRoad (water_road.inc) */
 static void or_init(void), or_update(void), draw_oceanrings(void); static int or_in_water(V3 p, V3 up, float *depth), or_row(V3 p); /* OceanRing (ocean_ring.inc) */
@@ -2067,7 +2088,7 @@ typedef struct { V3 n; float dist; int inst, attr, sub; V3 pos; int prism, flag;
  * Pos); inst -1 an IceStep's (sub its index), prism 0 none (mIdx -1) */
 typedef struct { int inst, sub, prism; const unsigned char *kcl; } Tri;
 static int nlfs, ground_sub, mario_ground_sub; static int lf_mats(const Inst *in, const float (**mats)[16], const int **coll);
-static void update_leaves(void), leaf_joints(Inst *in);
+static void update_leaves(void), leaf_joints(Inst *in), lf_alloc(void);
 static int npls; static void update_palms(void), pl_place(Inst *in);
 static int nlls; static void update_lotus(void), ll_place(Inst *in);
 #define TRAIN_CARS 8
@@ -2082,7 +2103,7 @@ static int insts_cap; static const Model *m_trainbody; static void update_trains
 static void update_kfires(void), kfires_reset(void), update_doors(void), door_place(Inst *in); static int door_solid(const Inst *in);
 static int nsss, ss_ride = -1; static const Model *m_sstrap; static void ss_reset(void); static void update_storms(void), ss_place(Inst *in), draw_storm_traps(void); static int ss_hold(Player *m);
 static const Model *m_fish[6], *m_gull; static int nggs; static void update_gulls(void), draw_gulls(void);
-static int nfgs; static void update_fishes(void), draw_fishes(void);
+static int nfgs; static void update_fishes(void), draw_fishes(void), fg_alloc(void);
 
 /* Sphere against every placed KCL: the sphere goes to the instance's object space (KCL data is in model space),
  * normals and depths come back to world. ponytail: uniform scale only (scale.x), like every planet seen so far. */
@@ -2922,6 +2943,12 @@ void game_init(const Scene *s, const unsigned char *blob)
     nhhps = 0;
     nvines = 0; vine_ride = -1;
     vines = row_table("Plant", MAX_VINES, sizeof *vines);
+    lf_alloc();
+    fg_alloc();
+    wplants_cap = 0; /* place_waterplants: arg0 (16) plants a row, MAX_WPLANTS in all */
+    for (u32 i = 0, t = (u32)scene_type(s, "WaterPlant"); i < s->nobjs; i++) if (s->objs[i].type == t) wplants_cap += s->objs[i].arg[0] > 0 ? s->objs[i].arg[0] : 16;
+    if (wplants_cap > MAX_WPLANTS) wplants_cap = MAX_WPLANTS;
+    wplants = wplants_cap ? mem_alloc(MEM_OBJECTS, (u32)wplants_cap * sizeof *wplants) : NULL;
     pole_init();
     creeper_init();
     sbp_bva_row = -1;
@@ -2935,6 +2962,9 @@ void game_init(const Scene *s, const unsigned char *blob)
     nseesaws = 0;
     nbridges = 0;
     bridges = row_table("PhantomShipBridge", MAX_BRIDGES, sizeof *bridges);
+    nrclouds = 0; rcloud_max = count_type("RainCloud", 0);
+    if (rcloud_max > MAX_RCLOUDS) rcloud_max = MAX_RCLOUDS;
+    rclouds = row_table("RainCloud", MAX_RCLOUDS, sizeof *rclouds);
     nfollows = 0;
     nflows = 0;
     kari_cling = 0;
@@ -3051,6 +3081,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     dx_init(blob);
     st_init(s);
     col_areas_init(s);
+    vg_init(s, blob);
     { /* AstroMapBoard's picture, the mirror's, the raster scroll's bands (a TeresaRacer of a racer id): their VRAM out of the cache */
         int tr = scene_type(s, "TeresaRacer"), raster = 0;
         for (u32 i = 0; tr >= 0 && i < s->nobjs; i++) raster |= (int)s->objs[i].type == tr && s->objs[i].arg[0] != -1;
@@ -3370,6 +3401,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     or_init();
     wrd_init();
     glr_init();
+    lpt_init();
     ljs_init();
     trs_init();
     bgb_init();
@@ -8877,7 +8909,7 @@ static void place_waterplants(void)
 {
     int t = scene_type(sc, "WaterPlant");
     if (t < 0 || !row_step) return;
-    for (int budget = 2; budget > 0 && nwplants < MAX_WPLANTS;) {
+    for (int budget = 2; budget > 0 && nwplants < wplants_cap;) {
         if (wpc.row < 0) { /* the next row to plant */
             for (u32 i = 0; i < sc->nobjs && i < sizeof wp_done && wpc.row < 0; i++) {
                 const Row *r = &sc->objs[i];
@@ -9835,6 +9867,136 @@ static int gcap_pick(void) /* the target under the cursor, -1 none */
     return best;
 }
 
+/* GCaptureTarget.cpp's own nerves (gcap 1), row_turn: 0 not begun, 1 Wait, 2 Pointable, 3 HitPointer, 4 Active, 5
+ * Appear / TryDemoAppear (gap[]). Wait: its BCK rate (mStarAnimSpeed, the clip's speed) down 0.05 a frame to 0, no
+ * effect; Mario within arg1 (2500): Pointable (the TouchAble burst, TargetLight, the rate up 0.05 to 0.5); the pointer
+ * on it and GCapture taking the request (requestTarget: A not held; kept 30 frames after the last one, _12C):
+ * HitPointer (TargetLight + Touch, SE_OJ_LV_MAGIC_PNT_G_POINT, the rate up 0.2 to 1); decidedTarget: Active (React,
+ * TargetLight + Active; its SEs: gcap_update), releasedTarget: the Wait clip and Wait. SW_B kills it
+ * (listenStageSwitchOnB). appear() (its SW_APPEAR, or its demo's appear action): SE_SY_GCAPTURE_APPEAR, hidden; with an
+ * actor camera the 出現 demo is asked first (TryDemoAppear) and the camera started at Appear's first step; step 30
+ * shown, the Appear clip (then Wait), SE_OJ_GCAPTURE_APPEAR, TargetLight; past 150 the demo and camera ended, Wait.
+ * ponytail: the Switch BRK (frame 0 far away with arg2, 1 near) is not shown (one baked colour: slice.py has no
+ * second model of it); no ブルースター出現グループ movement request; the rail (MapPartsRailMover) not run */
+static struct { short row, step, clip; } gap[8];
+static int ngap;
+static int gcap_req = -1, gcap_req_t; /* GCapture::mTarget (the row asked), _12C */
+static int gcap_touch = -1;           /* the AnmModelBindMove instance GCapture's binder touched this frame */
+static void gcap_appear(int row) /* GCaptureTarget::appear */
+{
+    for (int k = 0; k < ngap; k++) if (gap[k].row == row) return;
+    if (ngap == 8) { row_turn[row] = 1; return; }
+    se_start(SE_SY_GCAPTURE_APPEAR, NULL);
+    row_demo_hide[row] = 255; sw_changed = 1; /* hideModel */
+    row_turn[row] = 5; row_step[row] = 0;
+    gap[ngap].row = (short)row; gap[ngap].clip = 0;
+    gap[ngap++].step = row_camset[row] != -1 ? -1 : 0; /* isExistActorCamera: requestStartDemo 出現 (TryDemoAppear) */
+}
+static void update_gcap_targets(void)
+{
+    static const Scene *seen;
+    if (seen != sc) { seen = sc; ngap = 0; gcap_req = -1; gcap_req_t = 0; }
+    for (int k = 0; k < ngap; k++) { /* exeTryDemoAppear / exeAppear */
+        int row = gap[k].row;
+        const Row *r = &sc->objs[row];
+        const char *cls = sc->types + 32 * r->type;
+        V3 p = row_pos(r);
+        if (gap[k].step < 0) { if (!pd_try_start("出現", row)) continue; gap[k].step = 0; }
+        int st = gap[k].step++;
+        if (st == 0 && row_camset[row] != -1) { /* startActorCameraTargetSelf */
+            V3 x, z, up = up_at(p, v3(0, 1, 0));
+            row_axes(r, &x, &z);
+            camera_actor_start(cls, "出現", (unsigned short)row_camset[row], up, z, p);
+        }
+        if (st == 30) { row_demo_hide[row] = 0; sw_changed = 1; se_start(SE_OJ_GCAPTURE_APPEAR, r->pos); } /* showModel */
+        Inst *in = st > 30 ? row_inst(row) : NULL;
+        if (in) {
+            if (!gap[k].clip) { gap[k].clip = 1; obj_play(in, "Appear", 0, 0); }
+            else if (gap[k].clip == 1 && in->anim && in->anim->done) { gap[k].clip = 2; obj_play(in, "Wait", 1, 0); } /* isBckStopped */
+            fx_named(cls, "TargetLight", in->m, NULL, in);
+        }
+        if (st > 150) { /* isGreaterStep(150) */
+            if (row_camset[row] != -1) { pd_end("出現"); camera_event_end(); } /* endDemoWaitCameraInterpolating, endActorCamera */
+            row_turn[row] = 1; row_step[row] = 0;
+            gap[k--] = gap[--ngap];
+        }
+    }
+#ifdef PUT_TEST /* XF=-DPUT_TEST=GCaptureTarget: 300 frames in, the appear switch of each target that has one put on */
+    if (game_frame == 300)
+        for (u32 q = 0, t = (u32)scene_type(sc, "GCaptureTarget"); q < sc->nobjs; q++)
+            if (sc->objs[q].type == t && sc->objs[q].sw[SW_APPEAR] >= 0 && !sw_on(&sc->objs[q], SW_APPEAR)) {
+                sw_set(&sc->objs[q], SW_APPEAR, 1);
+                printf("gcap test: row %u appear switch on, camera set %d%c", q, row_camset[q], 10);
+            }
+    if (ngap && game_frame % 30 == 0) printf("gcap test: appear row %d step %d clip %d%c", gap[0].row, gap[0].step, gap[0].clip, 10);
+#endif
+    if (gcap_req_t > 30) { gcap_req = -1; gcap_req_t = 0; } /* GCapture::control */
+    if (gcap_req >= 0) gcap_req_t++;
+    int pick = gcap.phase || dome_busy() ? -1 : gcap_pick();
+    FOR_KIND(i, gcap) {
+        Inst *in = &insts[i];
+        if (in->gcap != 1 || !row_shown(in->row)) continue;
+        int row = in->row;
+        const Row *r = &sc->objs[row];
+        const char *cls = sc->types + 32 * r->type;
+        signed char *n = &row_turn[row];
+        unsigned short *st = &row_step[row];
+        if (*n == 0) { /* init: syncStageSwitchAppear -> appear(), else makeActorAppeared (Wait) */
+            if (r->sw[SW_APPEAR] >= 0) { gcap_appear(row); continue; }
+            *n = 1; *st = 0;
+        }
+        if (*n == 5) continue;
+        if (r->sw[SW_B] >= 0 && sw_on(r, SW_B)) { /* LiveActor::kill: unrequestGCaptureTarget, isReleaseForce */
+            if (gcap_req == row) gcap_req = -1;
+            row_dead[row] = 1; sw_changed = 1;
+            continue;
+        }
+        int active = gcap.phase && gcap.target == i;
+        if (active && *n != 4) { *n = 4; *st = 0; }                                   /* decidedTarget */
+        else if (!active && *n == 4) { obj_play(in, "Wait", 1, 0); *n = 1; *st = 0; } /* releasedTarget */
+        int near = vlen(vsub(gcap_pos(in), mario->pos)) < (r->arg[1] > 0 ? (float)r->arg[1] : 2500.0f); /* isNearPlayer(mPointableRange) */
+        int point = pick == i, first = !*st;
+        float sp = in->anim ? in->anim->speed : 0.0f;
+#ifdef PUT_TEST
+        if (first) printf("gcap target row %d: nerve %d, rate %.2f, anim %d%c", row, *n, sp, in->anim != NULL, 10);
+#endif
+        if (*st < 0xFFFF) ++*st;
+        switch (*n) {
+        case 1: /* exeWait */
+            sp = sp - 0.05f < 0.0f ? 0.0f : sp - 0.05f;
+            if (near) { *n = 2; *st = 0; }
+            break;
+        case 2: /* exePointable */
+            if (first) fx_named(cls, "TouchAble", in->m, NULL, NULL);
+            fx_named(cls, "TargetLight", in->m, NULL, in);
+            sp = sp + 0.05f > 0.5f ? 0.5f : sp + 0.05f;
+            if (point && !pointer_a()) { gcap_req = row; gcap_req_t = 0; *n = 3; *st = 0; } /* requestGCaptureTarget */
+            else if (!near) { *n = 1; *st = 0; }
+            break;
+        case 3: /* exeHitPointer */
+            if (gcap_req != row) { *n = 1; *st = 0; break; } /* isRequestedGCaptureTarget */
+            fx_named(cls, "TargetLight", in->m, NULL, in);
+            fx_named(cls, "Touch", in->m, NULL, (const char *)in + 1);
+            in->lv[1] = se_level(SE_OJ_LV_MAGIC_PNT_G_POINT, &in->m[12], in->lv[1]);
+            sp = sp + 0.2f > 1.0f ? 1.0f : sp + 0.2f;
+            if (point && near && !pointer_a()) gcap_req_t = 0; /* requestGCaptureTarget again */
+            if (!near) gcap_req = -1;                          /* unrequestGCaptureTarget */
+            break;
+        case 4: /* exeActive (SE_OJ_MAGIC_PNT_G_ON and the level SEs: gcap_update) */
+            if (first) { obj_play(in, "React", 0, 0); sp = 1.0f; }
+            fx_named(cls, "TargetLight", in->m, NULL, in);
+            fx_named(cls, "Active", in->m, NULL, (const char *)in + 2);
+            break;
+        }
+        if (in->anim && *n != 4) in->anim->speed = sp; /* setBckRate(mStarAnimSpeed) */
+    }
+}
+
+static int gcap_nobreak(int inst) /* the binded sensor's host answers ACTMES_IS_NO_BREAK_G_CAPTURE: InvisiblePolygonObjGCapture */
+{
+    return inst >= 0 && inst < ninsts && !strncmp(sc->types + 32 * sc->objs[insts[inst].row].type, "InvisibleWallGCapture", 21);
+}
+
 static void gcap_release(Player *m)
 {
     m->hvel = vtangent(gcap.vel, m->up);
@@ -9855,7 +10017,8 @@ static int gcap_update(Player *m)
             int t = gcap_pick();
             /* GCaptureTarget::exeHitPointer: pointed (touch, "弱"), the hand open for it (requestStarPointerModeBlueStarReady) */
             if (t >= 0 && menu_pointer_touch(&insts[t], 1)) menu_pointer_request(SPM_BLUESTARREADY);
-            if (trig && t >= 0 && mode_rush("GCapture")) { gcap.phase = 1; gcap.t = 0; gcap.target = t; gcap.power = 0; printf("gcapture: target row %d" "\n", insts[t].row); }
+            if (trig && t < 0 && gcap_req >= 0) { Inst *q = row_inst(gcap_req); if (q && q->gcap == 1) t = (int)(q - insts); } /* tryCapture: mTarget (asked within the last 30 frames) */
+            if (trig && t >= 0 && mode_rush("GCapture")) { gcap.phase = 1; gcap.t = 0; gcap.target = t; gcap.power = 0; gcap_req = -1; printf("gcapture: target row %d" "\n", insts[t].row); }
         }
         return 0;
     }
@@ -9900,15 +10063,28 @@ static int gcap_update(Player *m)
     } else
         gcap.vel = vmul(gcap.vel, 0.99f);
     V3 moved = vadd(c, gcap.vel), pushed = moved;
-    int wall = 0, ground = collide_n(&pushed, m->up, BODY_RADIUS, NULL, NULL, &wall);
+    V3 wn = v3(0, 0, 0);
+    int wall = 0, ground = collide_n(&pushed, m->up, BODY_RADIUS, NULL, &wn, &wall), nobreak = 0;
+    gcap_touch = -1;
     if (ground || wall) { /* reboundVelocityFromCollision 0.5: the pushed-out part reflected */
         V3 n = vnorm(vsub(pushed, moved));
+        int gi = ground ? ground_inst : -1, wi = wall ? wall_inst : -1;
         if (vlen(n) > 0.5f && vdot(gcap.vel, n) < 0) gcap.vel = vsub(gcap.vel, vmul(n, 1.5f * vdot(gcap.vel, n)));
-        if (gcap.phase == 3) { m->pos = vsub(pushed, vmul(m->up, BODY_RADIUS)); gcap_release(m); return 0; }
+        /* tryAddVelocityReflectJumpCollision: the binded sensor's host answers ACTMES_IS_REFLECTION_G_CAPTURE
+         * (AnmModelBindMove: its Move starts, isOnStartAnmTrigger): 25 along the collision's normal, 25 at most */
+        if (gi >= 0 && insts[gi].anmmodel == 4) gcap_touch = gi;
+        else if (wi >= 0 && insts[wi].anmmodel == 4) gcap_touch = wi;
+        if (gcap_touch >= 0 && vlen(n) > 0.5f) {
+            gcap.vel = vadd(gcap.vel, vmul(n, 25.0f));
+            float l = vlen(gcap.vel);
+            if (l > 25.0f) gcap.vel = vmul(gcap.vel, 25.0f / l);
+        }
+        nobreak = gcap_nobreak(gi) || gcap_nobreak(wi); /* tryRelease: sendMsgToBindedSensor(ACTMES_IS_NO_BREAK_G_CAPTURE) */
+        if (gcap.phase == 3 && gcap_touch < 0 && !nobreak) { m->pos = vsub(pushed, vmul(m->up, BODY_RADIUS)); gcap_release(m); return 0; }
     }
     m->pos = vsub(pushed, vmul(m->up, BODY_RADIUS));
     m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
-    if (gcap.phase == 3 && gcap.t > 180) { gcap_release(m); return 0; }
+    if (gcap.phase == 3 && gcap.t > 180 && gcap_touch < 0 && !nobreak) { gcap_release(m); return 0; }
     return 1;
 }
 
@@ -15198,6 +15374,7 @@ static int ge_hitall(Kuribo *k, V3 from);
 static int mg_hitall(Kuribo *k);
 static void bh_chain(Kuribo *k);
 static int jf_knock(Kuribo *k, V3 from);
+static int kan_fire(Kuribo *k, V3 from);
 static void walker_inhale(Kuribo *e);
 static void fireball_hit_walkers(int b)
 {
@@ -15230,6 +15407,7 @@ static void fireball_hit_walkers(int b)
         if (e->kind == WALK_POIHANA) { if (!poihana_shock(e)) continue; scene_stop = 3; fireballs[b].t = 0; return; } /* a HitAll: tryShock, stopSceneForDefaultHit(3) */
         if (e->kind == WALK_GESSO) { if (!ge_hitall(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* a HitAll: knockOut */
         if (e->kind == WALK_JELLYFISH) { if (!jf_knock(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* a HitAll: knockOut */
+        if (e->kind == WALK_KANINA) { if (!kan_fire(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* isMsgFireBallAttack: receiveFireBall */
         if (e->kind == WALK_MOGU || e->kind == WALK_TERESAW || e->kind == WALK_METBO || e->kind == WALK_SNAKEHEAD || e->kind == WALK_BOMBHEI || e->kind == WALK_STRSPIDER) continue; /* (Mogu, TeresaWater, Metbo, Snakehead, BombHei, StringSpider: neither isMsgFireBallAttack nor isMsgPlayerHitAll) */
         if (e->kind == WALK_KURIBO || e->kind == WALK_KMINI || e->kind == WALK_TAKOHEI) { /* isMsgFireBallAttack, a HitAll: requestBlowDown (KuriboMini: a coin), TakoHei's requestPunch */
             if (walker_blow(e, fireballs[b].pos) <= 0) continue;
@@ -15575,6 +15753,7 @@ static void update_jets(void)
                 else if (e->kind == WALK_KOTEBUG) took = kb_hitall(e, p); /* a HitAll: Blow overturned, else setOverturnFall */
                 else if (e->kind == WALK_MOGU) took = mg_hitall(e); /* isMsgJetTurtleAttack: tryPunchHitted */
                 else if (e->kind == WALK_JELLYFISH) took = jf_knock(e, p); /* a HitAll: knockOut */
+                else if (e->kind == WALK_KANINA) took = kan_fire(e, p); /* isMsgJetTurtleAttack: receiveFireBall */
                 else if (e->kind == WALK_SPIDER) took = js_blow(e, p); /* a HitAll: HitBlow */
                 else if (e->kind == WALK_KURIBO || e->kind == WALK_KMINI || e->kind == WALK_TAKOHEI) { /* isMsgJetTurtleAttack, a HitAll: requestBlowDown (KuriboMini: a coin), TakoHei's requestPunch */
                     took = walker_blow(e, p) > 0;
@@ -30187,6 +30366,12 @@ static void ka_blow(Kuribo *k, V3 from) /* doDamageFireBall: setVelocityBlowAtta
     k->front = vmul(h, -1.0f);
     w_nrv(k, KA_DAMAGEFB);
 }
+static int kan_fire(Kuribo *k, V3 from) /* receiveFireBall (a fire ball, a shell on its body): doDamageFireBall */
+{
+    if (k->nrv == KA_UNDER || k->nrv == KA_DIG || k->nrv == KA_DAMAGEHIP || k->nrv == KA_DAMAGEFB || k->nrv == KA_APPEAR) return 0; /* (its sensors off) */
+    ka_blow(k, from);
+    return 1;
+}
 static int ka_find(Kuribo *k) { if (ka_fan(k, k->qz, 1000.0f, 180.0f, 30.0f)) { w_nrv(k, KA_FIND); return 1; } return 0; }
 static int ka_hit_wall(Kuribo *k) /* tryHitWall: reboundVelocityFromCollision(1, 0, 1) */
 {
@@ -35416,7 +35601,7 @@ static void update_kuribo(void)
 #endif
         Kuribo *k = &kuribo[i];
         if (k->state == KURIBO_DEAD || !row_shown(k->row)) continue;
-        if (k->clipped && k->kind != WALK_KARIKARI && !test_noclip && !(k->kind == WALK_BOMBTERESA && !k->lvt[1]) && !(k->kind == WALK_MERAKING && mk_noclip(k)) && !(k->kind == WALK_MERAMERA && k->lvt[2]) && !(k->kind == WALK_TERESA && k->lvt[1]) && !(k->kind == WALK_MKOOPA && k->lvt[2]) && !(k->kind == WALK_BOMBBIRD && bbd_noclip(k)) && !(k->kind == WALK_POIHANA && k->dir) && !(k->kind == WALK_KARON && kr_pursuing(k)) && !(k->kind == WALK_BASABASA && k->nrv != BB_WAIT && k->nrv != BB_AIRWAIT)) { if (k->kind == WALK_MERAMERA) k->sstep = -1; continue; } /* (Karon's Pursue, BasaBasa out of Wait / AirWait: invalidateClipping) */ /* startClipped: no movement (Karikari may ride on Mario; a BombTeresa's invalidateClipping: lvt[1] 0) */
+        if (k->clipped && k->kind != WALK_KARIKARI && !test_noclip && !(k->kind == WALK_BOMBTERESA && !k->lvt[1]) && !(k->kind == WALK_MERAKING && mk_noclip(k)) && !(k->kind == WALK_MERAMERA && k->lvt[2]) && !(k->kind == WALK_TERESA && k->lvt[1]) && !(k->kind == WALK_MKOOPA && k->lvt[2]) && !(k->kind == WALK_BOMBBIRD && bbd_noclip(k)) && !(k->kind == WALK_POIHANA && k->dir) && !(k->kind == WALK_GESSO && k->nrv == GE_WAIT && k->step >= 2) && !(k->kind == WALK_KARON && kr_pursuing(k)) && !(k->kind == WALK_BASABASA && k->nrv != BB_WAIT && k->nrv != BB_AIRWAIT)) { if (k->kind == WALK_MERAMERA) k->sstep = -1; continue; } /* (Karon's Pursue, BasaBasa out of Wait / AirWait: invalidateClipping) */ /* startClipped: no movement (Karikari may ride on Mario; a BombTeresa's invalidateClipping: lvt[1] 0) */
         u32 c0 = cycles();
         update_kuribo_one(k);
         kprof[k->kind] += cycles() - c0; kprof_n[k->kind]++;
@@ -36016,6 +36201,7 @@ static struct {
     int line[STH_LINES][STH_LINE_PTS], anchor[STH_LINES], cuts[STH_CUTS], rad[STH_PARTS], circ[STH_PARTS];
     SthPt *pt;     /* [STH_PTS] */
     SthMain *mp;   /* [STH_MAINS] */
+    float (*dpos)[3]; u16 *didx; /* sth_draw's vertices [2048] and indices [3 * 2048] */
     SthPart *part; /* [STH_PARTS]: the three from the arena (sth_init: only a scene with the web pays for them) */
     SthHang hang[STH_HANGS];
 } sth;
@@ -36325,6 +36511,8 @@ static void sth_init(V3 pos) /* MR::initSpiderThread: initThread, initMainThread
     sth.pt = mem_alloc(MEM_OBJECTS, STH_PTS * sizeof *sth.pt); /* (from game_init: under main.c's base_mark) */
     sth.mp = mem_alloc(MEM_OBJECTS, STH_MAINS * sizeof *sth.mp);
     sth.part = mem_alloc(MEM_OBJECTS, STH_PARTS * sizeof *sth.part);
+    sth.dpos = mem_alloc(MEM_OBJECTS, 2048 * sizeof *sth.dpos);
+    sth.didx = mem_alloc(MEM_OBJECTS, 3 * 2048 * sizeof *sth.didx);
     sth.on = 1; sth.shoot = -1; sth.cancel = -1; sth.pos = pos; sth.front = v3(0, 0, 1);
     sth.wtgt = sth.wspd = 0.5f; sth.wdir = sth.wind = v3(0, 0, -1); /* SpiderThreadWindCtrl: sWindAccelBattle */
     int c = sth_main_new(pos);
@@ -36484,8 +36672,8 @@ static void update_spider_thread(void) /* SpiderThread::movement */
 static void sth_draw(void) /* SpiderThread::draw: each part's three strips (sendPointsUpper / RightLower / LeftLower) */
 {
     if (!sth.on || !sth.alive) return;
-    static float pos[2048][3];
-    static u16 idx[3 * 2048];
+    float (*pos)[3] = sth.dpos; /* [2048] */
+    u16 *idx = sth.didx;        /* [3 * 2048] */
     static const float ox[3][2] = {{-18, 18}, {18, -15}, {15, -18}}, oy[3][2] = {{3, 3}, {18, -18}, {-18, 18}};
     static const u8 grey[3] = {0x3E, 0x58, 0x65}; /* (sColorMinusX + PlusX) / 2, (PlusX + MinusY) / 2, (MinusY + MinusX) / 2 at 0x80 = 1 */
     const V3 side = v3(0, 0, -1);
@@ -37116,20 +37304,38 @@ static void break_inst(const Inst *in, int drops)
         printf("%s %d broken, its coin out\n", name, in->row);
         return;
     }
-    if (!strcmp(name, "BreakableTrash") && nwrecks < MAX_WRECKS) { /* BreakableCage::exeBreak (CAGE_TRASH): IRON_CAGE_BREAK,
-        * hidden, its BreakableCageBreak's Break clip, SW_DEAD at once, stopSceneAtStep(2, 6) within 1500, SW_B off at the
-        * clip's end (kill). ponytail: stopScene at once, not at step 2; the frustum test left out; SW_B left on */
+    if (!strcmp(name, "BreakableFixation")) { /* BreakableCage::exeBreak (CAGE_FIX): BREAK_FIXATION_BREAK, hidden, its Break
+        * effect, SW_DEAD at once, stopSceneAtStep(2, 6) within 1500, SW_B off and kill at the effect's end. ponytail:
+        * stopScene and SW_B at once; the frustum test left out */
+        se_start(SE_OJ_BREAK_FIXATION_BREAK, &p.x);
+        fx_named(name, "Break", in->m, NULL, NULL);
+        if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 0);
+        if (vlen(vsub(mario->pos, p)) < 1500.0f) scene_stop = 6;
+        row_kill(in->row);
+        printf("%s %d broken%c", name, in->row, 10);
+        return;
+    }
+    int bcage = !strcmp(name, "BreakableCage") || !strcmp(name, "BreakableCageRotate") || !strcmp(name, "BreakableCageL");
+    if ((!strcmp(name, "BreakableTrash") || (bcage && scene_model(sc, "BreakableCageBreak"))) && nwrecks < MAX_WRECKS) {
+        /* BreakableCage::exeBreak: IRON_CAGE_BREAK, hidden, its BreakableCageBreak's Break clip (the cages' once their
+         * packs carry it: slice.py), SW_DEAD, stopSceneAtStep(2, 16) with a power star inside (arg7 7), else (2, 6)
+         * within 1500, SW_B off at the clip's end (kill). ponytail: stopScene and SW_B at once, not at step 2 / the
+         * clip's end; the frustum test left out; SW_DEAD at once for every kind (a plain cage / L without arg2 or an
+         * item: at the clip's end); no 破壊 camera demo */
         se_start(SE_OJ_IRON_CAGE_BREAK, &p.x);
         typeof(&wrecks[0]) w = &wrecks[nwrecks++];
         memcpy(w->m, in->m, 64);
         w->bname = "BreakableCageBreak"; w->brk = scene_model(sc, w->bname); w->left = NULL; w->hide = 0;
         w->t = 0; w->row = in->row; w->p = p; w->up = up; w->coins = w->pieces = 0;
         if (r->sw[SW_DEAD] >= 0) sw_set(r, SW_DEAD, 1);
-        if (vlen(vsub(mario->pos, p)) < 1500.0f) scene_stop = 6;
+        if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 0);
+        if (bcage && r->arg[7] == 7) scene_stop = 16; /* isAppearPowerStar */
+        else if (vlen(vsub(mario->pos, p)) < 1500.0f) scene_stop = 6;
         row_kill(in->row);
         printf("%s %d broken%c", name, in->row, 10);
         return;
     }
+    if (bcage) se_start(SE_OJ_IRON_CAGE_BREAK, &p.x); /* (no break model in this pack) */
     if (!strcmp(name, "CrystalCageL") && nwrecks + 1 < MAX_WRECKS) { /* exeBreak: BVA frame 2 (the stump), mPosition at _F8
         * (the map 1000 above to 1000 below it, the cage's own collision left out), CrystalCageLBreak's Break clip at _94
         * (its place before), no Break effect (no effect keeper), no dead switch (tryOnSwitchDead): two wrecks, the clip
@@ -37184,7 +37390,7 @@ static void break_inst(const Inst *in, int drops)
         memcpy(w->m, in->m, 64);
         w->bname = box ? "WoodBoxBreak" : statue ? "KoopaStatueBreak" : "CrystalCageSBreak"; w->hide = 0;
         w->brk = scene_model(sc, w->bname);
-        w->left = statue || (box ? r->arg[1] != 0 : r->arg[0] != 1) ? scene_model(sc, v) : NULL;
+        w->left = statue || (box ? r->arg[1] != 0 : r->arg[0] == -1) ? scene_model(sc, v) : NULL; /* (the cage: mIsBreakObjVisible, arg0 as a bool: unset leaves the stump) */
         w->t = 0; w->row = in->row; w->p = p; w->up = up;
         w->coins = box ? n : 0; w->pieces = box ? sp : 0;
         if (cage) { pop_coins(p, up, n); scene_stop = 3; } /* appearCoinPop at once; stopScene(3) at step 2 */
@@ -37223,7 +37429,10 @@ static int explosion_breaks(V3 at, float rad)
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
         if (row_dead[in->row]) continue;
-        if (!woodbox_reached(in, at, rad) && (in->breaks != 5 || vlen(vsub(at, v3(in->m[12], in->m[13], in->m[14]))) > rad + in->reach)) continue;
+        /* CrystalCage::receiveMsgEnemyAttack: any enemy attack breaks an S / M cage in Wait (its body 130 x scale) */
+        int cage = in->breaks == 1 && !strncmp(sc->types + 32 * sc->objs[in->row].type, "CrystalCage", 11) && sc->types[32 * sc->objs[in->row].type + 11] != 'L' &&
+                   vlen(vsub(at, v3(in->m[12], in->m[13], in->m[14]))) < rad + 130.0f * in->s;
+        if (!cage && !woodbox_reached(in, at, rad) && (in->breaks != 5 || vlen(vsub(at, v3(in->m[12], in->m[13], in->m[14]))) > rad + in->reach)) continue;
         break_inst(in, 1);
         game_rebind();
         return 1;
@@ -37463,8 +37672,23 @@ static void break_boxes(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS));
     update_item_blocks();
-    for (int i = 0; i < ninsts; i++) /* SimpleBreakableObj::initCaseUseSwitchB: SW_B on breaks it */
+    { /* BreakableCage::exeWait (CAGE_NORMAL: BreakableCageRotate): it turns arg0 x 0.01 degrees a frame about its Y */
+        static const Scene *ts;
+        static int tr;
+        if (ts != sc) { ts = sc; tr = scene_type(sc, "BreakableCageRotate"); }
+        for (int i = 0; tr >= 0 && i < ninsts; i++) {
+            Inst *in = &insts[i];
+            const Row *r = &sc->objs[in->row];
+            if ((int)r->type != tr || row_dead[in->row] || r->arg[0] == -1 || !r->arg[0]) continue;
+            float a = r->arg[0] * 0.01f * 0.017453292f, cs = cosf(a), sn = sinf(a), old[16];
+            memcpy(old, in->m, 64);
+            for (int k = 0; k < 3; k++) { float x = old[k], z = old[8 + k]; in->m[k] = cs * x - sn * z; in->m[8 + k] = sn * x + cs * z; }
+            if (mario_ground == i) carry(old, in);
+        }
+    }
+    for (int i = 0; i < ninsts; i++) /* SimpleBreakableObj::initCaseUseSwitchB: SW_B on breaks it (not BreakableCage's kinds: they write SW_B) */
         if ((insts[i].breaks == 4 || insts[i].breaks == 5 || insts[i].breaks == 8) && !row_dead[insts[i].row] && sc->objs[insts[i].row].sw[SW_B] >= 0 &&
+            strncmp(sc->types + 32 * sc->objs[insts[i].row].type, "Breakable", 9) &&
             sw_on(&sc->objs[insts[i].row], SW_B)) {
             break_inst(&insts[i], 1);
             game_rebind();
@@ -39506,6 +39730,7 @@ static void update_railers(void)
         if (fu >= 0 ? !fu : in->eyebeamer ? !eb_patrol(row) : st_turtle_moving(row) >= 0 ? !st_turtle_moving(row) : !mp_running(r, row)) continue;
         if (in->gap == GAP_ELEVATOR && gap_st(row)->n != EV_MOVE) continue; /* BattleShipElevator::control: not in Wait */
         if (in->gap == GAP_UFOKINOKO && gap_st(row)->n != UK_MOVE) continue; /* UFOKinoko: startRailMover at startMove */
+        if (rclouds && rc_rail_stop(r, row)) continue; /* RainCloud::control: no rail movement in End */
         if (!st_rail_go(in)) continue; /* RailDemoMoveObj: its demo started first (statics.inc) */
         u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
         const unsigned char *pa = e + 24 + 12 * np + 12 * nr; /* nr x {f32 coord, s32 arg0, s32 arg5} */
@@ -39622,6 +39847,207 @@ static void update_railers(void)
         if (mario_ground == i) carry(old, in);
     }
 }
+
+/* RainCloud.cpp after Petari: a cloud to stand on, on a rail that starts over (MoveStopType 2), raining under it
+ * unless arg3 is set. Wait (the Wait clip); Mario's floor touch in Wait: HardTouch (not a bee: its collision off for
+ * 60 frames, a middle rumble, a normal shake) or SoftTouch (a bee not yet on it: OnBee, again as he leaves). Its rail
+ * mover at its end: Disappear (the clip, sensors and collision off, the rain cylinder dead at the clip's end), End once
+ * the mover is back at its start (and still there), Appear when every cloud of its group is in End or just started
+ * Appear (the clip, the collision back, THUNDER at step 140, the sensors back at its end). The rain: mRainLength the
+ * shadow's projection under it (arg0 its drop length; unset: no shadow, 2000), the Splash effect at the projection,
+ * Line20 over 1500 else Line10, the RainCloudCylinder model on the Shadow joint scaled (width by the Appear /
+ * Disappear clip, 0.1 at least; length / 1000), SE_OJ_LV_FOREST_RAIN while the cylinder lives; the drop_water sensor
+ * (150, on the rain's line nearest to Mario) takes a bee's form away with a strong rumble.
+ * ponytail: no BPK (Rain / Fine / Appear colours: BPK at run time), no LOD model, no shadow volume; the rain's
+ * cylinder is not drawn (rc_draw: it comes out opaque);
+ * ACTMES_PUDDLE_TOUCH_GROUND is not sent (Mario's _3A8 is not ported); the projection is read every 8th frame and,
+ * as the effects and the rain's sound, only in view (Petari: while not clipped, with its group). */
+enum { RC_WAIT, RC_APPEAR, RC_DISAPPEAR, RC_END, RC_SOFT, RC_HARD };
+static RainCloud *rc_of(int row, int make)
+{
+    for (int k = 0; k < nrclouds; k++) if (rclouds[k].row == row) return &rclouds[k];
+    if (!make || nrclouds >= rcloud_max) return NULL;
+    RainCloud *c = &rclouds[nrclouds++];
+    memset(c, 0, sizeof *c);
+    c->row = row; c->coord = -1.0f; c->len = 2000.0f;
+    return c;
+}
+static int rc_rail_stop(const Row *r, int row)
+{
+    if (strcmp(sc->types + 32 * r->type, "RainCloud")) return 0;
+    const RainCloud *c = rc_of(row, 0);
+    return c && c->nrv == RC_END;
+}
+static void rc_nrv(RainCloud *c, int n)
+{
+#ifdef RAINCLOUD_TEST
+    printf("rain cloud %d: nerve %d -> %d at step %d (frame %d)%c", c->row, c->nrv, n, c->step, game_frame, 10);
+#endif
+    c->nrv = (signed char)n; c->step = 0;
+}
+static int rc_stopped(const Inst *in, const RainCloud *c) /* isBckStopped; a cloud with no pose (out of the pool): by its clip's length */
+{
+    if (in->anim) return in->anim->done && !in->anim->loop;
+    int len = anim_clip_info(c->nrv == RC_APPEAR ? "raincloud/appear" : c->nrv == RC_SOFT ? "raincloud/onbee" : "raincloud/disappear", NULL);
+    return c->nrv == RC_END || c->step > len;
+}
+static int rc_next_ok(const RainCloud *c) /* isNextStartOK: the clouds of its group (雲集団) */
+{
+    int g = sc->objs[c->row].group;
+    if (g < 0) return 1;
+    for (int k = 0; k < nrclouds; k++) {
+        const RainCloud *o = &rclouds[k];
+        if (sc->objs[o->row].group != g || sc->objs[o->row].zone != sc->objs[c->row].zone) continue;
+        if (!(o->nrv == RC_END || (o->nrv == RC_APPEAR && o->step == 0))) return 0;
+    }
+    return 1;
+}
+static int rc_view(const RainCloud *c, V3 pos, V3 g) /* in view: its clipping sphere (the model's radius taken as 600) */
+{
+    V3 ce = vadd(pos, vmul(g, 0.5f * c->len));
+    return !render_clip_judge(&ce.x, 600.0f + 0.5f * c->len, 1e9f);
+}
+#ifdef RAINCLOUD_CYLINDER
+static void rc_cylinder(const Inst *in, const RainCloud *c, float m[16]) /* updateRainCylinder: mRainCylinderMtx */
+{
+    float w = 1.0f, ls = c->len / 1000.0f; /* sRainCylinderBaseLength */
+    if (in->anim && in->anim->skin && in->anim->skin->njoints > 1) mat_mul(m, in->m, in->anim->world[1]); /* Shadow */
+    else memcpy(m, in->m, 64);
+    if ((c->nrv == RC_APPEAR || c->nrv == RC_DISAPPEAR) && in->anim && c->step > 0) {
+        int len = anim_clip_info(c->nrv == RC_APPEAR ? "raincloud/appear" : "raincloud/disappear", NULL);
+        float t = len > 0 ? in->anim->frame / (float)len : 1.0f;
+        w = c->nrv == RC_APPEAR ? t : 1.0f - t;
+        w = w < 0.1f ? 0.1f : w > 1.0f ? 1.0f : w;
+    }
+    for (int k = 0; k < 3; k++) { m[k] *= w; m[4 + k] *= ls; m[8 + k] *= w; } /* preScaleMtx */
+}
+#endif
+static void update_rainclouds(void)
+{
+    if (!rclouds) return;
+    int ty = scene_type(sc, "RainCloud");
+#ifdef RAINCLOUD_TEST /* XF=-DRAINCLOUD_TEST=k (plain): from frame 400 Mario held 400 over the k-th RainCloud row (its zone streams
+                       * in), dropped onto it at 700 and every 300 frames after; its state every 60 frames */
+    if (game_frame >= 400) {
+        int nth = 0;
+        for (u32 j = 0; ty >= 0 && j < sc->nobjs; j++) {
+            if ((int)sc->objs[j].type != ty || nth++ != RAINCLOUD_TEST) continue;
+            const Inst *in = row_inst((int)j);
+            const RainCloud *c = rc_of((int)j, 0);
+            V3 p = in ? v3(in->m[12], in->m[13], in->m[14]) : row_pos(&sc->objs[j]);
+            if (game_frame < 700 || game_frame % 300 == 0) {
+                test_nolost = 1;
+                mario->up = up_at(p, mario->up); mario->pos = vadd(p, vmul(mario->up, 400.0f));
+                mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
+            }
+            if (game_frame % 60 == 0)
+                printf("rain cloud test f %d: row %d inst %d nerve %d step %d coord %d len %d proj %d cyl dead %d col off %d, Mario on %d height %d, clouds %d%c",
+                       game_frame, (int)j, in != NULL, c ? c->nrv : -1, c ? c->step : -1, c ? (int)c->coord : -1, c ? (int)c->len : -1, c ? c->proj : -1,
+                       c ? c->cyl_dead : -1, c ? c->col_off : -1, in && mario_ground == (int)(in - insts), (int)vdot(vsub(mario->pos, p), mario->up), nrclouds, 10);
+        }
+    }
+#endif
+    const u8 *kcl = scene_kcl(sc, "RainCloud");
+    for (int i = 0; ty >= 0 && i < ninsts; i++) {
+        Inst *in = &insts[i];
+        const Row *r = &sc->objs[in->row];
+        if ((int)r->type != ty || !in->md || !row_shown(in->row)) continue;
+        RainCloud *c = rc_of(in->row, 1);
+        if (!c) continue;
+        int norain = r->arg[3] != -1, on = mario_ground == i, bee = player_mode == PM_BEE;
+        V3 pos = v3(in->m[12], in->m[13], in->m[14]), g = vmul(up_at(pos, v3(0, 1, 0)), -1.0f);
+        if (c->nrv == RC_WAIT && on) { /* receiveOtherMsg: isMsgFloorTouch */
+            if (!bee) rc_nrv(c, RC_HARD);
+            else if (!c->on_player) rc_nrv(c, RC_SOFT);
+        }
+        int st = c->step++;
+        switch (c->nrv) {
+        case RC_APPEAR:
+            if (st == 0) { obj_play(in, "Appear", 0, 0); c->col_off = 0; c->cyl_dead = 0; se_start(SE_OJ_RAIN_CLOUD_APPEAR, &in->m[12]); }
+            if (st == 140) se_start(SE_OJ_RAIN_CLOUD_THUNDER, &in->m[12]); /* sThunderStep */
+            if (st > 0 && rc_stopped(in, c)) { c->sens_off = 0; rc_nrv(c, RC_WAIT); }
+            break;
+        case RC_WAIT:
+            if (st == 0) obj_play(in, "Wait", 1, 0);
+            if (!on && c->on_player) { c->on_player = 0; rc_nrv(c, RC_SOFT); }
+            break;
+        case RC_DISAPPEAR:
+            if (st == 0) { obj_play(in, "Disappear", 0, 0); c->sens_off = 1; c->col_off = 1; se_start(SE_OJ_RAIN_CLOUD_DISAPPEAR, &in->m[12]); }
+            if (st > 0 && rc_stopped(in, c)) { c->cyl_dead = 1; c->on_player = 0; }
+            if (c->wrapped) { c->wrapped = 0; rc_nrv(c, RC_END); }
+            break;
+        case RC_END:
+            if (rc_stopped(in, c) && rc_next_ok(c)) { c->cyl_dead = 1; rc_nrv(c, RC_APPEAR); }
+            break;
+        case RC_SOFT:
+            if (st == 0) obj_play(in, "OnBee", 0, 0);
+            if (st > 0 && rc_stopped(in, c)) { c->on_player = (unsigned char)on; rc_nrv(c, RC_WAIT); }
+            break;
+        case RC_HARD:
+            if (st == 0) { c->col_off = 1; pad_rumble(RUMBLE_MIDDLE); camera_shake(SHAKE_NORMAL); }
+            if (st == 60) { c->col_off = 0; rc_nrv(c, RC_WAIT); }
+            break;
+        }
+        in->kcl = c->col_off ? NULL : kcl; /* validateCollisionParts / invalidateCollisionParts */
+        /* control: its rail mover's end (isMapPartsRailMovePassedEndPointRepeat) */
+        if (in->railer && row_coord && c->nrv != RC_END && *(const int *)(in->railer + 16) == 2) {
+            const unsigned char *e = in->railer;
+            float len = railer_len(e), co = row_coord[in->row];
+            if (c->coord >= 0.0f) {
+                if (co < c->coord - 0.5f) { c->wrapped = 1; if (c->nrv != RC_DISAPPEAR) rc_nrv(c, RC_DISAPPEAR); } /* at its start again */
+                else if (co >= len && c->coord < len) rc_nrv(c, RC_DISAPPEAR);
+            }
+            c->coord = co;
+        }
+        if (norain) continue;
+        int view = rc_view(c, pos, g), changing = c->nrv == RC_APPEAR || c->nrv == RC_DISAPPEAR || c->nrv == RC_END;
+        if (r->arg[0] == -1) { c->proj = 0; c->len = 2000.0f; } /* sNoShadowDropLengthMax, the shadow invalid */
+        else if (view && (game_frame + i) % 8 == 0) { /* getShadowProjectionLength (not on its own collision) */
+            float drop = (float)r->arg[0], lo = 0.0f, d = 0.0f;
+            Hit h[1];
+            for (; d <= drop && !(kcl_query(vadd(pos, vmul(g, d)), 20.0f, h, 1) && h[0].inst != i); d += 30.0f) lo = d;
+            c->proj = d <= drop;
+            for (int k = 0; c->proj && k < 4; k++) {
+                float mid = (lo + d) * 0.5f;
+                if (kcl_query(vadd(pos, vmul(g, mid)), 20.0f, h, 1) && h[0].inst != i) d = mid; else lo = mid;
+            }
+            if (c->proj && kcl_query(vadd(pos, vmul(g, d)), 20.0f, h, 1)) { c->n = h[0].n; c->at = vadd(pos, vmul(g, d + 20.0f)); c->len = d + 20.0f; }
+            else { c->proj = 0; c->len = drop; }
+        }
+        if (view && !changing) { /* switchEffect */
+            float m[16];
+            if (c->proj) { basis_matrix(m, c->at, c->n, v3(0, 0, 1), 0); fx_named("RainCloud", "Splash", m, NULL, &c->at); }
+            if (!c->proj || c->len > 1500.0f) fx_named("RainCloud", "Line20", in->m, NULL, c); /* sSwitchEffectBorder */
+            else fx_named("RainCloud", "Line10", in->m, NULL, &c->len);
+        }
+        if (view && !c->cyl_dead) c->lv = se_level(SE_OJ_LV_FOREST_RAIN, &in->m[12], c->lv); /* updateRainCylinder */
+        if (!c->sens_off) { /* drop_water (updateHitSensor: on the rain's line nearest to him), attackSensor */
+            V3 a = vadd(pos, vmul(g, 150.0f)), ab = vmul(g, c->len - 300.0f), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+            float l2 = vdot(ab, ab), t = l2 > 1e-3f ? vdot(vsub(mario->pos, a), ab) / l2 : 0.0f;
+            V3 foot = vadd(a, vmul(ab, t < 0 ? 0 : t > 1 ? 1 : t));
+            if (c->len > 300.0f && bee && vlen(vsub(mc, foot)) < 150.0f + HIT_BODY_R) { mode_touch_water(); pad_rumble(RUMBLE_STRONG); } /* curePlayerElementMode */
+        }
+    }
+}
+#ifdef RAINCLOUD_CYLINDER
+static void rc_draw(void) /* the rain cylinders (mCloudCylinder) */
+{
+    if (!rclouds || !nrclouds) return;
+    int ty = scene_type(sc, "RainCloud");
+    const Model *cyl = scene_model(sc, "RainCloudCylinder");
+    for (int i = 0; cyl && ty >= 0 && i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        const Row *r = &sc->objs[in->row];
+        if ((int)r->type != ty || r->arg[3] != -1 || !row_shown(in->row)) continue;
+        const RainCloud *c = rc_of(in->row, 0);
+        V3 pos = v3(in->m[12], in->m[13], in->m[14]);
+        if (!c || c->cyl_dead || !rc_view(c, pos, vmul(up_at(pos, v3(0, 1, 0)), -1.0f))) continue;
+        float m[16];
+        rc_cylinder(in, c, m);
+        render_model(cyl, m, 0x80, 0x80, 0x80);
+    }
+}
+#endif
 
 /* Dossun.cpp after Petari: its lower place the row's, its upper one arg0 (1000) along its up; Upper arg1 (180) minus
  * FallStart's 24 frames, FallSign (FallStart, SE), Falling eased in at 30 a frame, OnGround 120 (Land effect, SE,
@@ -41690,7 +42116,8 @@ static struct {
     V3 pos[LEAVES], tip[LEAVES], rest[LEAVES], up0[LEAVES], ax[LEAVES], ay[LEAVES], az[LEAVES], vel[LEAVES], wacc[LEAVES];
     int wstep[LEAVES], wstart[LEAVES], coll[LEAVES];
     float mat[LEAVES][16];
-} lfs[MAX_LEAFGROUPS];
+} *lfs; /* (game_init: lf_alloc) */
+static void lf_alloc(void) { lfs = row_table("CoconutTreeLeaf", MAX_LEAFGROUPS, sizeof *lfs); }
 static int lf_of(int row)
 {
     for (int i = 0; i < nlfs; i++) if (lfs[i].row == row) return i;
@@ -41858,7 +42285,13 @@ static struct {
     int row, init, n, type; float coord; V3 up;
     V3 pos[FG_FISH], vel[FG_FISH], front[FG_FISH], off[FG_FISH], esc[FG_FISH];
     float dappr[FG_FISH]; int tsearch[FG_FISH], tmove[FG_FISH], nrv[FG_FISH];
-} fgs[MAX_FGROUPS];
+} *fgs; /* (game_init: fg_alloc) */
+static void fg_alloc(void) /* a group a FishGroupA..F row, at most MAX_FGROUPS */
+{
+    int n = 0;
+    for (int i = 0; i < 6; i++) n += count_type((const char *const[]){"FishGroupA", "FishGroupB", "FishGroupC", "FishGroupD", "FishGroupE", "FishGroupF"}[i], 0);
+    fgs = n ? mem_alloc(MEM_OBJECTS, (u32)(n < MAX_FGROUPS ? n : MAX_FGROUPS) * sizeof *fgs) : NULL;
+}
 static void update_fishes(void)
 {
     static const char *const fg[6] = {"FishGroupA", "FishGroupB", "FishGroupC", "FishGroupD", "FishGroupE", "FishGroupF"};
@@ -42876,12 +43309,13 @@ static void update_anmmodels(void)
         int k = in->stage - 1, cam = stage_cam_of(sc->types + 32 * r->type);
         if (*st < 0xFFFF) ++*st;
         if (*n == 0) {
-            int go = in->anmmodel == 3 ? mario_ground == i : in->anmmodel == 4 ? 0 : r->sw[SW_A] < 0 || sw_on(r, SW_A); /* isOnStartAnmTrigger */
+            /* isOnStartAnmTrigger (AnmModelBindMove: the rush actor, GCapture, binded to its body) */
+            int go = in->anmmodel == 3 ? mario_ground == i : in->anmmodel == 4 ? gcap.phase >= 2 && gcap_touch == i : r->sw[SW_A] < 0 || sw_on(r, SW_A);
             if (in->anim && !*st) { obj_start(in, "Move"); in->anim->speed = 0.0f; in->anim->frame = 0.0f; } /* still at its first frame */
             if (go) {
                 *n = 1; *st = 0;
                 obj_start(in, "Move");
-                if (in->anmmodel == 3 && r->sw[SW_B] >= 0) sw_set((Row *)r, SW_B, 1); /* AnmModelGroundOnMove::control */
+                if ((in->anmmodel == 3 || in->anmmodel == 4) && r->sw[SW_B] >= 0) sw_set((Row *)r, SW_B, 1); /* AnmModelGroundOnMove / AnmModelBindMove::control */
             }
         } else if (*n == 1) {
             if (*st == 1) { /* the first step */
@@ -47631,11 +48065,7 @@ static void dx_cast_hook(int row, int type, int part)
         row_dead[row] = 0; sw_changed = 1; butler_nrv = 2;
         return;
     }
-    if (type == 0 && !strcmp(cls, "GCaptureTarget")) { /* GCaptureTarget::appear: hidden, exeAppear shows it at step 30 */
-        se_start(SE_SY_GCAPTURE_APPEAR, NULL);
-        row_demo_hide[row] = 30;
-        return;
-    }
+    if (type == 0 && !strcmp(cls, "GCaptureTarget")) { gcap_appear(row); return; } /* GCaptureTarget::appear (update_gcap_targets) */
     if (type == 3 && !strcmp(cls, "ElectricRail")) { row_dead[row] = 1; sw_changed = 1; return; } /* ElectricRailNrvDisappear */
     if (type == 2 || type == 3) printf("demo: no %s for %s\n", type == 2 ? "functor" : "nerve", cls);
 }
@@ -49300,8 +49730,10 @@ static int coach_takeout(Inst *in) /* 1 while its TakeOutStar runs (exeAnim) */
  * TakeOutStar (NPCUtil.cpp:645-698: its TakeOutStar action and the star model's, the star's level SE past
  * sStarAppearSeStep 103, the star out at the action's end), then startLastStageBGM unless in FishTunnelGalaxy.
  * GapSt: n 1 Escape, 2 its wait, 3 TakeOutStar; i its star out; f _185.
- * ponytail: the Appear nerve (mAppearBehavior not 0: its Change action falling to the ground, :392-416) not ported:
- * the NPCs here have no binder */
+ * Appear (:392-416; mAppearBehavior not 0): its Change action, falling by sFallGravity 0.6 a step with
+ * sFallFrictionRate 0.98 until it is bound to the ground, over once its BCK stopped (GapSt: n 4, v.x its fall speed, v.y
+ * set once it moved: p its place from then on). ponytail: the NPCs here have no binder: the fall is a line to the map
+ * under its feet along its own up (no wall, no slide); no faceToPlayer in the fall */
 static int kino_star(const Row *r) { return r->arg[2] == 8; }
 static int kino_took(int row) { return !strcmp(sc->types + 32 * sc->objs[row].type, "Kinopio") && kino_star(&sc->objs[row]) && gap_st(row)->i; }
 static int kino_event(int k, u32 v)
@@ -49319,7 +49751,21 @@ static int kinopio_nerve(Inst *in, int talking) /* 1 while Escape / TakeOutStar 
 {
     const Row *r = &sc->objs[in->row];
     GapSt *g = gap_st(in->row);
-    if (!g->n) g->n = r->sw[SW_APPEAR] >= 0 && r->arg[2] != 4 && r->arg[4] == 0 ? 1 : 2, g->st = 0;
+    if (!g->n) g->n = r->sw[SW_APPEAR] < 0 || r->arg[2] == 4 ? 2 : r->arg[4] == 0 ? 1 : 4, g->st = 0;
+    if (g->v.y != 0.0f) { in->m[12] = g->p.x; in->m[13] = g->p.y; in->m[14] = g->p.z; } /* (a rebind puts it back at its placement) */
+    if (g->n == 4) { /* exeAppear */
+        V3 p = v3(in->m[12], in->m[13], in->m[14]), hp;
+        if (!g->st++) { obj_play(in, "change", 0, 0); g->v.x = 0.0f; g->v.z = 0.0f; printf("kinopio row %d: Appear%c", in->row, 10); }
+        if (g->v.z == 0.0f) { /* (v.z: bound to the ground) */
+            g->v.x = (g->v.x + 0.6f) * 0.98f;
+            if (kcl_line(vadd(p, vmul(in->nu, 30.0f)), vsub(p, vmul(in->nu, g->v.x)), &hp, NULL, NULL)) { p = hp; g->v.x = 0.0f; g->v.z = 1.0f; }
+            else if (g->st > 600) g->v.z = 1.0f; /* (no ground under it: where it is) */
+            else p = vsub(p, vmul(in->nu, g->v.x));
+            g->p = p; g->v.y = 1.0f;
+            in->m[12] = p.x; in->m[13] = p.y; in->m[14] = p.z;
+        } else if (!in->anim || in->anim->done) g->n = 2; /* isBinded, isBckStopped: popNerve */
+        return g->n == 4;
+    }
     if (g->n == 1) { /* exeEscape */
         if (!g->st++) {
             obj_play(in, "escape", 0, 0);
@@ -50309,6 +50755,70 @@ static void haze_update(void)
 #endif
 }
 static void haze_draw(void) { if (haze.on) render_raster_scroll(1.625f, 120, 216.0f, haze.t); }
+/* ViewGroupCtrl (LiveActor/ViewGroupCtrl.cpp) and its ViewGroupCtrlCubes (arg0 a view group, arg1 its order). update:
+ * each cube holding Mario sets its group's entry: _0 (in view: ClippingActorInfo::isJudgedToClip takes far level 0,
+ * no far clipping), arg1 1 / 2 / 3 _1 / _2 / _3 (LodCtrl::update: the high / middle / low model forced), arg1 4 _4
+ * and not _0 (hideAllModel). The rows' ViewGroupId: the VGRP chunk (row, id; bit 14: a planetobjinfo row, whose
+ * PlanetMap makes a LodCtrlPlanet); a pack without it (sliced before 2026-11-19) has no groups, as before.
+ * ponytail: the port has no LodCtrl (its planets' low models are the zones' low packs, streamed): _1 / _2 / _3 do
+ * nothing, and _4 hides the planets, the NPCs and BeeFlowerHover (vg_hidden), not the other map objects with a
+ * LodCtrl (UFOBase, LavaStrangeRock, MapObjActor's planet LOD...); the far level 0 reaches only what the port clips
+ * by ClippingJudge: the NPCs, the walkers and the SuperSpinDrivers (obj_clipped) */
+static short *row_vgroup, *vg_cubes;
+static int nvg_cubes, nvg_on;
+static struct { short id; unsigned char f; } vg_on[16];
+static void vg_init(const Scene *s, const unsigned char *blob)
+{
+    u32 sz;
+    const unsigned char *c = blob_chunk(blob, "VGRP", &sz);
+    int t = scene_type(s, "ViewGroupCtrlCube");
+    row_vgroup = NULL; vg_cubes = NULL; nvg_cubes = nvg_on = 0;
+    if (!c || t < 0) return;
+    row_vgroup = mem_alloc(MEM_SCENE, s->nobjs * sizeof(short));
+    for (u32 i = 0; i < s->nobjs; i++) { row_vgroup[i] = -1; nvg_cubes += (int)s->objs[i].type == t; }
+    for (u32 i = 0; i < *(const u32 *)c; i++) {
+        u16 row = *(const u16 *)(c + 4 + 4 * i);
+        if (row < s->nobjs) row_vgroup[row] = *(const s16 *)(c + 6 + 4 * i);
+    }
+    vg_cubes = mem_alloc(MEM_SCENE, (nvg_cubes + 1) * sizeof(short));
+    nvg_cubes = 0;
+    for (u32 i = 0; i < s->nobjs && i < 0x8000; i++) if ((int)s->objs[i].type == t) vg_cubes[nvg_cubes++] = (short)i;
+}
+static void vg_update(void) /* ViewGroupCtrl::update */
+{
+    int was = nvg_on;
+    nvg_on = 0;
+    for (int i = 0; i < nvg_cubes; i++) {
+        const Row *r = &sc->objs[vg_cubes[i]];
+        if (r->arg[0] < 0 || !row_shown(vg_cubes[i]) || !area_inside(r, mario->pos)) continue;
+        int k = 0;
+        while (k < nvg_on && vg_on[k].id != r->arg[0]) k++;
+        if (k == nvg_on) { if (nvg_on == 16) continue; vg_on[nvg_on].id = (short)r->arg[0]; vg_on[nvg_on++].f = 0; }
+        vg_on[k].f |= VG_IN;
+        if (r->arg[1] == 1) vg_on[k].f |= VG_HIGH;
+        else if (r->arg[1] == 2) vg_on[k].f |= VG_MIDDLE;
+        else if (r->arg[1] == 3) vg_on[k].f |= VG_LOW;
+        else if (r->arg[1] == 4) { vg_on[k].f &= ~VG_IN; vg_on[k].f |= VG_HIDE; }
+    }
+#ifdef VG_TEST /* XF=-DVG_TEST: the groups Mario's cubes turn on, when their count changes */
+    if (was != nvg_on) { printf("view groups: %d on", nvg_on); for (int k = 0; k < nvg_on; k++) printf(" %d:%x", vg_on[k].id, vg_on[k].f); printf("\n"); }
+#else
+    (void)was;
+#endif
+}
+static int vg_of(int row) /* its group's entry (0: no group, or no cube of it holds Mario) */
+{
+    if (!row_vgroup || row < 0 || row_vgroup[row] < 0) return 0;
+    for (int k = 0; k < nvg_on; k++) if (vg_on[k].id == (row_vgroup[row] & 0x3FFF)) return vg_on[k].f;
+    return 0;
+}
+/* LodCtrl::hideAllModel for the instances whose class has a LodCtrl: a planet's (PlanetMap), an NPC's (NPCActor's
+ * caps: clipcls 1), BeeFlowerHover's */
+static int vg_hidden(const Inst *in)
+{
+    if (!row_vgroup || in->row < 0 || row_vgroup[in->row] < 0 || !(vg_of(in->row) & VG_HIDE)) return 0;
+    return row_vgroup[in->row] >= 0x4000 || in->clipcls == 1 || in->beeflower;
+}
 /* CollisionArea.cpp (a centre origin cube; arg0 -1: it pushes, arg1 -1: a vanished Teresa Mario passes, arg2 its
  * radius about his centre or his hit radius 60 / 100 as Teresa, arg3 the faces with a polygon). movement: valid (its
  * SW_APPEAR), a vanished Teresa Mario sets _58 (passing through: 5 more of radius until he is out); else hitCheck of
@@ -50505,6 +51015,7 @@ static void keep_effects(void)
     wall_shade_calc();
     haze_update();
     update_collision_areas();
+    vg_update();
     update_quake();
     float m[16];
     for (int i = 0; i < npieces; i++)
@@ -53079,13 +53590,13 @@ static void launch_clip(Launch *L, const Row *r)
     L->clip_r = margin;
 }
 /* ClippingActorInfo::isJudgedToClip for the classes whose clipping is ported (clipcls), off ClippingJudge's frustum of
- * their far level. ponytail: no ViewGroupId in the pack (the far level as outside every ViewGroupCtrlCube) */
+ * their far level, or of level 0 (no far clipping) while a ViewGroupCtrlCube of their view group holds Mario (vg_of) */
 static int obj_clipped(const Inst *in)
 {
     if (in->clipcls == 1) { /* NPCActor::initialize (NPCActor.cpp:324) sets none: LiveActor's ClippingActorInfo
                              * (ClippingActorInfo.cpp:7-16), a sphere of 300 about mPosition, far level 6 (10000) */
         float p[3] = {in->m[12], in->m[13], in->m[14]};
-        return render_clip_judge(p, 300.0f, 10000.0f);
+        return render_clip_judge(p, 300.0f, vg_of(in->row) & VG_IN ? 1e9f : 10000.0f); /* (its view group's cube: level 0) */
     }
     for (int i = 0; i < nlaunches; i++) { /* SuperSpinDriver */
         Launch *L = &launches[i];
@@ -53093,7 +53604,7 @@ static int obj_clipped(const Inst *in)
         if (mario->launch == i || L->cool) return 0; /* tryBind's invalidateClipping (SuperSpinDriver.cpp:418) until exeWait's
                                                       * validateClipping (:627) after the cool down */
         if (L->clip_r == 0.0f) launch_clip(L, &sc->objs[in->row]);
-        return render_clip_judge(&L->clip_c.x, L->clip_r, 20000.0f); /* setClippingFar200m (:74): level 5 */
+        return render_clip_judge(&L->clip_c.x, L->clip_r, vg_of(in->row) & VG_IN ? 1e9f : 20000.0f); /* setClippingFar200m (:74): level 5 */
     }
     return 0;
 }
@@ -56586,6 +57097,8 @@ int game_test_bk(int frame)
 #include "ocean_ring.inc" /* OceanRing: or_* */
 #include "water_road.inc" /* WaterRoad: wrd_* */
 #include "gravity_light_road.inc" /* GravityLightRoad: glr_* */
+#include "banekiti.inc" /* Banekiti: update_banekiti */
+#include "lava_prominence_triple.inc" /* LavaProminenceTriple / LavaProminenceEnvironment: lpt_* */
 #include "lava_jambo_sun.inc" /* LavaJamboSunPlanet: ljs_* */
 #include "trample_star.inc" /* TrampleStar: trs_* */
 #include "syati.inc" /* Syati / TalkSyati, PrizeRing: sy_*, prg_* */
@@ -58114,6 +58627,7 @@ void game_update(void)
     update_airs(); /* registerDemoSimpleCastAll: they move in demos too */
     ca_update();
     LQ(3, update_railers());
+    update_rainclouds(); /* after the rail movers: its mover's end */
     LQ(4, update_talkers());
     fat_rings_talk(); /* TicoGalaxy's TicoStarRing */
     update_bees();
@@ -58146,7 +58660,11 @@ void game_update(void)
             if (player_mode == PM_BEE) menu_submeter_ratio(1, (float)mario->air_spin / MC.mAirWalkTime);
             if (swimming) menu_submeter_ratio(0, (float)oxygen / MC.mOxygenMax);
             screen_pos(vadd(mario->pos, vmul(mario->up, BODY_RADIUS)), &sx, &sy);
-            menu_submeter_update(mario->grounded || (swimming && !mario->jumping), sx, sy, !(menu_paused() || dome_layout_off || dx.on));
+            { /* SubMeterLayout::control: getPlayerPos on the screen (his place, not his centre) */
+                float fx = sx, fy = sy;
+                screen_pos(mario->pos, &fx, &fy);
+                menu_submeter_update(mario->grounded || (swimming && !mario->jumping), fx, fy, !(menu_paused() || dome_layout_off || dx.on));
+            }
             /* setLifeCount (not while the life-up demo holds him: control returns before controlMain's update2D);
              * MeterLayout::calcMarioHeadPosition: his centre on the screen, up by calcPointRadius2D(120), (32, -38) */
             if (!super_t) menu_meter_count(life);
@@ -58225,6 +58743,8 @@ void game_update(void)
     update_trapezes();
     wrd_update();
     glr_update();
+    update_banekiti();
+    lpt_update();
     ljs_update();
     trs_update();
     swr_update();
@@ -58282,6 +58802,7 @@ void game_update(void)
     LQ(15, kari_bite());
     LQ(16, break_boxes());
     LQ(17, update_collapse());
+    update_gcap_targets();
     LQ(18, update_flips());
     LQ(19, update_hip_switches());
     update_bigbubbles();
@@ -59113,6 +59634,7 @@ void game_draw(void)
         if (in->invisible || in->sky || in->sun) continue;
         if (air_prior && in->halo >= 3) continue; /* drawn before the planets */
         if (in->clipa || in->clipp == 3 || (in->clipp && ca_holder() && ca_clipped(in))) continue; /* ca_draw */
+        if (vg_hidden(in)) continue; /* its ViewGroupCtrlCube of arg1 4: LodCtrl::hideAllModel */
         if (in->plant) {
             if (plant_first[in->row] < 0) continue;
             int n = plant_count(&sc->objs[in->row]);
@@ -59494,7 +60016,7 @@ void game_draw(void)
         const float *wsc = sc->objs[kuribo[i].row].scale;
         float wr = md->radius * fmaxf(fmaxf(wsc[0], wsc[1]), wsc[2]) + 100.0f, wp[3] = {kuribo[i].pos.x, kuribo[i].pos.y, kuribo[i].pos.z};
         int wvis = render_visible(wp, wr);
-        kuribo[i].clipped = (u8)render_clip_judge(wp, 300.0f, 10000.0f); /* ClippingActorInfo's default sphere, 300 about it, off
+        kuribo[i].clipped = (u8)render_clip_judge(wp, 300.0f, vg_of(kuribo[i].row) & VG_IN ? 1e9f : 10000.0f); /* ClippingActorInfo's default sphere, 300 about it, off
                                                                * ClippingJudge's volume (this view) */
         if (wvis && !(kuribo[i].kind == WALK_UNIZO && unizo_breaking(&kuribo[i]))) { u32 c1 = cycles(); walker_shadow(&kuribo[i]); prof_shadow += cycles() - c1; } /* appearBreakModel: invalidateShadowAll */
         basis_matrix(m, kuribo[i].pos, kuribo[i].up, vsub(mario->pos, kuribo[i].pos), 0);
@@ -60060,6 +60582,10 @@ mario_model:
         draw_bigbubbles(ce, right, vcross(back, right));
     }
     st_draw();
+#ifdef RAINCLOUD_CYLINDER /* ponytail: the rain's cylinder comes out an opaque dark column (its translucent material and
+                           * texture scroll are not made): not drawn until then (seen in ReverseKingdomGalaxy 3) */
+    rc_draw();
+#endif
     draw_syati_rings();
     RESTQ(6);
     gw_draw();

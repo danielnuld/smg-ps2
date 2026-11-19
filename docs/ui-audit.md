@@ -27,7 +27,7 @@ Started 2026-11-18. Rows are in the order seen most. The fixes under #640, #641,
 | PurpleCoinCounter | game.c pc_* | ok. Left out: PurpleCoinCounterLight effect |
 | MarioMeter / MeterLayout | menu.c hm_* | ok (its twelve nerves; sAppearTime 120, sWaitStartTime 240, sBreakDelayTime 40 with SE_SY_LIFE_PLATE_DEC, sPowerUpWaitTime 60, sRecoveryCountInterval 5, sMoveToBasePositionTime 25, the alpha 0.3 .. 1.2, Danger's rates 4 / 2). Left out: the Break / Break123 effects |
 | SuddenDeathMeter | - | issue #662 |
-| MarioSubMeter / SubMeterLayout | menu.c subm_* | ok on its states (Appear, Wait, Danger under 0x40 with its rate, End after 60 frames full at rest); placed from Mario's centre instead of getPlayerPos: issue #707 |
+| MarioSubMeter / SubMeterLayout | menu.c subm_* | ok on its states (Appear, Wait, Danger under 0x40 with its rate, End after 60 frames full at rest); fixed #707: placed from getPlayerPos (it was Mario's centre) |
 | TimeLimitLayout | menu.c tl_* | ok (sTimingTable, the scale 8 frames / 0.5, the count sounds at 600 / 360 / 120, TimeLimit at 600 left). Its Fadeout nerve is left out: the port takes DisplayModeOnNormal as always on (the comet timer's) |
 | NoteCounter | game.c (its count only) | issue #662 |
 | BombTimerLayout | - | issue #662 |
@@ -50,7 +50,7 @@ Started 2026-11-18. Rows are in the order seen most. The fixes under #640, #641,
 | ButtonPaneController | menu.c btn_* | ok (its nine nerves, calcPointingAnimStartFrame, cDecidedToDisappearAnimRate 1.5; the decide trigger is the pad's X) |
 | YesNoController | menu.c yn_* | ok. Left out: the LeftText / RightText effects, CS_CLICK_CLOSE; setSE replaces the three sounds together |
 | YesNoLayout | menu.c ynl_* | ported, not re-read |
-| SysInfoWindow | menu.c si_* | ok but its key windows' IconAButton: issue #679. WindowType_Mini not used |
+| SysInfoWindow | menu.c si_* | fixed #679: its key windows' IconAButton (open in appear, term in Disappear, drawn with the window). WindowType_Mini not used |
 | IconAButton | menu.c iab_* | ok (Open / Wait / Term, openWithoutMessage, the follow pane) |
 | BackButton | menu.c (ss.back, fsl.back, gm.back, pb.back) | ok (SE_SY_BUTTON_CURSOR_ON on the pointer, SE_SY_GALAXY_DECIDE_CANCEL once) |
 | GalaxySelectBackButton | menu.c dmu_back_* | ported, not re-read |
