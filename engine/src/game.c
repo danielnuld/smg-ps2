@@ -3760,10 +3760,15 @@ static void update_tsuki(void)
 }
 
 /* Kiraira.cpp: drifts along gravity (velocity 1.5 sin(45 + 2 t) a frame: 43 (cos 45 - cos(45 + 2 t)) from its place),
- * turns to Mario within 1500; touching its body (120) explodes it (an explosion attack), SW_B on; Dead 300 frames,
- * RecoverSign 120, Revival ~60 (KIRA_DOWN in all), then it waits again (SW_B off). row_turn 1 while down, row_step its
- * frames. ponytail: hidden while Dead (its Down BCK), faces Mario at once, SpaceMine's explosion, no chain, no group
- * alarm. KirairaRail (driftOnRail): instead of the bob it runs its rail at arg0 (5) a frame (row_coord, row_rdir),
+ * Wait until Mario is within 1500 (sEyeSensorInRadius), FaceToMario (2.8 degrees a frame until it faces him),
+ * FaceToMarioAndStare (its eyes open at step 5: SE_OJ_KIRAIRA_STARE), back to Wait past 2000; its body (120) on Mario,
+ * his spin on it (both an explosion attack he takes), a star piece or a thrown shell (mIsForceDetonated): Explode
+ * (the strong rumble / shake within 3000, Explosion, SE_OJ_KIRAIRA_EXPLODE; force-detonated: the explosion to what
+ * its eye (600) holds: Mario, the walkers, the other Kirairas, BeExploded: 10 frames later their own), SW_B on; Dead
+ * 300 frames (its group turned to it, eyes open: ACTMES_GROUP_ATTACK), RecoverSign 120, Recover (SE_OJ_KIRAIRA_RECOVER)
+ * then Wait / Stare (SW_B off); down, its body pushes Mario.
+ * ponytail: its model is packed without clips: no Down / RevivalStart / Revival / Stop BCKs (hidden while Dead,
+ * Recover 60 frames), no eye BTPs, no BRKs, no SearchLight; no chain (KirairaChain), its shadow. KirairaRail (driftOnRail): instead of the bob it runs its rail at arg0 (5) a frame (row_coord, row_rdir),
  * turning back within 50 of an end (SE_OJ_LV_KIRAIRA_CHAIN), and stays where it is while down */
 #define KIRA_DOWN 480
 static void hurt_mario(V3 from, float speed);
@@ -3898,40 +3903,162 @@ static void update_ibubbles(void)
     }
 }
 
+/* Kiraira's nerves in row_turn's low bits (its step: row_step), mEyesOpen and mIsForceDetonated above them; its front
+ * mFront is its matrix's Z (the draw builds the pose from it) */
+enum { KI_WAIT, KI_FACE, KI_STARE, KI_EXPLODE, KI_BEEXPLODED, KI_DEAD, KI_RECOVERSIGN, KI_RECOVER };
+#define KI_EYES 8
+#define KI_FORCED 16
+static int ki_nerve(int row) { return row_turn[row] & 7; }
+static int ki_down(int row) { int n = ki_nerve(row); return n == KI_DEAD || n == KI_RECOVERSIGN || n == KI_RECOVER; } /* isDown */
+static void ki_set(int row, int n) { row_turn[row] = (signed char)((row_turn[row] & ~7) | n); row_step[row] = 0xFFFF; } /* setNerve */
+static void ki_open(const Inst *in, V3 p) /* openEyes (ponytail: the EyeOpen BTP: its model is packed without clips) */
+{
+    if (!(row_turn[in->row] & KI_EYES)) se_start(SE_OJ_KIRAIRA_STARE, &p.x);
+    row_turn[in->row] |= KI_EYES;
+}
+static void ki_close(const Inst *in) { row_turn[in->row] &= ~KI_EYES; } /* closeEyes: SearchLight deleted */
+static int turn_on_plane(V3 *dir, V3 to, V3 axis, float cosmax);
+static void walker_explosion(V3 from);
+static void mario_push_out(V3 c, float r);
+static int mario_offence(const void *id, V3 c, float r, V3 grav);
+static void m_punch(const void *id, V3 at, int how);
+static int ki_turn(Inst *in, V3 up, V3 to, float deg) /* turnDirectionToTargetDegree(mFront): 1 once it faces it within deg */
+{
+    V3 f = v3(in->m[8], in->m[9], in->m[10]);
+    float l = vlen(f);
+    if (l < 1e-6f || vlen(vtangent(to, up)) < 1e-6f) return 1;
+    f = vmul(f, 1.0f / l);
+    turn_on_plane(&f, to, vmul(up, -1.0f), cosf(deg * 0.0174533f));
+    in->m[8] = f.x * l; in->m[9] = f.y * l; in->m[10] = f.z * l;
+    return vdot(vnorm(vtangent(f, up)), vnorm(vtangent(to, up))) >= cosf(deg * 0.0174533f); /* isFaceToPlayerHorizontalDegree */
+}
+static void ki_explode(Inst *in, V3 p) /* explode */
+{
+    const Row *r = &sc->objs[in->row];
+    float m[16], d = vlen(vsub(mario->pos, p));
+    ki_close(in);
+    if (d <= 3000.0f) { pad_rumble(RUMBLE_STRONG); camera_shake(SHAKE_STRONG); } /* startRumbleWithShakeCameraStrong(強, 中, 3000, FLOAT_MAX) */
+    else { pad_rumble(RUMBLE_MIDDLE); camera_shake(SHAKE_NORMAL); }
+    memcpy(m, in->m, 64);
+    m[12] = p.x; m[13] = p.y; m[14] = p.z;
+    if (row_turn[in->row] & KI_FORCED) { /* sendMsgExplosionToNearActor(its eye sensor, 600): every sensor it holds */
+        V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+        walker_explosion(p); /* ponytail: the walkers within cExplosionDistance 250, not the eye's 600 */
+        if (vlen(vsub(mc, p)) < 600.0f + HIT_BODY_R) mario_attack(ATK_EXPLOSION, p);
+        for (int i = 0; i < ninsts; i++) { /* the other Kirairas' bodies (120): BeExploded */
+            Inst *q = &insts[i];
+            if (!q->kiraira || q == in || ki_down(q->row)) continue;
+            V3 qu, qp = kiraira_pos(q, &qu);
+            if (vlen(vsub(qp, p)) >= 600.0f + 120.0f) continue;
+            ki_set(q->row, KI_BEEXPLODED); /* receiveMsgEnemyAttack: invalidateClipping, BeExploded */
+        }
+    }
+    if (!fx_named("Kiraira", "Explosion", m, NULL, NULL)) fx_emit(FX_SPACEMINE_EXPLOSION, m); /* (packs cut before jpa.py named Kiraira: SpaceMine's) */
+    se_start(SE_OJ_KIRAIRA_EXPLODE, &p.x);
+    ki_set(in->row, KI_DEAD); /* (mChain->mIsCut: no chain) */
+    printf("kiraira %d explodes%s\n", in->row, row_turn[in->row] & KI_FORCED ? " (forced)" : "");
+    (void)r;
+}
+/* receiveMsgPlayerAttack's isMsgStarPieceAttack (shell 0) / isMsgJetTurtleAttack (shell 1: mIsForceDetonated) on its
+ * body (120): Explode. 1 taken */
+static int kiraira_shot(V3 at, float rad, int shell)
+{
+    for (int k = 0; k < ninsts; k++) {
+        Inst *in = &insts[k];
+        if (!in->kiraira || !row_shown(in->row) || ki_down(in->row)) continue;
+        V3 up, p = kiraira_pos(in, &up);
+        if (vlen(vsub(at, p)) > 120.0f + rad) continue;
+        if (shell) row_turn[in->row] |= KI_FORCED;
+        ki_set(in->row, KI_EXPLODE);
+        printf("%s explodes kiraira %d\n", shell ? "shell" : "star piece", in->row);
+        return 1;
+    }
+    return 0;
+}
 static void update_kiraira(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     FOR_KIND(i, kiraira) {
-        const Inst *in = &insts[i];
+        Inst *in = &insts[i];
         if (!in->kiraira) continue;
         const Row *r = &sc->objs[in->row];
-        unsigned short *t = &row_step[in->row];
-        signed char *ph = &row_turn[in->row];
-        if (*ph) {
-            if (++*t >= KIRA_DOWN) { *ph = 0; *t = 0; if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 0); }
-            continue;
-        }
+        int row = in->row, nrv = ki_nerve(row);
+        int st = (short)++row_step[row]; /* (setNerve leaves -1) */
         u32 rn = 0; int cl = 0;
         const float *rail = kira_rail(in, &rn, &cl);
-        if (rail) { /* driftOnRail */
-            float len = w_rail_len(rail, rn), sp = r->arg[0] != -1 ? (float)r->arg[0] : 5.0f;
-            if (row_rdir[in->row] != -1) row_rdir[in->row] = 1;
-            row_coord[in->row] += sp * row_rdir[in->row];
-            if (row_coord[in->row] < 0) row_coord[in->row] = 0;
-            if (row_coord[in->row] > len) row_coord[in->row] = len;
-            if (row_rdir[in->row] > 0 ? row_coord[in->row] >= len - 50.0f : row_coord[in->row] <= 50.0f) row_rdir[in->row] = -row_rdir[in->row]; /* isRailReachedNearGoal */
-            insts[i].lv[0] = se_level(SE_OJ_LV_KIRAIRA_CHAIN, &in->m[12], insts[i].lv[0]);
+        V3 up, p = kiraira_pos(in, &up), to = vsub(mario->pos, p);
+        float dm = vlen(to);
+        int drift = 0;
+        switch (nrv) {
+        case KI_WAIT:
+            if (st == 0) { if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 0); ki_close(in); }
+            if (dm < 1500.0f) ki_set(row, KI_FACE); /* sEyeSensorInRadius */
+            else drift = 1;
+            break;
+        case KI_FACE:
+            if (dm >= 2000.0f) ki_set(row, KI_WAIT); /* sEyeSensorOutRadius */
+            else if (ki_turn(in, up, to, 2.8f)) ki_set(row, KI_STARE); /* sTurnRate; its Stop BCK */
+            else drift = 1;
+            break;
+        case KI_STARE:
+            if (st == 5) ki_open(in, p); /* sStepToStare */
+            if (dm >= 2000.0f) ki_set(row, KI_WAIT);
+            else { ki_turn(in, up, to, 2.8f); drift = 1; }
+            break;
+        case KI_BEEXPLODED:
+            if (st == 0) row_turn[row] |= KI_FORCED;
+            if (st == 10) { ki_explode(in, p); continue; } /* sIntervalToExplode */
+            break;
+        case KI_EXPLODE:
+            if (st == 0) { ki_explode(in, p); continue; }
+            break;
+        case KI_DEAD:
+            if (st == 0 && r->sw[SW_B] >= 0) sw_set(r, SW_B, 1);
+            if (r->group >= 0) /* sendMsgToGroupMember(ACTMES_GROUP_ATTACK): the others turn to it and stare */
+                for (int j = 0; j < ninsts; j++) {
+                    Inst *q = &insts[j];
+                    if (!q->kiraira || q == in || ki_down(q->row)) continue;
+                    const Row *o = &sc->objs[q->row];
+                    if (o->group != r->group || o->zone != r->zone) continue;
+                    V3 qu, qp = kiraira_pos(q, &qu);
+                    ki_turn(q, qu, vsub(p, qp), 20.0f);
+                    ki_open(q, qp);
+                }
+            if (st == 300) ki_set(row, KI_RECOVERSIGN); /* sStepToRecoverSign */
+            break;
+        case KI_RECOVERSIGN:
+            if (st == 120) ki_set(row, KI_RECOVER); /* sStepToRecover */
+            break;
+        case KI_RECOVER:
+            if (st == 0) {
+                se_start(SE_OJ_KIRAIRA_RECOVER, &p.x);
+                if (dm < 2000.0f) ki_open(in, p);
+                row_turn[row] &= ~KI_FORCED;
+            }
+            if (dm < 2000.0f) ki_turn(in, up, to, 20.0f);
+            if (st >= 60) ki_set(row, dm >= 2000.0f ? KI_WAIT : KI_STARE); /* ponytail: isBckStopped (Revival: no clips, 60 frames) */
+            break;
         }
-        V3 up, p = kiraira_pos(in, &up);
-        if (vlen(vsub(c, p)) >= 120.0f * in->s + HIT_BODY_R) continue;
-        mario_attack(ATK_EXPLOSION, p);
-        float m[16];
-        memcpy(m, in->m, 64);
-        m[12] = p.x; m[13] = p.y; m[14] = p.z;
-        fx_emit(FX_SPACEMINE_EXPLOSION, m);
-        *ph = 1; *t = 0;
-        if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 1);
-        printf("kiraira %d explodes\n", in->row);
+        if (drift && rail) { /* driftOnRail (a down one stays where it is) */
+            float len = w_rail_len(rail, rn), sp = r->arg[0] != -1 ? (float)r->arg[0] : 5.0f;
+            if (row_rdir[row] != -1) row_rdir[row] = 1;
+            row_coord[row] += sp * row_rdir[row];
+            if (row_coord[row] < 0) row_coord[row] = 0;
+            if (row_coord[row] > len) row_coord[row] = len;
+            if (row_rdir[row] > 0 ? row_coord[row] >= len - 50.0f : row_coord[row] <= 50.0f) row_rdir[row] = -row_rdir[row]; /* isRailReachedNearGoal */
+            in->lv[0] = se_level(SE_OJ_LV_KIRAIRA_CHAIN, &p.x, in->lv[0]);
+        }
+        if (ki_nerve(row) != nrv) continue;
+        /* attackSensor: its mind eye (1500) on a JetTurtle; its body (120) on Mario */
+        if (!ki_down(row) && jet.inst >= 0 && jet.phase == 2 && vlen(vsub(jet.head, p)) < 1500.0f + 60.0f) { ki_turn(in, up, vsub(jet.head, p), 20.0f); ki_open(in, p); }
+        if (!ki_down(row) && nrv != KI_EXPLODE && nrv != KI_BEEXPLODED && mario_offence(in, p, 120.0f, vmul(up, -1.0f)) == 3 /* MSG_HITALL */) {
+            m_punch(in, p, 0); /* receiveMsgPlayerAttack: isMsgPlayerHitAll on its body, sendMsgEnemyAttackExplosion to him */
+            if (mario_attack(ATK_EXPLOSION, p)) { ki_set(row, KI_EXPLODE); continue; }
+        }
+        if (vlen(vsub(c, p)) >= 120.0f + HIT_BODY_R) continue;
+        if (ki_down(row)) { mario_push_out(p, 120.0f); continue; } /* sendMsgPush */
+        if (nrv == KI_EXPLODE || nrv == KI_BEEXPLODED) continue;
+        if (mario_attack(ATK_EXPLOSION, p)) ki_set(row, KI_EXPLODE); /* sendMsgEnemyAttackExplosion taken (his spin on it: the same) */
     }
 }
 
@@ -15191,6 +15318,7 @@ static void update_jets(void)
             if (!gone && wz_jet_hit(p)) gone = 1; /* WaterBazooka: isMsgJetTurtleAttack */
             if (!gone && pg_jet_hit(p)) gone = 1; /* PenguinRacer in its race: isMsgJetTurtleAttack (race.inc) */
             if (!gone && st_jet_hit(p)) gone = 1; /* WaterfallCaveCover: isMsgJetTurtleAttack (statics.inc) */
+            if (!gone && kiraira_shot(p, 60.0f, 1)) gone = 1; /* Kiraira: isMsgJetTurtleAttack (force-detonated) */
             hhp_blow(p, 60.0f); /* HammerHeadPackun: isMsgJetTurtleAttack */
             tbox_hit(p, 60.0f); /* TreasureBoxCracked: isMsgJetTurtleAttack */
             for (int k = 0; k < nkuribo; k++) { /* ACTMES_JET_TURTLE_ATTACK */
@@ -45702,17 +45830,9 @@ static void update_shots(void)
         }
         for (int k = 0; k < ninsts && !hit; k++) {
             const Inst *in = &insts[k];
-            if (!in->kiraira || row_turn[in->row]) continue;
-            V3 up, p = kiraira_pos(in, &up);
-            if (vlen(vsub(s->pos, p)) > 150.0f) continue;
-            float m[16];
-            memcpy(m, in->m, 64);
-            m[12] = p.x; m[13] = p.y; m[14] = p.z;
-            fx_emit(FX_SPACEMINE_EXPLOSION, m);
-            row_turn[in->row] = 1; row_step[in->row] = 0;
-            if (sc->objs[in->row].sw[SW_B] >= 0) sw_set(&sc->objs[in->row], SW_B, 1);
-            printf("star piece explodes kiraira %d" "\n", in->row);
-            hit = 1;
+            if (!in->kiraira) continue;
+            if (kiraira_shot(s->pos, 30.0f, 0)) hit = 1; /* isMsgStarPieceAttack on its body: Explode */
+            break;
         }
         if (!hit && jstand_star(s->pos)) hit = 1; /* JumpStand: isMsgStarPieceAttack */
         if (!hit && hhp_reflects(s->pos, 30.0f)) hit = 2; /* HammerHeadPackun: isMsgStarPieceReflect */
@@ -57848,10 +57968,10 @@ void game_draw(void)
             continue;
         }
         if (in->kiraira) { /* drifting, facing Mario within 1500; hidden while Dead */
-            if (row_turn[in->row] && row_step[in->row] < 300) continue;
-            V3 up, p = kiraira_pos(in, &up), to = vsub(mario->pos, p), fwd = v3(in->m[8], in->m[9], in->m[10]);
+            if ((row_turn[in->row] & 7) == 5) continue; /* KI_DEAD (ponytail: its Down BCK) */
+            V3 up, p = kiraira_pos(in, &up), fwd = v3(in->m[8], in->m[9], in->m[10]);
             float cm[16];
-            basis_matrix(cm, p, up, vdot(to, to) < 1500.0f * 1500.0f ? to : fwd, 0);
+            basis_matrix(cm, p, up, fwd, 0); /* calcMtxFromGravityAndZAxis(mFront) */
             for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= in->s;
             inst_draw(in, in->md, cm);
             continue;
