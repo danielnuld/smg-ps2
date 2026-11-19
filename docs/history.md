@@ -11,6 +11,234 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Mario's sounds the port never played (feat/575-mario-sounds, #575, 2026-11-18): the press (プレスダメージ), the bee
+  wall landing, Teresa's float, Luigi's slide, the spin back; jumpToHipDrop's spin hip drop (_3E5); tryJump's /
+  tryBackJump's dive into deep water (sw_under_water_full: 飛び込みジャンプ, 声高飛び込み) and its failure landing;
+  the pull-back's landing (_430 0xE: 倒れ); MarioDarkDamage (DarkMatterCube: 声沼沈み, 150 frames of ダークマター沈み,
+  the game over); MarioSwim's wall hit with the shell (亀壁ヒット); the effect objects' level sounds
+  (sEffectDataTable); GalaxyNamePlate's new effect SE; the staff roll's thank you as Luigi. PCSX2: a plain
+  HeavenlyBeachGalaxy/1 runs; each sound was not provoked (build with XF=-DSE_LOG to see one). Repack: every galaxy
+  with a DarkMatterCube or ForbidWaterSearchCube (slice.py LOGIC). Left out: the spin hip drop's homing, the dark
+  mask and ダークマター死亡, sendPunch / tryJetAttack on the wall's sensor.
+- changeGameOverAnimation (#572, 2026-11-18): game.c m_game_over_anim picks the down clip by what Mario was doing
+  (座りダウン, 感電, 炎, 仰向け / 俯せ, 奈落, つぶれ, 水泳, 埋まり; none frozen); it was "down" / "deathwater". PCSX2:
+  mode miss runs its whole flow (miss, game over, save window); SINK_TEST=25 ends in 埋まりダウン (diebury).
+- Sink floors, poison and MarioBury (#565, 2026-11-18): m_update_on_sand / m_update_on_poison (MarioWalk.cpp:
+  mSinkTimer in the walk speed, the walk clips, the jump out, the look offset, exeGameOverSink) and MarioSukekiyo.cpp
+  (suke_start / suke_update: stuck in Sand after a hip drop or a hard landing, out with A or a spin). Test
+  XF=-DSINK_TEST=<floor code>: Mario put on the first dry face of it. The game's collision has no Sink (17) or
+  SinkPoison (18) face at all (every ObjectData .pa counted): only Sand 13, SinkDeath 25, NoStampSand 30,
+  SinkDeathMud 31. PCSX2: 25 in SandClockGalaxy/1 sinks 4 a frame to 255, 埋まりダウン, the miss; 13 in
+  HeavenlyBeachGalaxy/1: the hip drop buries him (burystandwait), A gets him out (burystandend), closed 40 frames on.
+  Two faults the test found: m_floor_severe read ground_attr (the last body sweep's, 0 when it met nothing) for
+  mGroundPolygon's code (now m_gtri's), and the walk animation replaced 埋まり (a loop is not "busy").
+  EggStar 1's route unchanged (star at f 4281). Left out: the 砂埋まり / 泥埋まり effects, Sukekiyo's head-down
+  start (doLanding's landing type 1: with MarioLauncher, #566).
+- map_line (#563, 2026-11-18): MR::getFirstPolyOnLineToMap stepped spheres of 10 along the line; now kcl_line
+  (checkArrow: the first face entered from its front), as map_poly. Route unchanged.
+- Mario's area codes (feat/579-mario-area-codes, #579, 2026-11-18): Mario::updateCubeCode's HeavySteeringCube
+  (`m_heavy`, _10._11 / _12: the stick as read, no angle snap and no margins; mainMove's turn slowed by
+  mStickHeavyMinRatio between mStickHeavyMinAngle and MaxAngle, his walk speed with it), ForbidTriangleJumpCube
+  (`m_no_tri_jump`, mDrawStates._3: MarioWall::startJump not turned to the way he came), ForbidJumpCube
+  (`m_forbid_jump`, _1C._7: no doJetJump), DashChargeCylinder (_434 = mItemDashTimer; no stage of RMGE01 places one).
+  area_obj's class cache 24 -> 40. Test: plain with `XF="-DPACKS_OVERLAY=<overlay> -DPUT_TEST=HeavySteeringCube
+  -DPUT_TEST2=ForbidTriangleJumpCube -DPUT_UP=100 -DPUT_NOCAM"` (the put test logs the cube codes; PUT_TEST2: a
+  second class when the scene lacks the first): KoopaBattleVs1Galaxy/1 "heavy 1", SkullSharkGalaxy/1 "no tri jump 1".
+  Only the flags were seen (no pad in the test): the steering and the wall jump under them are as read from Petari.
+  ponytail: PlaneCollisionCube (_10._6), CubeCamera's arg1 (_2 / _3), GlaringLightArea / isInShadeFromTheSun for
+  Teresa Mario. **Release: slice_all.py** KoopaBattleVs1Galaxy, FishTunnelGalaxy, HeavenlyBeachGalaxy,
+  HoneyBeeKingdomGalaxy, HellProminenceGalaxy, ReverseKingdomGalaxy, SkullSharkGalaxy (slice.py LOGIC: the areas
+  were not in the packs).
+- BlackHole's Disappear (feat/596-blackhole-disappear, #596, 2026-11-18): its demo action nerve (dx_cast_hook type 3
+  on a BlackHole / BlackHoleCube cast -> row_turn 1): SE_OJ_BLACK_HOLE_DISAPPEAR, the core's scale eased in from _9C
+  to 0 over steps 30 .. 90, killed at 90; no hum and nothing inhaled meanwhile (attackSensor: Wait only). Test:
+  `build.sh hazard` with `XF=-DBH_DIS_TEST` (the first black hole disappears at frame 300). ponytail: the
+  BlackHoleRange model is not drawn (its 0 .. 90 shrink). **Release: sound.py --pack** for the galaxies with a
+  BlackHole demo cast (simplest with the full repack).
+- Sounds of five ported map objects (feat/595-mapobj-se, #595, 2026-11-18): Torpedo (HomingKiller Type_Torpedo:
+  SE_EM_LV_TORPEDO_MOVE for the fly sound, while chasing SE_EM_LV_TORPEDO_ALARM with modifySe_Takezawa's pitch 1.27
+  .. 1.2 over 300 .. 2000 from Mario and port 11 (its beep's wait) 4 .. 24 over 200 .. 3000, SE_EM_TORPEDO_EXPLOSION);
+  JetTurtle (SE_SY_GET_TURTLE_JET and, out of water, SE_PV_CATCH at the catch; at the throw
+  SE_OJ_TURTLE_JET_LAUNCH_W in water, else _L with SE_PV_THROW, stopped by reset); SpaceCocoon (it had none:
+  SE_PV_CATCH + SE_OJ_SPACE_COCOON_ATTACH at the catch, _DRAG_ST at BindAim's first step, SE_OJ_LV_SPACE_COCOON_DRAG
+  from 100 off its neutral point with modifySe_Kawamura's pitch 1 + t x t and volume 0.7 + 0.3 t x t, updateHang's
+  _DRAG3 at 500 / _DRAG2 from 100, SE_PV_JUMP_JOY + _LAUNCH at the release, _BOUND at a pointer touch); Tsukidashikun
+  (SE_OJ_LV_TSUKIDASHI_VIB through Sign, _START at Move's first step, SE_OJ_LV_TSUKIDASHI_MOVE, _STOP at the rail's
+  end); BigFan (exeWait's SE_OJ_LV_BIG_FAN; the _FAR pair in TeresaMario2DGalaxy). Not ported, dead code in Petari:
+  SpaceMine's Appear nerve (nothing sets it) and CrystalCage's SE_OJ_CRYSTAL_CAGE_S_DAMAGE (only CrystalCageL has two
+  hits). **Release: sound.py --pack** for the galaxies that place them (simplest with the full repack).
+- EarthenPipe's hidden partner and water stream (feat/594-pipe, #594, 2026-11-18): the hidden pipe (arg2 1) was shown
+  at once and hidden at once when the first pipe was armed again. Now as Petari: WaitToShowUp 20, ShowUp 30
+  (pipe_trans: calcTrans eased in from its placement to its top, LavaAppear kept at its placement,
+  SE_OJ_LV_PIPE_APPEAR_MAGMA), and from Mario's jump out (the partner's tryHideDown) WaitToHideDown 40, HideDown 15
+  (eased back, LavaVanish, SE_OJ_LV_PIPE_VANISH_MAGMA), then hidden; it takes nobody meanwhile. EarthenPipeInWater:
+  SE_OJ_LV_PIPE_IN_WATER while its stream runs (_19C: from init, with its SW_A where it has one). tools/jpa.py
+  NAMED EarthenPipe (LavaAppear / LavaVanish). ponytail: the water pipes' stream model and BinderWater sensors; the
+  rising pipe collides at its top from the first frame; a pipe whose SW_A is off still takes Mario (exeWait's
+  invalidateHitSensors, EarthenPipe.cpp:225: tried and taken out, the Gateway's first pipe has SW_A 1008 and the pipe
+  test could no longer enter it: port it with whatever turns that switch on). **Release: slice_all.py resident.bin + resident_luigi.bin + every EarthenPipe galaxy** (jpa.py NAMED
+  EarthenPipe) **and sound.py --pack** for them (the two magma / water level SEs).
+- Gateway's RunawayRabbit (feat/gw-rabbit-blow, #607, 2026-11-18): its hop sound (exeRunaway: startJumpSound each
+  time its Run BCK passes frame 3 while WalkerStateRunaway runs: SE_SM_RABBIT_JUMP, SE_SM_RABBIT_JUMP_WATER in water;
+  the port's rabbits ran silent) and the star piece on it (receiveMsgPlayerAttack, update_shots' gw_shot: Body 70 at
+  Spine while it runs away; setVelocitySeparateHV 20 / 20 away from the piece, SE_SM_RABBIT_STAR_PIECE_HIT /
+  SE_SV_RABBIT_STAR_PIECE_HIT, RR_BLOW: WalkerStateBlowDamage's Blow (Damage, 0.99 friction, gravity 1, turned 15
+  degrees a frame against its velocity; on the ground past step 5 DamageLand) and BlowLand (30 frames), then Runaway;
+  caughtable all along). Left: isMsgLockOnStarPieceShoot (the shot is not drawn to it), the blow from other actors,
+  isBindedGroundBrake's water sound (the walkers keep no floor code). Test: `gateway` with XF=-DGW_SHOT_TEST (a
+  piece at each rabbit 20 frames into its run). Seen in PCSX2 (HeavensDoorGalaxy/1): each rabbit blown by the piece, back to Runaway, still caught, the chase ends; the hop seen once a rabbit (the test catches it at once). HeavensDoorGalaxy's sound pack lacks SE_SM_RABBIT_STAR_PIECE_HIT / SE_SV_RABBIT_STAR_PIECE_HIT (se?): sound.py --pack HeavensDoorGalaxy.
+- OceanFloaterLandParts (feat/509-ocean-floater, #509, 2026-11-18): OceanFloaterTypeU was a still model. statics.inc
+  st_floater_u after OceanFloaterLandParts.cpp: Wait on its rail, Move from its demo's action (the rail mover runs
+  only then: st_floater_rail in update_railers), SE_OJ_HUGE_FLOATER_MOVE_ST / LV / ED and RiseBubble, Done at the
+  demo's last step with フローター浮上 set (seq_done_setup: after a miss it starts risen, its SW_A on). Test
+  XF=-DFU_TEST, OceanFloaterLandGalaxy/1: the fixation broken, "move", "risen", "done, set", after the miss "already
+  done". Needed #601 (it vanished at its rail's end). Repack: OceanFloaterLandGalaxy's effects (jpa.py NAMED).
+  Left out: LodCtrlPlanet, the rail mover's acceleration (point_arg1) and time speeds (point_arg7).
+- Enemy and boss sounds, first batch (feat/589-enemy-sounds, #589, 2026-11-18), from docs/sound-gaps.md's rows under
+  Enemy / Boss, each read in Petari:
+  - BombHei: SE_EM_LV_BOMB_FUSE with the alarm while its fuse burns (control).
+  - StringSpider: SE_EM_LV_STRSPIDER_SWING2, and both swing sounds' volume from its speed (startSwingLevelSound:
+    2..12 / 5..25 as levelA 0..100, modifySe_Takezawa).
+  - BossStinkBugBomb: the ground sound's volume from the impact (10.5..30 as 0.3..1), SE_BM_BOSS_BUG_BOMB_GROUND_WATER
+    (from level 50) and BANG_WATER when its ground is a water floor (isBindedGroundWater: floor codes 20-23).
+  - BossStinkBug: SE_BM_LV_BOSS_BUG_RUN_ADD_WATER in GroundRun / CoolDown while a leg stands on a water floor
+    (isLegInWater; the port has no leg ground checkers: the floor within 30 of each foot joint, bsb_leg_in_water).
+  - BegomanSpringHead: its nerves kept in the walker (jc: Wait, hopping, HopEnd) from the body's tryHopStart /
+    tryHopJump / tryHopEnd calls (Turn, Shake, Trample, HitReaction, Blow, Hide): SE_EM_BEGOMAN_CLOSE_SPRING at
+    HopEnd's first step; Blow's HopEnd at sBlowFrame less the clip. The head is still drawn in one pose.
+  - TripodBossFixParts: the parts with a Warning BRK (BodyA, Foot, Leg2A and their Bloom models: TBP_WARN) start
+    SE_BM_TRIPOD_MARKER once Mario rides the boss on the ground and stop it when he has just left (tb_marker; the BRK
+    not drawn, the stop without its 60 frame fade).
+  - KoopaJr on his ship: a star piece on his sensor (175 at 175 up) is reflected and starts his reaction from Wait
+    (SE_OJ_STAR_PIECE_HIT_ENM_F, Damage with SE_BV_KOOPAJR_DAMAGE_S and his 20 star pieces once, Recovery).
+  - tools/sndgaps.py NOT_PLAYED: names Petari holds but never plays are no longer counted (KuriboChief's Trample and
+    BombHei's PursueHit nerves are never set, nor Karikari's Release (so no Frozen sounds) / InTornado, BossStinkBug
+    FlyHigh's ToGround / ToFly, BombTeresa's BallAppear; Polta's shout is an unused string; the fire bubble's reflect
+    is the second player's pointer).
+  Tests (XF=-DSE_LOG, the `se+` / `se?` lines): `strspider` KoopaJrShipLv1Galaxy/1 (SWING1 plays, SWING2 asked: `se?`,
+  not in the pack yet), `begoman` with the BEGO_SPRING recipe of #350 (CLOSE_SPRING 180 frames less the clip into each
+  Trample), plain with -DKJ_TEST (the hook shoots Koopa Jr. every 200 frames: `koopajr: reaction`), plain with -DTB_TEST
+  -DDKJ_TEST (the demo's talk pressed through: `tripod boss: warning on, 14 markers`, `warning off`, the fight to its star;
+  14 sounds start at once: to be heard once TriLegLv1Galaxy's pack has the SE). A sound pack holds the SEs the engine names: the new names are `se?` until their packs
+  are cut again. Not run: BossStinkBug's water sounds (no `bsb` run found a water floor under it). Left:
+  BegomanSpringHide's baby (SE_EM_BEGOMAN_LAUNCH_BABY: slice.py has no BegomanBaby for it), BombHei's
+  carrying (next PR), HomingKiller's Torpedo sounds (the map objects' list). Repack: sound.py --pack BattleShipGalaxy,
+  CannonFleetGalaxy, TamakoroExLv2Galaxy, KoopaJrShipLv1Galaxy, OceanRingGalaxy, PhantomGalaxy, HoneyBeeKingdomGalaxy,
+  OceanFloaterLandGalaxy, TriLegLv1Galaxy, FloaterOtaKingGalaxy.
+- The lava hazards' sounds (feat/593-lava-se, #593, 2026-11-18): update_prom / update_steam / update_geyser had the
+  nerves and no sound. LavaProminence: SE_OJ_LV_PROMINENCE_SIGN through Sign (at the rail's start) and
+  MoveStartExtra, SE_OJ_PROMINENCE_START at MoveStartExtra's first step, SE_OJ_LV_PROMINENCE_MOVE from there on,
+  SE_OJ_LV_PROMINENCE_END through MoveEndExtra. LavaSteam: SE_OJ_LV_LAVA_STEAM_OUT through Steam. LavaGeyser:
+  SE_OJ_LV_LAVA_GEYSER_SIGN from Sign to ShootKeep, SE_OJ_LAVA_GEYSER_SHOOT at ShootUp's first step,
+  SE_OJ_LV_LAVA_GEYSER_KEEP from ShootUp to ShootDown. Left: LavaProminenceTriple, LavaHomeSeesaw and
+  LavaJamboSunPlanet (not ported: static models). **Release: sound.py --pack** HellProminenceGalaxy,
+  FloaterOtaKingGalaxy and the other galaxies that place them (simplest with the full repack).
+- Rail movers of stop type 0 were killed at their rail's end (fix/601-rail-stop-kill, #601, 2026-11-18): game.c
+  update_railers' chain of the end types let every part of MoveStopType 0 that is not a UFO fall into the last
+  `else` (row_kill: type 3's Vanish), since the UFO's end shake was put there (d189a3f). Petari:
+  MapPartsRailMover::restartAtEnd, type 0 is Wait. Found with OceanFloaterTypeU (#509), which vanished at the top of
+  its rise. Engine only. Not looked for: which other placed parts of type 0 had been vanishing.
+- StageEffectDataTable's SEs (feat/stage-se, #588, 2026-11-18): the port played eight names of Petari's table, on
+  rail movers only. Now `engine/src/stage_se.inc` is the whole sStageEffectSeDataTable (155 names: start / moving /
+  stop SE, the stop SE's step, the riddle type) with sStageEffectPadDataTable's rumbles and the kind of the class that
+  makes each name (NameObjFactory), generated by `tools/stage_se.py`; `Inst.stage` is an instance's row. game.c
+  stage_edge (tryStageEffectStart / Stop: the Start / Stop effect, the SE, SE_SY_READ_RIDDLE_S for a type 1 start or a
+  type 2 stop, the rumble and the shake under the camera table's distance) and stage_moving (tryStageEffectMoving), by
+  kind: R RailMoveObj's family in update_railers (as before, now every name), I IceVolcanoUpDownPlane (the moving SE
+  only with Mario not 380 under its plane), D RailDemoMoveObj and K SideSpikeMoveStep (the SEs alone), O RotateMoveObj
+  in update_rotors (start as its rotator turns, stop at a hold / its end / SW_B off), A the AnmModelObj family in
+  update_anmmodels (exeMove: the moving SE under the stop SE's step, the stop SE and chime at that step, the moving
+  rumble and infinity shake, the stop rumble / shake at isDone; HeavenlyBeachUnderRock's water on in Done), S
+  SimpleMapObj (MapObjActor::control: the moving SE always), UFOKinoko (control's moving SE, its Start / Stop). Left:
+  the classes not ported at all that ask the table by name (HipDropMoveObj: LavaObstacleRockShell / HomeA,
+  ForestObstacleWoodA; QuestionBoxGalleryObj), MapObjActor::appear's start SE and its riddle chime for a SimpleMapObj
+  shown by its SW_APPEAR (needs each name's class), the rotators' start SE at a reverse (isOnReverse), the Start /
+  Stop effects of classes not in jpa.py NAMED. **Release: sound.py --pack for every galaxy** (the table's names are
+  in game.c's sources now: simplest with the full repack).
+- #590 GameAudio's directors (2026-11-18, agent bgm): AudBgmConductor::movement's water states (bgm_conductor_tick:
+  while STM_GALAXY_03 / 04 play, the BGM's state 1, 5 with the camera in water, 4 with the shell's jet, 6 with both;
+  the mixes were in mbgm_tab already), AudCameraWatcher (water_obj at the camera: SE_AT_LV_UNDER_WATER, state bit 2;
+  MarioSwim's jet sets bit 4), AudioEffectArea + AudEffectDirector (update_audio_effect: the area Mario, or for types
+  3 / 4 the camera, is in by its priority; type 3 the BGM's volume to 0 over 90 and SE_AT_LV_WATERFALL_CAVE, type 4
+  SE_AT_LV_PHNCV_TERESA_ROOM; 23 areas, 20 of them type 1 = reverb only). ponytail: no AudEffector (reverb send,
+  cutoff, special effects), no setFarCamera. Tests: `swim` (HeavenlyBeachGalaxy/1, XF=-DAUDIOFX_TEST: from frame 1500
+  Mario put in each AudioEffect area). Repack: slice.py LOGIC AudioEffectCube / Sphere / Cylinder (every galaxy
+  with one), tools/sound.py scenario_keep (the sound.bin of every scenario with water: SE_AT_LV_UNDER_WATER; with those areas: theirs).
+- #587 BGM calls nothing made (2026-11-18, agent bgm; docs/sound-gaps.md's list of Petari's BGM calls gone through by
+  file): the title's STM_TITLE (TitleSequenceProduct: at the logo, stopped over 75 at A + B) and the file select's
+  MBGM_FILE_SELECT (FileSelector::exeTitleEnd; its state 5 far / 6 near by the camera: updateBgm; stopped over 90 at
+  the start demo): FileSelect played the default galaxy stream before (game_bgm_first leaves it alone now). The
+  result window's sub BGMs (StageResultInformer: BGM_ASTRO_RETURN, BGM_HIGH_SCORE, BGM_NEW_GALAXY at its information
+  window; the staff roll's too), TicoFat::exeInfo's BGM_APPEAR_PLANET, TicoDemoGetPower's BGM_STAR_POW_GET (step 10 of
+  the spin demo's part 4), ScenarioSelectLayout (BGM_SENARIO_SEL_2 unless BGM_SENARIO_SEL plays, stopped over 30 at
+  the fade out and at once at the cancel), GameStageClearSequence's grand star fanfare (BGM_GRAND_STAR_GET / _2 at step
+  53 instead of BGM_CLEAR), MiniatureGalaxy's open of a grand star galaxy (stop over 30, BGM_KOOPA_APPEAR, then
+  MBGM_ASTRO_DOME_2), SphereSelectorHandle's states of the dome's BGM (appear 2, turning 4 / 3, confirm 6 / 5, disappear
+  1) and SE_AT_LV_ASTRO_DOME_WIND_2, TalkBalloonEvent (the BGM at half volume over 30 while a balloon is open, back
+  over 60; the volume is whole again at each scene's start), GalaxyNamePlate's SE_SY_ASTRO_GALAXY_NEW_EFF,
+  SE_SY_THANK_YOU_LUIGI. EarthenPipe::processBgmPlayerIn / Out (pipe_bgm: the partner pipe's arg4 a BGM number of
+  the stage's, arg5 a state number; 39 pipes: Good Egg's, Honeyhive's, the beach's...): going in stops another BGM
+  over 60, coming out starts the partner's. DesertMovingLand::exeMoveSign in the sand UFO's demo (stop over 60,
+  then MBGM_GALAXY_02_HURRY as it goes down). game.h: game_bgm_sub / game_bgm_is / game_bgm_state.
+  Left: Kinopio's star mode (MBGM_KINOPIO_TANKEN_B: its TakeOutStar is not ported), PowerStar's grand star demo
+  (BGM_KOOPA_GRAND_STAR_1 / 3, MBGM_STAR_EXIST_2: #548), BGM_GALAXY_COMPLETE (no galaxy complete window), PlayerMissLeft
+  (SE_SY_PLAYER_LEFT_DEC: the layout is not in the packs), SE_SY_TICO_WAKE_PLAYER (GameSequenceProgress holds the move
+  to HeavensDoorGalaxy 300 frames: our scene switch does not run frames), PowerStarList's capture (no capture).
+- Carried drops (fix/491-drop-carried, 2026-11-07): game.c drop_taking after MarioActorTakeMsg.cpp
+  damageDropThrowMemoSensor / rushDropThrowMemoSensor: the held JetTurtle's DAMAGEDROP (resetPositionAndVanish: Vanish /
+  VanishRed / VanishGold, Restart or killed when _E0 is off) and RUSHDROP (its Drop nerve: up 10, ahead 10, boundDrop,
+  gravity 1, reset(0) at 90: jet.phase 3), resetJet, tryReleaseBombTeresa on a damage. damage: the MarioDamage paths,
+  the game over, the black hole, MR::tryPlayerKillTakingActor (RaceRail prep / reset, Syati's WaitBlank, GhostPlayer's
+  WinDemo); rush: the mode changes, settingRush (mode_rush's binds, Fluff, SpiderAttachPoint). Test `jet` XF
+  -DDROP_TEST=1 / 2 OceanRingGalaxy/1: taken, dropped at 600 (vanished, revived / Drop, reset at 90, revived).
+  (Pole, the plants, Creeper, SpaceCocoon, JumpBranch: rush_drop.) Left: JumpStand, SwingRope, Sandstorm binds.
+- #578 ChangeBgmCube, RestartCube's BGM change, BgmProhibitArea (2026-11-18, agent bgm): game.c update_bgm_cubes after
+  AreaObj/ChangeBgmCube.cpp (arg0 0: the stage's BGM number arg1 of AudStageBgmTable's sStageBgmSet = stage_bgm_set,
+  nothing when it already plays, else its mute state number arg2; 1: stopStageBGM over arg1 with BGM number arg2 next;
+  2: the mute state number arg1 over arg2), stage_bgm_change shared with RestartCube::changeBgm (its arg1 / arg2: 55
+  placements name a BGM). cube_bgm_invalid is AudSceneMgr::_1D (setCubeBgmChangeInvalid: every miss, startAfterBossBGM,
+  three boss BGMs), cleared at each scene; MR::clearBgmQueue (bgm_last / bgm_next) with it. BgmProhibitArea is written
+  but no stage places one (its table names OceanPhantomCaveGalaxy and a test map). Plain build XF=-DBGMCUBE_TEST
+  (overlay wt-bgm): BattleShipGalaxy/3: a type 1 cube stops the BGM over 150, type 0 cubes start MBGM_GALAXY_13 and
+  MBGM_GALAXY_01_TOMB, the cubes of the BGM that plays do nothing, none after the miss. The cubes around the start fire
+  once before the scene's own start of the stage BGM (the starter's), which then restarts it: left as it is.
+  ponytail: setNextIdStageBgm as bgm_next (started once the stream stopped). Repack: every galaxy with a ChangeBgmCube
+  (slice.py LOGIC; they were dropped from the packs): 110 cubes in 14 galaxies and 6 zones.
+- NPC reactions (feat/npc-reactions, #586, 2026-11-18; docs/sound-gaps.md's NPC classes): npc_react returned its spin
+  and pointing starts in bit 0, the trample's (a spin by a Kinopio / PenguinMaster / TicoFat played the trampled
+  voices): each start has its bit now, plus 16 for NPCActor's _DB (a star piece reflected on the body: update_shots'
+  npc_shot on the sensors npc_react lists each frame; _E5 between the trample and the spin as updateReaction), and
+  near 0 (_12C) takes the spin as his spin attack on the body. The star piece voices of Kinopio, PenguinMaster,
+  TicoComet / TicoShop, TicoFat, PenguinSkater / PenguinRacer (their Reaction clip). npc_reaction (game.c): the
+  Reaction nerve of the NPCs that had none, from update_npc_turn (Tico / TicoAstro / TicoStarRing: a star piece is an
+  attack and starts Delight, its Spin clip and Common_Tico000 forced; Penguin; PenguinCoach; Caretaker, and its
+  SE_SM_LV_CARETAKER_WAIT; Rabbit), update_bees (HoneyBee::control), update_talkers (Butler / ButlerMap::control),
+  LuigiNPC's Wait (and the star piece on the tree: SE_SM_STAR_PIECE_HIT, OnTreeFall) and Rosetta's talk in the
+  Observatory. Their sensors, _12C, clips and sounds: the comment over npc_reaction. Not ported: SE_BM_BUTLER_ABSORB
+  (Tico.cpp:297: no such name in the sound table), the POINTED_2P names are played from the port's pointer (R2),
+  Rabbit's Behavior_Wait nerves (HOP / CHANGE_*: no placement has arg1 0), PenguinStudent (no Reaction nerve in
+  Petari). Test: `talk` with XF="-DTALK_CLS=n -DREACT_TEST" (a drop onto the talker, a spin, the pointer, a star
+  piece). Seen in PCSX2: Tico (EggStarGalaxy/1: trampled, spun, pointed, Delight), Rosetta (AstroGalaxy/1); the other
+  classes share the code and were not run. EggStarGalaxy 1's sound pack answers `se?` (not in the pack) for
+  SE_SV_TICO_TRAMPLED / SE_SV_TICO_POINT although docs/sfx-cut.csv keeps them: the sound packs need cutting again.
+- MarioLauncher, the cannon Mario rides (feat/566-mario-launcher, #566, 2026-11-18): engine/src/mario_launcher.inc
+  (ml_*) after MapObj/MarioLauncher.cpp, its nerves in Petari's order (Wait, Ready, PlayerIn, Prep, Aim, Flight, Kill,
+  Land, Reject) with their frames and sounds; the model's Wait / Active / LookUp were already packed (WAIT_SKINNED):
+  no repack. The aim is CameraDPD (the right stick's pointer turns the view, A = X shoots along the pointer's ray,
+  B = O gets out), the flight CameraObjParallel, both through camera_prog_start every frame. The shell flies straight at
+  40 (no MarioLauncherAttractor is placed anywhere) until its binder (80 at 180 ahead) meets a face that is not the
+  launcher's, water, or 360 frames (the abyss miss). The end of the bind is MarioActor::endRush's: landing type 1
+  (m->land_type 1, his last bound move as the jump): checkHeadPoint's blow (already there for the ScenarioStarter),
+  Mario.cpp:1948's snap to the ground going down head first, doLanding's SuperSpinDriverEnd + 共通着地大 and the hard
+  landing when his head was against the ground (ml_head). An enemy's attack, a push or a black hole in flight ends
+  the bind (doLanding). Test: `build.sh launcher "" KoopaJrShipLv1Galaxy/1` (XF=-DLAUNCHER_N=k the k-th launcher,
+  -DLAUNCHER_B the reject). Seen in PCSX2: KoopaJrShipLv1 1 (row 7: ready, aim after 2.4 s, the shot along the
+  pointer's ray, 360 frames of straight flight into space, the abyss miss) and BattleShip 2 (rows 142 / 143, type Up,
+  both inside a BreakableCage the test does not break: the shell binds on the cage 5 frames out, then the type 1
+  flight's blows inside it). Not seen: a flight that ends on a planet's ground (the head-down hard landing), the
+  flight in a build with the miss events. Left: MarioSukekiyo for that landing on Sand / Ice / Wet (suke_start(m, 0)
+  of #565, not merged yet), and (ponytail in the file) the Sight layout (Sight.arc is not in layout.py's LAYOUTS: the
+  pointer's cursor marks the aim), the guidance layout, the DPD fovy, the push's punch back.
 - #9 (issue #3) EE performance: Good Egg bench, EE time a frame (render_begin's flip / VIF / clear wait now printed
   apart: ~3.4 ms of the old "draw" was that wait): start view 19.9 -> 12.5 ms (logic 6.7 -> 5.1, draw 12.7 -> 7.0),
   path 16.4 -> 11.5, worst 38-42 -> 26. Clip cache sized per clip (inflates 8300-15000 -> 7-22 a bench), skinned

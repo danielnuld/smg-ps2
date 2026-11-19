@@ -513,7 +513,7 @@ static void sv_update(void)
  * the galaxy's star pieces counted into the stock (System_Result004); X goes on; a galaxy just openable
  * (System_Result001) or a hungry Luma's galaxy just appeared (System_Result007): DisplayInformationForResult's window,
  * then the map in its discover mode (GalaxyMapController; the informer waits while it shows). ponytail: no galaxy
- * complete / picture book windows, no IconAButton, no effects or BGM (startSubBGM BGM_NEW_GALAXY); the information
+ * complete / picture book windows, no IconAButton, no effects; the information
  * window (InformationWindow) and the map show only where their packs are loaded (ending.bin / map.bin) */
 enum { SR_OFF, SR_APPEARSTAR, SR_WAITCOUNT, SR_COUNT, SR_DISPLAY, SR_DISAPPEAR, SR_APPEARSCORE, SR_APPEARPIECE, SR_DISPLAYPIECE,
        SR_WAITPIECE, SR_INFO, SR_INFOEND, SR_SHOWMAP };
@@ -583,6 +583,7 @@ static void sr_update(void)
             snprintf(label, sizeof label, "%d", sr.r.coins);
             lyt_set_number_rec(sr.l, "ShaCoinNum", sr.r.coins);
             sr.kind = 0;
+            game_bgm_sub("BGM_ASTRO_RETURN");
         }
         if (lyt_stopped(sr.l, 0)) nrv_set(&sr.n, SR_WAITCOUNT);
         break;
@@ -603,7 +604,7 @@ static void sr_update(void)
         if (lyt_stopped(sr.l, 0)) sr_next();
         break;
     case SR_APPEARSCORE: /* AppearUpdateBestScore */
-        if (FIRST(&sr.n)) { sr_counters(0, 1, 0); lyt_show_pane(sr.l, "Coin", 1); lyt_start(sr.l, "Appear", 0); sr_result_text(msg_get("System_Result006")); }
+        if (FIRST(&sr.n)) { sr_counters(0, 1, 0); game_bgm_sub("BGM_HIGH_SCORE"); lyt_show_pane(sr.l, "Coin", 1); lyt_start(sr.l, "Appear", 0); sr_result_text(msg_get("System_Result006")); }
         if (lyt_stopped(sr.l, 0)) nrv_set(&sr.n, SR_DISPLAY);
         break;
     case SR_APPEARPIECE:
@@ -641,6 +642,7 @@ static void sr_update(void)
         break;
     case SR_INFO: /* DisplayInformationForResult: appearInformationMessageCenter, Display after 15 (decide: Disappear) */
         if (FIRST(&sr.n)) {
+            game_bgm_sub("BGM_NEW_GALAXY"); /* (BGM_GALAXY_COMPLETE with the galaxy complete message: not shown here) */
             lyt_show_rec(sr.info, "InfoWindowUp", 0); lyt_show_rec(sr.info, "InfoWindowCenter", 1); /* setCenter(true) */
             lyt_set_text_rec(sr.info, "InfoWindowCenter", msg_get(sr.info_msg));
             lyt_start(sr.info, "Appear", 0);
@@ -2592,6 +2594,7 @@ static void ss_update(void)
     ss.sky_frame++;
     switch (nrv_begin(&ss.n)) {
     case SS_APPEARSTAR: {
+        if (FIRST(&ss.n) && !game_bgm_is("BGM_SENARIO_SEL")) game_bgm("BGM_SENARIO_SEL_2"); /* exeAppearStar */
         ss.fly = se_level(SE_DM_LV_SENARIO_SEL_FLY, NULL, ss.fly);
         int all = 1;
         for (int i = 0; i < 7; i++) all &= ss.star[i].dead || sst_appear_end(&ss.star[i]);
@@ -2653,7 +2656,7 @@ static void ss_update(void)
         if (ss.n.step == 60) lyt_start_pane(ss.l, "ScenarioFrame", "End", 0);
         ss_update_text();
         ss.fly = se_level(SE_DM_LV_SENARIO_SEL_FLY, NULL, ss.fly);
-        if (ss.n.step == 180) wipe_start(30, 1, 0xFFFFFF); /* closeSystemWipeWhiteFade(cSelectedFadeOutFrame) */
+        if (ss.n.step == 180) { game_bgm_stop(30); wipe_start(30, 1, 0xFFFFFF); } /* stopStageBGM, closeSystemWipeWhiteFade(cSelectedFadeOutFrame) */
         if (ss.n.step == 211) { /* isReadyToDisappear: the galaxy, opened by a white fade (cSelectedFadeInFrame) */
             seq_set_open_wipe(180, 0xFFFFFF);
             seq_galaxy_move(SEQ_MOVE, ss.galaxy, ss.selected, -1, 0);
@@ -2662,7 +2665,7 @@ static void ss_update(void)
     case SS_CANCEL:
         if (FIRST(&ss.n)) ss.selected = -1;
         ss_update_text();
-        if (btn_hidden(&ss.back)) { wipe_start(90, 1, 0); nrv_set(&ss.n, SS_CANCELFADE); }
+        if (btn_hidden(&ss.back)) { wipe_start(90, 1, 0); game_bgm_stop(1); nrv_set(&ss.n, SS_CANCELFADE); } /* cCancelFadeOutFrame, stopStageBGM(1) */
         break;
     case SS_CANCELFADE: /* the stage left again (ScenarioSelectScene's cancel: back to the dome), a fade open there */
         if (!wipe_active() && ss.n.step == 0) {
@@ -2776,7 +2779,7 @@ enum { GB_APPEAR, GB_WAIT, GB_DISAPPEAR, GB_DECIDE, GB_DEAD };
 enum { GC_SELECTING, GC_SELECTEDBACK, GC_SELECTED };
 enum { NP_APPEARREADY, NP_APPEAR, NP_WAIT };
 #define DOME_PLATES 8
-typedef struct { LytInst *l; u8 alive, shown, last_immediate, type, layout_shown; Nrv n; } DomePlate;
+typedef struct { LytInst *l; u8 alive, shown, last_immediate, type, layout_shown, waited; Nrv n; } DomePlate; /* waited: !_30 */
 static struct {
     u8 on;
     LytInst *info, *back_l, *conf, *conf_back_l;
@@ -3018,7 +3021,11 @@ static void dmu_plate_movement(int i)
         else if (lyt_stopped(p->l, 0)) nrv_set(&p->n, NP_WAIT);
         break;
     case NP_WAIT:
-        if (FIRST(&p->n)) lyt_start(p->l, "Wait", 0);
+        if (FIRST(&p->n)) { /* (its GalaxyNamePlateNew effect: not drawn) */
+            lyt_start(p->l, "Wait", 0);
+            if (p->type == 1 && !p->waited) se_start(SE_SY_ASTRO_GALAXY_NEW_EFF, NULL);
+            p->waited = 1;
+        }
         if (!p->shown) p->alive = 0;
         break;
     }
@@ -3474,7 +3481,7 @@ static void fs_title_update(void) /* TitleSequenceProduct */
     int a = pad_held(PAD_CROSS), b = pad_held(PAD_CIRCLE);
     switch (nrv_begin(&fsl.title)) {
     case TS_LOGOFADEIN:
-        if (FIRST(&fsl.title)) { fsl.logo_on = 1; lyt_start(fsl.logo, "Appear", 0); }
+        if (FIRST(&fsl.title)) { fsl.logo_on = 1; lyt_start(fsl.logo, "Appear", 0); game_bgm("STM_TITLE"); } /* exeBgmPrepare's, unlockStageBGM */
         if (lyt_stopped(fsl.logo, 0)) nrv_set(&fsl.title, TS_LOGOWAIT);
         break;
     case TS_LOGOWAIT:
@@ -3485,6 +3492,7 @@ static void fs_title_update(void) /* TitleSequenceProduct */
         if (FIRST(&fsl.title)) { fsl.press_on = 1; lyt_start(fsl.press, "Appear", 0); }
         if (lyt_stopped(fsl.press, 0)) lyt_start(fsl.press, "Wait", 0);
         if (a && b) {
+            game_bgm_stop(75);
             se_start(SE_SY_GAME_START, NULL);
             nrv_set(&fsl.title, TS_DECIDE);
             break;
@@ -3523,7 +3531,7 @@ static void fs_update(void)
         if (nrv_is(&fsl.title, TS_DEAD)) nrv_set(&fsl.n, FS_TITLEEND);
         break;
     case FS_TITLEEND:
-        if (FIRST(&fsl.n)) { fs_far(); fs_base_pos(0); fs_items_select(0); }
+        if (FIRST(&fsl.n)) { fs_far(); fs_base_pos(0); fs_items_select(0); game_bgm("MBGM_FILE_SELECT"); } /* exeTitleEnd */
         if (fs_cam_at(FC_FAR)) { for (int i = 0; i < 6; i++) fsl.item[i].rotate_on = 1; nrv_set(&fsl.n, FS_SELECT); }
         break;
     case FS_SELECTSTART:
@@ -3566,7 +3574,7 @@ static void fs_update(void)
         else if (btn_try_select(&fsl.btn[FB_MII])) { fs_layouts_out(); fs_items_select(0); nrv_set(&fsl.n, FS_MIIWAIT); }
         break;
     case FS_DEMOSTARTWAIT:
-        if (FIRST(&fsl.n)) { se_start(SE_SY_FILE_SELECTED, NULL); fs_layouts_out(); wipe_start(60, 1, 0); }
+        if (FIRST(&fsl.n)) { se_start(SE_SY_FILE_SELECTED, NULL); game_bgm_stop(90); fs_layouts_out(); wipe_start(60, 1, 0); }
         if (!wipe_active() && fsl.n.step > 60) { /* Demo: startGameDataLoadSequence, requestChangeStageInGameAfterLoadingGameData */
             gd_file_load(fsl.item[fsl.sel].file - 1);
             seq_set_open_wipe(30, 0);
@@ -3700,6 +3708,11 @@ static void fs_update(void)
     /* control */
     for (int i = 0; i < 6; i++) fs_item_update(&fsl.item[i], i);
     fs_cam_update();
+    { /* FileSelector::updateBgm: the stage BGM's state by the camera (sBgmFarState 5, sBgmNearState 6, 60 frames; else 0 at once) */
+        static int cur; /* mBgmState */
+        int st = fs_cam_at(FC_MOVEFAR) || fs_cam_at(FC_FAR) ? 5 : fs_cam_at(FC_MOVENEAR) || fs_cam_at(FC_NEAR) ? 6 : 0;
+        if (st != cur) { game_bgm_state(st, st ? 60 : 0); cur = st; }
+    }
     for (int b = 0; b < FB_N; b++) btn_update(&fsl.btn[b]);
     if (fsl.op_on) { lyt_update(fsl.op); int all = 1; for (int b = 0; b < FB_N; b++) all &= btn_hidden(&fsl.btn[b]); if (all && !nrv_is(&fsl.n, FS_CONFIRM)) fsl.op_on = 0; }
     if (fsl.back_on) { /* BackButton::control */
@@ -5199,7 +5212,7 @@ static void pb_draw(void)
  * the save, End. The information windows appearWithButtonLayout: the IconAButton at AButtonPosC (setCenter), its term at
  * the window's End. The US region's params (sStaffRollParamTable[1]). The programmed demos "StaffRoll" /
  * "SaveAfterStaffRoll" are not started: only the staff roll runs in this stage (nothing for them to stop).
- * ponytail: the count runs from the BGM's start (not isPlayingStageBgm), no BGM_NEW_GALAXY sub BGM (sequenced),
+ * ponytail: the count runs from the BGM's start (not isPlayingStageBgm),
  * MessageEditorMessageTag lengths as the talk text's */
 #define SRL_LINES 64
 enum { SRL_PREPAREDEMO, SRL_PREPAREBGM, SRL_TITLEAPPEAR, SRL_TITLESCROLL, SRL_LINESCROLL, SRL_ENDSCROLL, SRL_ALLRIGHTS,
@@ -5345,7 +5358,7 @@ static void srl_update(void)
         break;
     case SRL_ALLRIGHTS:
         if (FIRST(&srl.n)) lyt_start_pane(srl.title, "TheEnd", "AllRights", 0);
-        if (srl.n.step == 190) se_start(SE_SY_E3_THANK_YOU, NULL); /* sStepToThankYouVoice (Mario) */
+        if (srl.n.step == 190) se_start(gd_player_luigi() ? SE_SY_THANK_YOU_LUIGI : SE_SY_E3_THANK_YOU, NULL); /* sStepToThankYouVoice */
         if (lyt_pane_stopped(srl.title, "TheEnd", 0)) { srl.pic_on = 0; lyt_show_pane(srl.title, "TheEnd", 0); nrv_set(&srl.n, SRL_PREPAREINFO); }
         break;
     case SRL_PREPAREINFO: if (srl.n.step == 100) srl_next_info(); break; /* sStepForPrepareInfo */
@@ -5353,6 +5366,7 @@ static void srl_update(void)
         if (FIRST(&srl.n)) {
             int c = srl.n.cur;
             const u16 *m = msg_get(c == SRL_BOOKIN ? "System_Result005" : c == SRL_COMETIN ? "StaffRollInfo_Comet" : "StaffRollInfo_Luigi");
+            game_bgm_sub("BGM_NEW_GALAXY");
             if (c == SRL_LUIGIIN) se_start(SE_SY_LUIGI_MODE_APPEAR, NULL);
             lyt_show_rec(srl.info, "InfoWindowUp", 0); lyt_show_rec(srl.info, "InfoWindowCenter", 1); /* setCenter(true) */
             lyt_set_text_rec(srl.info, "InfoWindowCenter", m ? m : srl.info_text);

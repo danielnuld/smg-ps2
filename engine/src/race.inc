@@ -170,6 +170,7 @@ static void rn_exit_racer(RNpc *t);
 /* PlayerRacer */
 static void pr_prep(void) /* PlayerRacer::prepRacer */
 {
+    drop_damage(); /* tryPlayerKillTakingActor */
     RmRail *rr = &rm.rail;
     rr->coord = 0.0f; rr->dir = 1; /* moveCoordToStartPos */
     V3 p = rr_pos(rr), up = up_at(p, mario->up); /* moveTransToCurrentRailPos, calcGravityVector */
@@ -194,6 +195,7 @@ static void pr_prep(void) /* PlayerRacer::prepRacer */
 }
 static void pr_reset(void) /* PlayerRacer::resetRacer: setPlayerPosOnGround(レース終了後位置) */
 {
+    drop_damage(); /* tryPlayerKillTakingActor */
     const float *g = scene_gpos("レース終了後位置");
     if (g) {
         float m[16], one[3] = {1, 1, 1}, rot[3] = {g[3], g[4], g[5]};
@@ -804,9 +806,9 @@ static void game_test_race(void)
  * sProvokeRangeOut 2000); caught by Mario's touch or spin (Away / Turn / Switch): the 捕まり demo (puppetable), its 終了
  * camera on Mario, Caught (TossStart, Mario's matrix blended to its over 5 frames), FadeOut (CaughtWait,
  * closeWipeCircle), FadeIn (ペンギン移動後 / マリオ移動後, Watch, SitDown / SitDownTalk), GiveUp (its talk to the end:
- * SW_A), SitDown. Without a rail: Talk. Reactions (npc_react: Body 50 at 50 up; Trampled / Spin / Pointing and their
+ * SW_A), SitDown. Without a rail: Talk. Reactions (npc_react: Body 50 at 50 up; Trampled / Reaction (a star piece) / Spin / Pointing and their
  * voices, the Reaction nerve). ponytail: startTalkingSequence / startNPCTalkCamera (the
- * talk's own camera), the star piece reaction (_DB) */
+ * talk's own camera) */
 static RmRail *sk_rail(RNpc *t) { return &t->sr[t->ri]; } /* mRail */
 static int rr_next_point(const RmRail *rr) /* getNextRailPointNo */
 {
@@ -893,7 +895,7 @@ static int sk_react(RNpc *t) /* tryStartReaction: Trampled / Spin / Pointing (np
     if (!f) return 0;
     t->react = f;
     Inst *in = rn_inst(t);
-    if (in) obj_play(in, f & 1 ? "trampled" : f & 2 ? "spin" : "pointing", 0, 0);
+    if (in) obj_play(in, f & 1 ? "trampled" : f & 16 ? "reaction" : f & 2 ? "spin" : "pointing", 0, 0); /* _134 / _13C / _130 / _138 */
     printf("penguin skater row %d: reaction %d" "\n", t->row, f);
     return 1;
 }
@@ -907,6 +909,7 @@ static void sk_exe(RNpc *t)
             if (t->react & 1) { se_start(SE_SM_PENGUIN_TRAMPLED, &p.x); se_start(SE_SV_PENGUIN_S_TRAMPLED, &p.x); }
             if (t->react & 8) { se_start(SE_SV_PENGUIN_S_POINTED_2P, &p.x); dpd_hit_sound(); }
             if (t->react & 2) se_start(SE_SV_PENGUIN_S_SPIN_HIT, &p.x);
+            if (t->react & 16) se_start(SE_SV_PENGUIN_S_STAR_PIECE, &p.x);
         }
         if (rn_action_done(t)) rn_pop(t); /* tryStartReactionAndPopNerve: isActionLoopedOrStopped */
         break;
@@ -1152,7 +1155,7 @@ static int pg_react(RNpc *t) /* tryReaction (tryStartReactionAndPushNerve): its 
     if (!f) return 0;
     t->react = f;
     Inst *in = rn_inst(t);
-    if (in) obj_play(in, f & 1 ? "trampled" : f & 2 ? "spin" : "pointing", 0, 0);
+    if (in) obj_play(in, f & 1 ? "trampled" : f & 16 ? "reaction" : f & 2 ? "spin" : "pointing", 0, 0); /* _134 / _13C / _130 / _138 */
     rn_push(t, PG_REACTION);
     return 1;
 }
@@ -1166,6 +1169,7 @@ static void pg_exe(RNpc *t)
             if (t->react & 1) { se_start(SE_SM_PENGUIN_TRAMPLED, &p.x); se_start(SE_SV_PENGUIN_S_TRAMPLED, &p.x); }
             if (t->react & 8) { se_start(SE_SV_PENGUIN_S_POINTED_2P, &p.x); dpd_hit_sound(); }
             if (t->react & 2) se_start(SE_SV_PENGUIN_S_SPIN_HIT, &p.x);
+            if (t->react & 16) se_start(SE_SV_PENGUIN_S_STAR_PIECE, &p.x);
         }
         if (rn_action_done(t)) rn_pop(t);
         break;
