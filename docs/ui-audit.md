@@ -35,7 +35,7 @@ Started 2026-11-18. Rows are in the order seen most. The fixes under #640, #641,
 | ScenarioTitle | game.c stitle | ok on its nerves (Appear, Wait, End); the text is drawn by game.c and Appear / End are its pane's 30-frame fade, not played from the brlan: not checked against the animation's curves |
 | InformationMessage / InformationObserver | game.c info_label / info_text (quads, no Appear / End), menu.c (the result's and the staff roll's) | ported, not re-read |
 | CinemaFrame | menu.c ci_* | ported, not re-read |
-| GalaxyCometScreenFilter | menu.c csf_* | fixed #661 |
+| GalaxyCometScreenFilter | menu.c csf_* (off) | issue #661: the layout is a filter that multiplies the frame (light colours over the whole screen, dark ones in the corners); lyt.c blends by alpha or adds and drew it as an opaque blob, so the code is in but off and the layout is not in the packs. It needs a multiply blend |
 | MarioLauncherLayout (SimpleLayout "Sight") | menu.c sgt_* | fixed #659: Sight.arc was in no pack; it is menus.bin's now (4 KB: no scene repack) |
 | StarPointerLayout / Blur / Controller / Director | menu.c sp_* | ported, not re-read (the Wii pointer as the right stick's cursor) |
 | StarPointerGuidance | menu.c spg_* | ported, not re-read |

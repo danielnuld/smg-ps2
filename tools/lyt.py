@@ -399,20 +399,12 @@ def convert(files, name, texts, extra=None, full=False):
     out += b"\0" * (-len(out) % 16)
     tex0 = len(texts)
     for rgba, (ws, wt) in images:
-        if name in SHRINK:  # ponytail: a smooth gradient kept at a fraction of its size (the GS filters it back)
-            from PIL import Image
-            k = SHRINK[name]
-            rgba = np.asarray(Image.fromarray(np.ascontiguousarray(rgba), "RGBA").resize(
-                (rgba.shape[1] // k, rgba.shape[0] // k), Image.BILINEAR))
         texts.append(tex.to_ps2_full(rgba, ws, wt) if full else tex.to_ps2(rgba, ws, wt, hi=True))
     head = struct.pack("<24sHHHHHHIIII", name.encode()[:24], len(panes), len(mats), len(arecs), len(images), tex0,
                        len(strings), off_panes, off_mats, off_anims, off_str)
     return head + bytes(out)
 
 
-# CometScreenFilter: one mirrored 128 x 128 vignette under five materials (a comet each): 64 KB each as it is, 326 KB
-# in every scene; a quarter of the size a side: 23 KB
-SHRINK = {"CometScreenFilter": 4}
 # the layouts every scene may show (menus.bin, loaded with each scene)
 COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad", "StageTitle", "IconAButton",
           "BackButton", "ScenarioSelect", "WipeKoopa", "ResultWindow", "CinemaFrame", "FlyMeter", "AirMeter",  # MarioSubMeter
@@ -430,7 +422,6 @@ COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad
           "SuddenDeathMeter",  # MarioMeter with a life of 1 (the Dark comet)
           "BombTimer",  # BombTimerLayout
           "RetryButton",  # CometRetryButton
-          "CometScreenFilter",  # GalaxyCometScreenFilter
           "InformationWindow")  # StageResultInformer's DisplayInformationForResult (InformationMessage)
 # ponytail: no DPDPointerSub (the 2P pointer) nor DPDPointerNumber (the player number, shown only with two remotes
 # connected): one pad here

@@ -5107,7 +5107,12 @@ int menu_test_point_retry(int yes) /* tests: the pointer on its Yes / No button 
  * comet's scenario): its Color animation stopped at the comet's frame (setCometAnimFromId), drawn before the other
  * layouts (DrawType_CometScreenFilter: game.c, under the HUD) while _20 (off at endCometEvent) */
 static struct { LytInst *l; u8 on; } csf;
-static void csf_init(void) { memset(&csf, 0, sizeof csf); csf.l = lyt_new("CometScreenFilter"); }
+/* ponytail: off (#661). The layout is not in the packs: its five materials are light colours over the whole screen
+ * with dark ones in the corners (C0 alpha 0, C1 alpha 1 over one mirrored I8 vignette), a filter that multiplies the
+ * frame; lyt.c blends by alpha or adds, and drew it as an opaque blob (seen in CosmosGardenGalaxy 4). It needs a
+ * multiply blend (the GS: Cd x As a channel at a time under FBMSK) and then the layout in tools/lyt.py COMMON (326 KB
+ * as it converts now: one 256 x 256 image a material) */
+static void csf_init(void) { memset(&csf, 0, sizeof csf); }
 void menu_comet_filter(int id) /* getCometNameIdFromString's id (0 Red, 1 Ghost, 2 Dark, 3 Quick, 4 Purple / Black); -1 off */
 {
     static const float frame[5] = {0.0f, 4.0f, 1.0f, 2.0f, 3.0f}; /* getCometColorAnimFrameFromId */
