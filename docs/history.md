@@ -24,6 +24,63 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   -> BossKameck). tools/sndgaps.py: SE_OJ_TSPIDER_COCOON_BOUND is never played (TombSpiderActionCocoon plays it for
   a sender that is no ATYPE_SPRING_ATTACKER; SlingShooter's attack sensor, that type, is the only sender);
   docs/sound-gaps.md regenerated.
+- Enemy audit against Petari, first batch (feat/676-enemy-audit-1, #676 / PR #688, 2026-11-18): the enemies read class by class
+  against vendor/Petari/src/Game/Enemy (the table: `docs/class-audit-enemy.md`, one row a class with what was fixed and
+  what is left). The cause shared by most: `fireball_hit_walkers`, the thrown shell's loop and `walker_blow`'s callers
+  ended in a generic kill (Kuribo's smoke and a coin) for every walker kind without a case; Petari has no default, and
+  isMsgPlayerHitAll is the spin, the shell, the fire ball, the freeze and the rainbow attack. Now each class read has
+  its own case: Kuribo / KuriboMini requestBlowDown, TakoHei requestPunch, JumpSpider HitBlow (js_blow), Takobo
+  HitPunch (tk_punch), Karikari tryBlowOut (kari_hitall), BasaBasa PunchDown (bb_punch), Karon Broken from a shell
+  (kr_jet) and kill + three pieces from an explosion; Teresa, StinkBugSmall, Meramera, MechanicKoopaMini,
+  IceMerameraKing no longer die from messages they do not answer. Beside that: Kuribo / KuriboMini die on a fire floor
+  (isBindedGroundDamageFire: the walker's ground code 10); JumpSpider's and Takobo's kick while stunned; JumpSpider's
+  EyeLight; Takobo's body pushes Mario (isPlayerExistUp as a direction); Karikari's hip drop release (the landing
+  zeroed kari_cling before kari_director ran, so nothing was thrown off), BlowOutStarPiece's sounds, Touch on every
+  DPDAttacked; Teresa's filterBind was inverted (GhostThrough walls pass only while it drifts) and its appear nerves'
+  endAppear was skipped; StinkBugSmall's step counted so a nerve set by a message starts at its first step (a hip
+  drop in DashSignEnd killed it with no Death clip), Panic from a hip drop in Shake; Karon without clipping in
+  Pursue, dark matter, SinkDown's attackSensor; BasaBasa without clipping out of Wait / AirWait (it froze out of
+  view), Ice Mario against BasaBasaIce; Meramera's and MechanicKoopaMini's push between two done twice, IgnitionForce's
+  setVelocityJump; Onimasu's landing rumble / shake distances and FactoryGalaxy's WaitForStamp before SW_A;
+  SpinHitController's star pieces with SE_OJ_STAR_PIECE_BURST (spin_hit_exec). Test: built plain (EggStarGalaxy/1),
+  host tests, the route test, memcheck; NOT run in PCSX2 class by class (D:/smg-ps2-wt/unverified-2026-11-18.md).
+  No repack.
+- Per-class tables out of bss, 2 (perf/tables-arena-2, #657, 2026-11-18; the rule: the note of #630 below):
+  SpiderThread's `sth.pt` / `.mp` / `.part` (117 KB; sth_init, from game_init's spider_thread_scene with a TombSpider
+  placed; the small header and the hang table stay in bss, so `sth.on` reads as before), the ring Syati's `sy_rings`
+  (121 KB; `sy_alloc`: a scene with a Syati, the rings' loops skip a NULL table as five dead rings, a TalkSyati has
+  none), the Flags' `st_flags` / `st_flag_pts` (113 KB; `st_flag_alloc`: a StFlag and 100 points a placed Flag, the old
+  maxima on top) and draw_oceanspheres' `keep` (72 KB; `os_keep`, os_init with a sphere placed). sy_init and
+  st_flag_init wait for the first update (the zones' models), where an allocation would go with the next zone swap:
+  their `*_alloc` are called from game_init. memcheck: 434048 B of bss gone (_end 12065664, 124032 B before the region loses a step, the region 19200 KB); route EggStarGalaxy/1 f 4281. Arena at boot: StarDustGalaxy/3
+  (`SpiderThread: ... 1101 points`) 3526 KB, OceanRingGalaxy/1 (Syati 8 rings, Flags) 3090 KB, KoopaBattleVs3Galaxy/1
+  (OceanSphere, FlagKoopaCastle) 4615 KB of 5376 KB. Not driven in PCSX2: the web's battle, a ring pass, the flags
+  seen (boots and the "mem:" lines only).
+- Mario leftovers (feat/675-mario-leftovers, #675, 2026-11-18), from the plan's "Mario statuses not ported":
+  Mario::calcTornadoTilt (MarioSpin.cpp; update_tornado_mario: _54C, TornadoMario's up, eased mTornadoTiltSpeed to his
+  head leaning mTornadoTiltAngle to the pad's direction with the stick on in a tornado, back at mTornadoTiltSpeed /
+  mTornadoTiltOffSpeed; _548 is read nowhere); procHipDrop's homing in a spin hip drop (m_hip_homing,
+  MarioJump.cpp:1880: the map faces within his height of his shadow whose host has auto_efx_bitmap's SHD homing bit:
+  PicketSwitch / Big, StinkBugSmall / Parent, Kabokuri, SurfRay, MagnumKiller, SnowMan, PunchBox, JumpStand,
+  SpinningBox, HipDropRock by ObjNameTable; his jump turned to it; a front, side or back wall ends it); the dive's
+  hard landing slides on (startSlidingTask(8, 5, 0x19): his front x 5 for 25 frames); tryWallPunch's 壁ヒット and
+  _EF6 30. Checked, nothing to port: doCubeWarp (no scenario of the 136 places a WarpCube), bodyClap (the star pieces
+  within 100 of him in a bind: collect() takes them within 120, bind or not), forceStopTornado's _40A (set, read
+  nowhere). Left: the homing's other target, MarioActor::_4A8 (the sensor under him his body sensor met: there is no
+  sensor list, each class tests Mario itself); MarioSearchLight (the jet shell's light: SearchLightCone is not in
+  resident.bin, its draw is a light volume through destination alpha (front faces added, back faces subtracted, a box
+  blended by it), its sensor sweeps 2000 ahead for TeresaWater / the SearchTurtle group); MarioStick. Not run in
+  PCSX2 (no test puts him in these); the route's star frame unchanged.
+- MarioStep seen working (fix/673-mario-step, #673, 2026-11-18): #571's step never started. m_check_step asked
+  m_front_wall_norm(), zero unless the front wall is faced (_8), and at a step the floor on the wall turns _8 off
+  (checkAllWall); Mario::checkStep reads mFrontWallTriangle's normal bare: m_front_tri_n, the triangle as checkAllWall
+  last left it. startStep's _4C8 press test added (calcDistToCeil's face). Test: a plain build XF=-DSTEP_TEST=<k>
+  (game_test_step_input: the collision searched for an upright face with a level floor on it 10 to 48 over the level
+  floor before it; Mario put 150 before the k-th and walked at it). PCSX2, HeavensDoorGalaxy 2 (row 39's step of 26;
+  none found in EggStar 1, BattleShip 2, Factory 1, Phantom 1). Before: _15 / _39 on, the place 26 up, no step: his
+  body's collision pushed him up the edge in 12 frames. After: `step: up 24, 10 frames, walk 0.64` when his centre's
+  ball meets the riser, set on the step, the status 14 frames (_14 from 10 down by his walk speed) while his drawn
+  matrix eases, then he walks on.
 - Koopa Vs3's stair meteors (feat/se-koopa-vs3-meteor, #644, 2026-11-18): KoopaParts::initVs3 makes its
   KoopaFireStairs with mIsKoopaJr (createFireStairs(true)) and the port flew them as Vs1's (a straight line timed to
   the break, SE_OJ_KOOPA_FIRE_SHOT). koopa.inc kp_fire_stairs / kp_fire_stairs_update (kpfst.jr): no velocity, each
