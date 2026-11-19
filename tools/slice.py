@@ -255,6 +255,8 @@ def morph_arcs(o):
     if o["name"] in KINOKO:
         a = [s32(v) for v in o["args"]]
         return () if o["name"] == "WoodBox" and a[4] in (0, -1) or o["name"] == "KoopaStatue" and a[3] != 1 else (KINOKO[o["name"]],)
+    if o["name"] == "Kinopio" and s32(o["args"][2]) == 8:  # mIsSpawnPowerStarMode: its TakeOutStar's star model (game.c kinopio_nerve)
+        return ("PStar",)
     if o["name"] not in MORPH_ARCS:
         return ()
     a3 = s32(o["args"][3])
@@ -2064,6 +2066,8 @@ def declare_stars(keep, scenario, appear, jp):
             k = None if s32(r["args"][0]) in (0, -1) else -1
         elif r["name"] == "PenguinCoach":  # PenguinCoach::init: declarePowerStar for Behavior_Star / Tutorial / Race (arg0 1-3)
             k = None if 1 <= s32(r["args"][0]) <= 3 else -1
+        elif r["name"] == "Kinopio":  # Kinopio::init: declarePowerStar in its power star mode (mBehavior 8)
+            k = None if s32(r["args"][2]) == 8 else -1
         elif r["name"] in ("LuigiNPC", "LuigiEvent"):  # LuigiNPC::isDeclarePowerStarType: Afraid, Event, OnTree, Arrested
             t = s32(r["args"][0]) + (2 if r["name"] == "LuigiEvent" else 0)
             k = None if t == 0 or 2 <= t < 5 else -1
