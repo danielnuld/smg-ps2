@@ -15,13 +15,16 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   generic rail parts before. update_rainclouds after RainCloud.cpp: Wait / Appear / Disappear / End / SoftTouch /
   HardTouch (Mario falls through a cloud for 60 frames unless he is a bee; OnBee under a bee; Disappear at its rail's
   end, End back at the start until its whole group is there, Appear with THUNDER at 140), the rain (its length from
-  the ground under it up to arg0, the Splash and Line10 / Line20 effects, the RainCloudCylinder model on the Shadow
-  joint drawn by rc_draw, SE_OJ_LV_FOREST_RAIN), the drop_water sensor (a bee's form washed away). Its state
+  the ground under it up to arg0, the Splash and Line10 / Line20 effects, SE_OJ_LV_FOREST_RAIN; the
+  RainCloudCylinder model on the Shadow joint is written (rc_draw) but off, `XF=-DRAINCLOUD_CYLINDER`: it came out an
+  opaque dark column in ReverseKingdomGalaxy 3), the drop_water sensor (a bee's form washed away). Its state
   (RainCloud, 60 B a cloud) comes from the arena at game_init (row_table), no static table and no Inst field.
   Shared change, as Petari's MapPartsRailMover: a MoveStopType 2 mover with a stop time at its last point now
   waits there and then starts over (row_rdir 3); before it jumped to its start and waited there. slice.py: RainCloud
   skinned (its four clips, its AutoEffectList rows), RainCloudCylinder its EXTRA model. Test:
-  `XF=-DRAINCLOUD_TEST=k` on a plain build (Mario dropped on the k-th cloud; nerve changes logged). ponytail: no BPK
+  `XF=-DRAINCLOUD_TEST=k` on a plain build (Mario dropped on the k-th cloud; nerve changes logged). Seen: HardTouch
+  (OceanRingGalaxy 5, ReverseKingdomGalaxy 3), the rail clouds' Disappear / End / Appear and the rain's length
+  (ReverseKingdomGalaxy 3); not seen: a bee (SoftTouch, the wash), the effects, a posed cloud's Appear. ponytail: no BPK
   colours, no LOD model, no shadow volume, ACTMES_PUDDLE_TOUCH_GROUND not sent, the projection read every 8th frame
   and (with the effects and the rain's sound) only in view. **Release: slice_all.py** OceanRingGalaxy and
   ReverseKingdomGalaxy **+ sound.py --pack** for them (the four RainCloud SEs are new in game.c).

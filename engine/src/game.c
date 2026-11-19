@@ -39233,7 +39233,8 @@ static void update_railers(void)
  * Line20 over 1500 else Line10, the RainCloudCylinder model on the Shadow joint scaled (width by the Appear /
  * Disappear clip, 0.1 at least; length / 1000), SE_OJ_LV_FOREST_RAIN while the cylinder lives; the drop_water sensor
  * (150, on the rain's line nearest to Mario) takes a bee's form away with a strong rumble.
- * ponytail: no BPK (Rain / Fine / Appear colours: BPK at run time), no LOD model, no shadow volume;
+ * ponytail: no BPK (Rain / Fine / Appear colours: BPK at run time), no LOD model, no shadow volume; the rain's
+ * cylinder is not drawn (rc_draw: it comes out opaque);
  * ACTMES_PUDDLE_TOUCH_GROUND is not sent (Mario's _3A8 is not ported); the projection is read every 8th frame and,
  * as the effects and the rain's sound, only in view (Petari: while not clipped, with its group). */
 enum { RC_WAIT, RC_APPEAR, RC_DISAPPEAR, RC_END, RC_SOFT, RC_HARD };
@@ -39259,7 +39260,12 @@ static void rc_nrv(RainCloud *c, int n)
 #endif
     c->nrv = (signed char)n; c->step = 0;
 }
-static int rc_stopped(const Inst *in) { return !in->anim || (in->anim->done && !in->anim->loop); } /* isBckStopped */
+static int rc_stopped(const Inst *in, const RainCloud *c) /* isBckStopped; a cloud with no pose (out of the pool): by its clip's length */
+{
+    if (in->anim) return in->anim->done && !in->anim->loop;
+    int len = anim_clip_info(c->nrv == RC_APPEAR ? "raincloud/appear" : c->nrv == RC_SOFT ? "raincloud/onbee" : "raincloud/disappear", NULL);
+    return c->nrv == RC_END || c->step > len;
+}
 static int rc_next_ok(const RainCloud *c) /* isNextStartOK: the clouds of its group (雲集団) */
 {
     int g = sc->objs[c->row].group;
@@ -39276,6 +39282,7 @@ static int rc_view(const RainCloud *c, V3 pos, V3 g) /* in view: its clipping sp
     V3 ce = vadd(pos, vmul(g, 0.5f * c->len));
     return !render_clip_judge(&ce.x, 600.0f + 0.5f * c->len, 1e9f);
 }
+#ifdef RAINCLOUD_CYLINDER
 static void rc_cylinder(const Inst *in, const RainCloud *c, float m[16]) /* updateRainCylinder: mRainCylinderMtx */
 {
     float w = 1.0f, ls = c->len / 1000.0f; /* sRainCylinderBaseLength */
@@ -39289,6 +39296,7 @@ static void rc_cylinder(const Inst *in, const RainCloud *c, float m[16]) /* upda
     }
     for (int k = 0; k < 3; k++) { m[k] *= w; m[4 + k] *= ls; m[8 + k] *= w; } /* preScaleMtx */
 }
+#endif
 static void update_rainclouds(void)
 {
     if (!rclouds) return;
@@ -39332,7 +39340,7 @@ static void update_rainclouds(void)
         case RC_APPEAR:
             if (st == 0) { obj_play(in, "Appear", 0, 0); c->col_off = 0; c->cyl_dead = 0; se_start(SE_OJ_RAIN_CLOUD_APPEAR, &in->m[12]); }
             if (st == 140) se_start(SE_OJ_RAIN_CLOUD_THUNDER, &in->m[12]); /* sThunderStep */
-            if (st > 0 && rc_stopped(in)) { c->sens_off = 0; rc_nrv(c, RC_WAIT); }
+            if (st > 0 && rc_stopped(in, c)) { c->sens_off = 0; rc_nrv(c, RC_WAIT); }
             break;
         case RC_WAIT:
             if (st == 0) obj_play(in, "Wait", 1, 0);
@@ -39340,15 +39348,15 @@ static void update_rainclouds(void)
             break;
         case RC_DISAPPEAR:
             if (st == 0) { obj_play(in, "Disappear", 0, 0); c->sens_off = 1; c->col_off = 1; se_start(SE_OJ_RAIN_CLOUD_DISAPPEAR, &in->m[12]); }
-            if (st > 0 && rc_stopped(in)) { c->cyl_dead = 1; c->on_player = 0; }
+            if (st > 0 && rc_stopped(in, c)) { c->cyl_dead = 1; c->on_player = 0; }
             if (c->wrapped) { c->wrapped = 0; rc_nrv(c, RC_END); }
             break;
         case RC_END:
-            if (rc_stopped(in) && rc_next_ok(c)) { c->cyl_dead = 1; rc_nrv(c, RC_APPEAR); }
+            if (rc_stopped(in, c) && rc_next_ok(c)) { c->cyl_dead = 1; rc_nrv(c, RC_APPEAR); }
             break;
         case RC_SOFT:
             if (st == 0) obj_play(in, "OnBee", 0, 0);
-            if (st > 0 && rc_stopped(in)) { c->on_player = (unsigned char)on; rc_nrv(c, RC_WAIT); }
+            if (st > 0 && rc_stopped(in, c)) { c->on_player = (unsigned char)on; rc_nrv(c, RC_WAIT); }
             break;
         case RC_HARD:
             if (st == 0) { c->col_off = 1; pad_rumble(RUMBLE_MIDDLE); camera_shake(SHAKE_NORMAL); }
@@ -39397,6 +39405,7 @@ static void update_rainclouds(void)
         }
     }
 }
+#ifdef RAINCLOUD_CYLINDER
 static void rc_draw(void) /* the rain cylinders (mCloudCylinder) */
 {
     if (!rclouds || !nrclouds) return;
@@ -39414,6 +39423,7 @@ static void rc_draw(void) /* the rain cylinders (mCloudCylinder) */
         render_model(cyl, m, 0x80, 0x80, 0x80);
     }
 }
+#endif
 
 /* Dossun.cpp after Petari: its lower place the row's, its upper one arg0 (1000) along its up; Upper arg1 (180) minus
  * FallStart's 24 frames, FallSign (FallStart, SE), Falling eased in at 30 a frame, OnGround 120 (Land effect, SE,
@@ -59505,7 +59515,10 @@ void game_draw(void)
         draw_bigbubbles(ce, right, vcross(back, right));
     }
     st_draw();
+#ifdef RAINCLOUD_CYLINDER /* ponytail: the rain's cylinder comes out an opaque dark column (its translucent material and
+                           * texture scroll are not made): not drawn until then (seen in ReverseKingdomGalaxy 3) */
     rc_draw();
+#endif
     draw_syati_rings();
     RESTQ(6);
     gw_draw();
