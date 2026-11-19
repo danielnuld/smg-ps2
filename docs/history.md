@@ -135,6 +135,30 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   switch. **Release: slice_all.py ReverseKingdomGalaxy** (TrickRabbitFreeRun's declarer and PStar).
   the rabbit, A through its talk, a star piece / a drop onto it, then the catch). Seen in PCSX2: TrickRabbitFreeRun end to end (its talk, the demo and the chase BGM, the star piece's BlowDamage, the catch, the power star appear demo with it as declarer, GiveUp). **Release: slice_all.py
   ReverseKingdomGalaxy, CosmosGardenGalaxy** (the declarers, PStar, RGPH).
+- Class audit B's own issues, the night of 2026-11-19 (nine stacked branches feat/683 .. feat/669, their PRs in that
+  order; `docs/class-audit-b.md` updated). **Treasure boxes** (#683): TreasureBoxBlueChip / YellowChip hold a chip of
+  the group arg0 (initBlueChip: counted in the group's total, chip_box_type: SandClockGalaxy's two groups completed
+  with four chips of five), TreasureBoxCrackedAirBubble a bubble; the item comes out as exeOpen / exeItemBound move it
+  (tbox_item_pos) and is taken once it rests (update_tbox_items, draw_tbox_items). **WaterLeakPipe** (#681): Ice Mario
+  trampling its top: Freeze, its IceStepNoSlip (an instance with the step's collision on the Top joint, its Start /
+  End clips on a kept Anim, four at once), back to Wait sLifeTime 15 after he steps off. **SandUpDownEffectObj**
+  (#665): its six nerves on SW_A / SW_B, checkSandHit against the NoStampSand faces (floor code 30), FallingRock /
+  BurySmoke by name (jpa.py NAMED; still in AMBIENT so the effect ids do not move: game.c takes them out of the ambient
+  ones). **StarPieceGroup / CoinGroup** (#672, #677, update_pickup_groups): a star piece group's arg5 time limit
+  (pieces killed, SE_OJ_STAR_PIECE_BREAK, its dead switch), SW_B drops its pieces (pickup_on hid them, as a coin
+  group's), SW_A off keeps them from the pointer, the appear switch going off kills them; a coin group's
+  SE_SY_COIN_APPEAR 3 frames after its switch and arg1's time limit (the coins flash their last 180 frames and go).
+  **SnowMan** (#666): its seven nerves, the Melt / Down clips, SE, shake, switches as Petari (MeltBody: SW_A and SW_B),
+  HeadCol / BodyCol on their joints (it had no collision), the bucket's joint scaled away with the head.
+  **SandCapsulePressGround** (#667, statics.inc st_scpress): up and down 3600 on SW_B, its sign, SW_A while it moves,
+  Stop when Mario is pressed, DisappearDemo's MoveAway. **Tsukidashikun** (#668): the Sign clip and the four face BVAs.
+  **PunchBox** (#680): the order of the two messages settled (MarioActor::attackOrPushPolygons: ACTMES_FLOOR_TOUCH
+  then ACTMES_PLAYER_HIP_DROP_FLOOR: the hip drop that lands on it breaks it); explosions sent to the sensor of its
+  collision (BombTeresa, the bound SpaceMine) break it. **ShootingStar** (#669): ShootingStarAppear / Blur / Break by
+  name. Test hooks: XF=-DTBOX_TEST (SandClockGalaxy/2, /3), XF=-DLEAK_TEST (IceVolcanoGalaxy/1 with IceStepNoSlip in
+  the packs). Builds from a mirror on the WSL disk (D:/smg-ps2-wt/auditb-fb.sh), overlay slices from the FAT image
+  (auditb-slice.sh). What was run in PCSX2 and what was not: each PR's body and
+  D:/smg-ps2-wt/unverified-2026-11-18.md. Left: SpinDriverStart / EndGlow (#669), the Ride classes' marks (#684).
 - Mario's miss events (feat/674-miss-events, #674, 2026-11-18): EventAbyss and EventFireDown have their own timelines
   now (PlayerEventAbyss.cpp / PlayerEventFireDown.cpp: the MissLayout at init, the HUD out at 25 / 100, the wipe once
   the layout's Appear is over and 15 frames in, a life at 120), EventDown keeps its own. MarioActorNrvGameOverNonStop
