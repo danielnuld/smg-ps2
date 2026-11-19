@@ -15621,7 +15621,10 @@ static void update_screws(void)
         } else { /* ScrewSwitch / ScrewSwitchReverse::exeScrew (from Adjust's 3 steps on) */
             int rev = in->screw == 2, sst = row_step[row] - 3, mode;
             const char *clip = rev ? "ScrewSwitchReverseOn" : "ScrewSwitchOn";
-            if (sst == 0) obj_play(in, clip, 0, 0); /* startBck (startBckPlayer: ponytail, no such Mario clip here) */
+            if (sst == 0) { /* startBck, startBckPlayer (MarioAnime's ScrewSwitchOn / ScrewSwitchReverseOn) */
+                obj_play(in, clip, 0, 0);
+                if (mario_anim) mario_play(rev ? "screwswitchreverseon" : "screwswitchon", 1.0f, 0);
+            }
             if (sst >= 0 && sst < (rev ? 25 : 30)) in->lv[0] = se_level(rev ? SE_OJ_LV_SCR_SWITCH_R_MOVE : SE_OJ_LV_SCREW_SWITCH_MOVE, &in->m[12], in->lv[0]);
             if (sst == (rev ? 25 : 30)) { /* sStepToRumbleCamera */
                 se_start(rev ? SE_OJ_SCR_SWITCH_R_ON : SE_OJ_SCREW_SWITCH_ON, &in->m[12]);
