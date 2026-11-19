@@ -1520,6 +1520,7 @@ static int gw_puppet(void);
 static int gw_talk_continue(int t);
 static int gw_pipe_switch(void);
 static void gw_init(void), gw_update(void), gw_draw(void);
+static void trk_init(void), trk_update(void); static int trk_star_out(int row), trk_puppet(void); /* trick.inc: TrickRabbitFreeRun */
 static void pro_init(void), pro_start(void), pro_update(void), pro_draw(void); /* the new game's opening (its section) */
 static int pro_puppet(void);
 typedef struct { u16 total; u8 suspend, talk; } DxPart;           /* talk: MR::isDemoPartTalk */
@@ -3058,6 +3059,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         render_target_reserve(st_mapboard || scene_type(s, "MirrorAreaCube") >= 0 || raster);
     }
     gw_init();
+    trk_init();
     pro_init();
     mi_init();
     story_scene_start();
@@ -15195,6 +15197,7 @@ static int poihana_shock(Kuribo *k);
 static int ge_hitall(Kuribo *k, V3 from);
 static int mg_hitall(Kuribo *k);
 static void bh_chain(Kuribo *k);
+static int jf_knock(Kuribo *k, V3 from);
 static void walker_inhale(Kuribo *e);
 static void fireball_hit_walkers(int b)
 {
@@ -15226,6 +15229,7 @@ static void fireball_hit_walkers(int b)
         if (e->kind == WALK_KOTEBUG) { if (!kb_blow(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* isMsgFireBallAttack: Blow */
         if (e->kind == WALK_POIHANA) { if (!poihana_shock(e)) continue; scene_stop = 3; fireballs[b].t = 0; return; } /* a HitAll: tryShock, stopSceneForDefaultHit(3) */
         if (e->kind == WALK_GESSO) { if (!ge_hitall(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* a HitAll: knockOut */
+        if (e->kind == WALK_JELLYFISH) { if (!jf_knock(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* a HitAll: knockOut */
         if (e->kind == WALK_MOGU || e->kind == WALK_TERESAW || e->kind == WALK_METBO || e->kind == WALK_SNAKEHEAD || e->kind == WALK_BOMBHEI || e->kind == WALK_STRSPIDER) continue; /* (Mogu, TeresaWater, Metbo, Snakehead, BombHei, StringSpider: neither isMsgFireBallAttack nor isMsgPlayerHitAll) */
         if (e->kind == WALK_KURIBO || e->kind == WALK_KMINI || e->kind == WALK_TAKOHEI) { /* isMsgFireBallAttack, a HitAll: requestBlowDown (KuriboMini: a coin), TakoHei's requestPunch */
             if (walker_blow(e, fireballs[b].pos) <= 0) continue;
@@ -15570,6 +15574,7 @@ static void update_jets(void)
                 else if (e->kind == WALK_PACKUN) took = packun_hit(e, p, 1); /* a HitAll: stopSceneForDefaultHit(5), punchDown */
                 else if (e->kind == WALK_KOTEBUG) took = kb_hitall(e, p); /* a HitAll: Blow overturned, else setOverturnFall */
                 else if (e->kind == WALK_MOGU) took = mg_hitall(e); /* isMsgJetTurtleAttack: tryPunchHitted */
+                else if (e->kind == WALK_JELLYFISH) took = jf_knock(e, p); /* a HitAll: knockOut */
                 else if (e->kind == WALK_SPIDER) took = js_blow(e, p); /* a HitAll: HitBlow */
                 else if (e->kind == WALK_KURIBO || e->kind == WALK_KMINI || e->kind == WALK_TAKOHEI) { /* isMsgJetTurtleAttack, a HitAll: requestBlowDown (KuriboMini: a coin), TakoHei's requestPunch */
                     took = walker_blow(e, p) > 0;
@@ -23815,7 +23820,7 @@ static void update_mario_(void)
             else if (pro_puppet() || tsp_puppet() || gh_puppet()) ; /* the prologue's DemoPeachCastleGate (pro_update); GhostPlayer's startBckPlayerJ */
             else if (rm_bck()) { int mode = 0; if (!m_clip_is(rm_bck())) { anim_clip_info(rm_bck(), &mode); mario_play(rm_bck(), 1.0f, mode == 2 || mode == 4); } } /* the race's startBckPlayer */
             else if (bsb_demo() || bk_demo() || tb_demo() || kp_demo() || pol_demo()) { if (!m_clip_is("battlewait")) mario_play("battlewait", 1.0f, 1); } /* BossStinkBug's demos: startBckPlayer BattleWait */
-            else if (!star_demo && !gw_puppet()) mario_play("wait", 1.0f, 1);
+            else if (!star_demo && !gw_puppet() && !trk_puppet()) mario_play("wait", 1.0f, 1);
             else if (mario_anim->clip_id < 0 || strcmp(sc->clips[mario_anim->clip_id].name, "powerstarget")) mario_play("powerstarget", 1.0f, 0);
             anim_update(mario_anim);
         }
@@ -28848,7 +28853,7 @@ static int walker_blow(Kuribo *e, V3 from)
 {
     if (e->kind == WALK_JELEC || e->kind == WALK_BEGOLAUNCH || e->kind == WALK_MKOOPA || e->kind == WALK_MERAMERA || e->kind == WALK_KARON) return 0; /* (JellyfishElectric / MechanicKoopaMini / Meramera / Karon: only isMsgExplosionAttack, walker_explosion; BegomanLauncher: none) */
     if (e->kind == WALK_TERESA || e->kind == WALK_STINKBUG || e->kind == WALK_MERAKING || e->kind == WALK_MOGU) return 0; /* (no receiveMsgEnemyAttack) */
-    if (e->kind == WALK_GESSO || e->kind == WALK_BOMBHEI) return 0; /* (only isMsgExplosionAttack: walker_explosion; BombHei's blows only from a Wanwan) */
+    if (e->kind == WALK_GESSO || e->kind == WALK_BOMBHEI || e->kind == WALK_JELLYFISH) return 0; /* (only isMsgExplosionAttack: walker_explosion; BombHei's blows only from a Wanwan) */
     if (e->kind == WALK_TERESAW || e->kind == WALK_SNAKEHEAD || e->kind == WALK_MOGUCCHI || e->kind == WALK_KABOKURI || e->kind == WALK_SAMBOHEAD || e->kind == WALK_KANINA) return 0; /* (TeresaWater, Snakehead, Mogucchi, Kabokuri, SamboHead, Kanina: no receiveMsgEnemyAttack) */
     if (e->kind == WALK_BASABASA) return bb_punch(e, from, 0); /* isMsgToEnemyAttackBlow / Trample: startWithoutStopScene, PunchDown */
     if (e->kind == WALK_UNIZO) { if (unizo_breaking(e)) return 0; unizo_break(e); return 1; } /* receiveMsgEnemyAttack, not from a Unizo: doBreak */
@@ -28909,6 +28914,7 @@ static void walker_explosion(V3 from)
         if (e->kind == WALK_BASABASA) continue; /* (no isMsgExplosionAttack) */
         if (e->kind == WALK_GESSO) { ge_hitall(e, from); continue; } /* isMsgExplosionAttack: knockOut */
         if (e->kind == WALK_BOMBHEI) { bh_chain(e); continue; } /* isMsgExplosionAttack: Explode */
+        if (e->kind == WALK_JELLYFISH) { jf_knock(e, from); continue; } /* isMsgExplosionAttack (not in Death): knockOut */
         walker_blow(e, from);
     }
 }
@@ -29756,6 +29762,14 @@ static int jf_after_wait(Kuribo *k, int rail) /* selectNerveAfterWait */
         return 1;
     }
     return 0;
+}
+static int jf_knock(Kuribo *k, V3 from) /* knockOut: isMsgPlayerHitAll (a fire ball, a shell, rainbow Mario), isMsgExplosionAttack */
+{
+    if (k->nrv == JF_DEATH) return 0;
+    V3 d = vnorm(vsub(k->pos, from));
+    k->vel = vmul(d, 40.0f); k->front = vmul(d, -1.0f);
+    w_nrv(k, JF_DEATH);
+    return 1;
 }
 static void jelly_update(Kuribo *k)
 {
@@ -33839,6 +33853,11 @@ static void bomb_update(Kuribo *k)
     }
     if (launcher) { /* the launcher: BLN_WAIT / BLN_STOP in snrv / sstep, its countdown in lvt[0] */
         int ss = ++k->sstep, active = r->sw[SW_A] < 0 || sw_on(r, SW_A);
+        if (r->sw[SW_A] >= 0 && active != k->lvt[1]) { /* listenStageSwitchOnOffA */
+            k->lvt[1] = active;
+            if (active) { k->lvt[0] = 0; k->snrv = BLN_WAIT; k->sstep = ss = 0; } /* onSwitchA: mCountdown 0, LauncherWait: it throws at once */
+            else { k->lvt[0] = -1; k->snrv = BLN_STOP; k->sstep = ss = 0; }      /* offSwitchA: mCountdown -1, Stop */
+        }
         if (!active && k->nrv != BH_GONE) w_nrv(k, BH_GONE); /* offSwitchA: the bomb killed */
         if (k->lvt[0] > 0) k->lvt[0]--;
         if (k->snrv == BLN_STOP) { if (ss == 0) k->lvt[0] = -1; if (active && ss > 120) { k->snrv = BLN_WAIT; k->sstep = -1; } }
@@ -35749,6 +35768,7 @@ static void update_invincible(void)
         if (e->kind == WALK_BASABASA) { if (bb_punch(e, mario->pos, 1)) m_invincible_hit(es); continue; } /* a HitAll: PunchDown */
         if (e->kind == WALK_PACKUN) { if (packun_hit(e, mario->pos, 0)) m_invincible_hit(es); continue; } /* isMsgInvincibleAttack: punchDown */
         if (e->kind == WALK_GESSO) { if (ge_hitall(e, mario->pos)) m_invincible_hit(es); continue; } /* a HitAll: knockOut */
+        if (e->kind == WALK_JELLYFISH) { if (jf_knock(e, mario->pos)) m_invincible_hit(es); continue; } /* a HitAll: knockOut */
         if (e->kind == WALK_MOGU) { if (mg_hitall(e)) m_invincible_hit(es); continue; } /* isMsgInvincibleAttack: tryPunchHitted */
         int took = walker_blow(e, mario->pos);
         if (took > 0 && e->kind == WALK_KMINI) e->item = 1; /* KuriboMini: isMsgInvincibleAttack, setTypeCoin(1) */
@@ -39496,8 +39516,8 @@ static void update_dossuns(void)
         float old[16];
         memcpy(old, in->m, 64);
         if (*n == DS_INIT) { *n = r->sw[SW_A] >= 0 ? DS_READY : DS_UPPER; *t = 0; }
-        else if (*t < 0xFFFF) ++*t;
         V3 at = v3(in->m[12], in->m[13], in->m[14]);
+        int n0 = *n; /* (the step counts from 0 on a nerve's first frame: it was 1, so no first step ran: no sign / land sound, no Land effect, no shake) */
         switch (*n) {
         case DS_READY: if (sw_on(r, SW_A)) { *n = DS_SIGN; *t = 0; } break;
         case DS_UPPER: if (*t >= upper) { *n = DS_SIGN; *t = 0; } break;
@@ -39511,7 +39531,11 @@ static void update_dossuns(void)
             break;
         case DS_GROUND:
             if (*t == 0) {
-                if (vlen(vsub(mario->pos, at)) < 3500.0f) camera_shake(SHAKE_NORMAL_WEAK); /* startRumbleWithShakeCameraNormalWeak */
+                { /* startRumbleWithShakeCameraNormalWeak(中, 弱, sCamShakeDistanceStrong 2000, sCamShakeDistanceWeak 3500) */
+                    float d = vlen(vsub(mario->pos, at));
+                    if (d <= 2000.0f) { pad_rumble(RUMBLE_MIDDLE); camera_shake(SHAKE_NORMAL_WEAK); }
+                    else if (d <= 3500.0f) { pad_rumble(RUMBLE_WEAK); camera_shake(SHAKE_WEAK); }
+                }
                 se_start(SE_OJ_DOSSUN_LAND, &at.x);
                 fx_named("Dossun", "Land", in->m, NULL, NULL);
             }
@@ -39524,6 +39548,7 @@ static void update_dossuns(void)
         }
         dossun_place(in);
         if (mario_ground == i) carry(old, in);
+        if (*n == n0 && *t < 0xFFFF) ++*t;
     }
 }
 
@@ -45523,7 +45548,7 @@ static V3 star_pos(const Inst *in, int *state)
             *state = row_dead[w - 1];
             return vadd(from, v3(0.0f, 100.0f, 0.0f));
         }
-        if ((!row_dead[w - 1] && !st_star_out(w - 1) && !tbox_star_out(w - 1) && !flip_star_out(w - 1) && !coach_took(w - 1) && !kino_took(w - 1) && !race_took(w - 1) && !sy_took(w - 1)) || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
+        if ((!row_dead[w - 1] && !st_star_out(w - 1) && !tbox_star_out(w - 1) && !flip_star_out(w - 1) && !coach_took(w - 1) && !kino_took(w - 1) && !trk_star_out(w - 1) && !race_took(w - 1) && !sy_took(w - 1)) || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
                                                                                                        * here: no star) */
     } else if (got_coins < 100 && got_purple < 100) { /* ScenePlayingResult: 100 coins, or 100 purple coins */
         *state = 0;
@@ -46448,6 +46473,7 @@ static void shoot_piece(void)
 
 static int butler_shot(V3 p);
 static int gw_shot(V3 p);
+static int trk_shot(V3 p);
 static int npc_shot(V3 p);
 static int npc_nsens;
 static int km_guard(Kuribo *k, V3 shot_vel);
@@ -46549,6 +46575,7 @@ static void update_shots(void)
         if (!hit && hhp_reflects(s->pos, 30.0f)) hit = 2; /* HammerHeadPackun: isMsgStarPieceReflect */
         if (!hit && butler_shot(s->pos)) hit = 1;
         if (!hit && gw_shot(s->pos)) hit = 1; /* RunawayRabbit: isMsgStarPieceAttack */
+        if (!hit && trk_shot(s->pos)) hit = 1; /* TrickRabbitFreeRun: receiveMsgBlowDamage */
         if (!hit) hit = npc_shot(s->pos); /* NPCActor::receiveMsgPlayerAttack: isMsgStarPieceReflect (Tico: isMsgStarPieceAttack) */
         if (!hit && hana_shot(s->pos)) hit = 1;
         if (!hit) hit = dino_shot(s->pos);             /* DinoPackun: the hit reaction; its egg and tail reflect */
@@ -53736,6 +53763,8 @@ static void gw_caught(GwRabbit *r) /* attackSensor: RunawayRabbitCollect::notice
     w_nrv(&r->k, RR_CAUGHT);
 }
 
+#include "trick.inc"
+
 /* RunawayTico's comments (appearHole / Pipe / BushComment, appearMamaComment) after a catch */
 static void rt_appear(int c, V3 at)
 {
@@ -57957,6 +57986,7 @@ void game_update(void)
 
     LQ(5, update_talk_director());
     gw_update();
+    trk_update();
     miss_event_update();
     if (lives != gd_player_left()) gd_add_player_left(lives - gd_player_left()); /* GameDataPlayerStatus: kept over scenes */
     dome_update();

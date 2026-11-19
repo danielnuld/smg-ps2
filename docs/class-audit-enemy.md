@@ -37,9 +37,9 @@ freeze and the rainbow attack. A class read here gets its own case in each of th
 | StringSpider | 33 | partly #693 | Messages only: fire balls and shells pass (were the generic kill). Its nerves were not re-read |
 | Gesso | 31 | partly #693 | Messages only: a fire ball / the rainbow attack / an explosion: knockOut (were the generic kill, or nothing); enemy blows pass. Its nerves were not re-read |
 | Snakehead (Snakehead, SnakeheadSmall) | 30 | partly #693 | Messages only: fire balls, the rainbow attack and enemy blows pass (were the generic kill; only the shell: TurtleDown). Its nerves were not re-read |
-| BombHeiLauncher (BombHeiLauncher, BombLauncher) | 28 | todo | |
-| Dossun | 27 | todo | |
-| Jellyfish | 26 | todo | |
+| BombHeiLauncher (BombHeiLauncher, BombLauncher) | 28 | fixed #710 | onSwitchA: mCountdown 0 and LauncherWait (it throws at once; it waited Stop's 120 frames and the countdown's 60), offSwitchA: Stop. Everything else equal. Left: isOnPlayerShadow in the launch test, its Open BCK |
+| Dossun | 27 | fixed #710 | Its step counted from 1 on a nerve's first frame, so no first step ever ran: SE_OJ_DOSSUN_FALL_SIGN, SE_OJ_DOSSUN_LAND, the Land effect and the shake were never played; the landing's rumble / shake distances (中 within 2000 with the normal weak shake, 弱 within 3500 with the weak one). Everything else equal. Left: the FallStart BCK / BVA faces, the quick comet (x 2.5) |
+| Jellyfish | 26 | partly #710 | Messages only: knockOut from a fire ball, a shell, the rainbow attack (a HitAll) and an explosion (were the generic kill, or nothing); enemy blows pass. Its nerves were not re-read |
 | RingBeamer | 22 | todo | |
 | Mogu | 22 | partly #693 | Messages only: a fire ball passes; a shell / the rainbow attack: tryPunchHitted unless hidden (were the generic kill); enemy blows pass. Its nerves were not re-read |
 | Mogucchi | 22 | partly #693 | Messages only: enemy blows pass (no receiveMsgEnemyAttack). Left: fire balls / shells / the rainbow attack are a HitAll for it (still the generic kill). Its nerves were not re-read |

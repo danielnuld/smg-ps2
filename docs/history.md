@@ -37,6 +37,38 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   the dome, System_Result007, the save), `route` EggStar 1 (its star). Not run: the 1UP board and the star
   pieces' 1-up, the Tico's voice (the opening), the Sight (`launcher`), the pause menu's changes.
   ponytail: the load after PlayerMissLeft and before the Tico's voice is not concurrent; no layout effects.
+- Enemy audit, third batch (feat/708-enemy-audit-3, #708, PR #710, 2026-11-18): Dossun: update_dossuns raised its
+  step before the nerve ran, so a nerve's first frame was step 1 and no `*t == 0` block ever ran: no
+  SE_OJ_DOSSUN_FALL_SIGN, no SE_OJ_DOSSUN_LAND, no Land effect, no shake; the step now counts from 0 (raised after
+  the nerve), and the landing rumbles / shakes as startRumbleWithShakeCameraNormalWeak (中 within 2000, 弱 within
+  3500). BombHeiLauncher: its SW_A listened as on / off edges (onSwitchA: countdown 0, LauncherWait: the bomb at once;
+  offSwitchA: Stop). Jellyfish: knockOut (jf_knock) from fire balls, shells, the rainbow attack and explosions.
+  Test: built plain, host tests, the route test, memcheck; NOT run in PCSX2 (unverified-2026-11-18.md). No repack.
+- Trick rabbits (feat/632-trick-rabbits, #632, 2026-11-18): TrickRabbitFreeRun (ReverseKingdomGalaxy 1) and
+  TrickRabbit (CosmosGardenGalaxy 1) had no gameplay (a still model, the star out from the start). engine/src/trick.inc,
+  on the Gateway rabbits' kit (GwRabbit, rr_state = WalkerStateRunaway, RunawayRabbit's WalkerStateBlowDamage):
+  RabbitStateWaitStart (Wait / SmallTurn / HitReaction / Trample / Spin / Pointing / Talk and their sounds) and
+  RabbitStateCaught (the 捕まり demo: Caught, CaughtLand, CaughtEvent; Mario's Catch clips, the PStar model's
+  TrickRabbitLand / Wait) shared; TrickRabbitFreeRun's nerves (WaitStart, the 逃走 demo, RunawayStart with
+  MBGM_GALAXY_02_CHASE, Runaway at 0.7 / 1.5 by Mario's distance, BlowDamage from a star piece, Caught,
+  PowerStarDemo, GiveUp); TrickRabbit's (its rail graph: slice.py rgph_chunk bakes the rail and its Path_ID links
+  as nodes and edges with their point args, chunk RGPH; DemoRunaway / DemoJump along the arg7 -2 edges, Wait,
+  Runaway with selectEdgeRunnaway and the route level, BrakeTurn, JumpStart / Jump on a ParabolicPath, Tumble /
+  FallDown / ComebackRoute, Caught with SE_SY_TOTAL_COMPLETE, WaitPowerStarDemo, GiveUp). Both declare their star
+  (slice.py declare_stars; trk_star_out lets it out 200 over the rabbit) and wait for their zone's collision
+  (w_zone_ground: active from the scene's start they fell through their planet while its zone was loaded low).
+  Left: MultiEventCamera (TrickRabbit's demo camera), SpotMarkLight, foot prints, the ThicketJump effect,
+  isBindedGroundBrake, the blow from other actors; TrickRabbitFreeRunCollect (SnowCapsuleGalaxy: TrickRabbitSnow /
+  TrickRabbitSnowCollect, its clip names are cut at 31 characters by slice.name32) is not ported. Test: plain with
+  XF="-DTRICK_TEST -DPACKS_OVERLAY=<overlay>" on ReverseKingdomGalaxy/1 or CosmosGardenGalaxy/1 (Mario put before
+  the rabbit, A through its talk, a star piece / a drop onto it, then the catch). Seen in PCSX2: TrickRabbitFreeRun end to end (its talk, the demo and the chase BGM, the star piece's BlowDamage, the catch, the power star appear demo with it as declarer, GiveUp); TrickRabbit only to
+  its WaitStart (97 nodes, 109 edges read, it stands on its ground; the test's Mario, put 170 before it, fell off its
+  platform, so its talk and what follows were not run). Until they are, slice.py makes TrickRabbit's RGPH, declarer
+  and PStar only with SMG_RGPH set in the environment: the release packs leave it as it was. Next: fix the test's
+  Mario placement in trk_test, slice CosmosGardenGalaxy with SMG_RGPH=1 into an overlay, run it, then drop the
+  switch. **Release: slice_all.py ReverseKingdomGalaxy** (TrickRabbitFreeRun's declarer and PStar).
+  the rabbit, A through its talk, a star piece / a drop onto it, then the catch). Seen in PCSX2: TrickRabbitFreeRun end to end (its talk, the demo and the chase BGM, the star piece's BlowDamage, the catch, the power star appear demo with it as declarer, GiveUp). **Release: slice_all.py
+  ReverseKingdomGalaxy, CosmosGardenGalaxy** (the declarers, PStar, RGPH).
 - Mario's miss events (feat/674-miss-events, #674, 2026-11-18): EventAbyss and EventFireDown have their own timelines
   now (PlayerEventAbyss.cpp / PlayerEventFireDown.cpp: the MissLayout at init, the HUD out at 25 / 100, the wipe once
   the layout's Appear is over and 15 frames in, a life at 120), EventDown keeps its own. MarioActorNrvGameOverNonStop
