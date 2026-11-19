@@ -11,6 +11,27 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Enemy audit against Petari, first batch (feat/676-enemy-audit-1, #676, 2026-11-18): the enemies read class by class
+  against vendor/Petari/src/Game/Enemy (the table: `docs/class-audit-enemy.md`, one row a class with what was fixed and
+  what is left). The cause shared by most: `fireball_hit_walkers`, the thrown shell's loop and `walker_blow`'s callers
+  ended in a generic kill (Kuribo's smoke and a coin) for every walker kind without a case; Petari has no default, and
+  isMsgPlayerHitAll is the spin, the shell, the fire ball, the freeze and the rainbow attack. Now each class read has
+  its own case: Kuribo / KuriboMini requestBlowDown, TakoHei requestPunch, JumpSpider HitBlow (js_blow), Takobo
+  HitPunch (tk_punch), Karikari tryBlowOut (kari_hitall), BasaBasa PunchDown (bb_punch), Karon Broken from a shell
+  (kr_jet) and kill + three pieces from an explosion; Teresa, StinkBugSmall, Meramera, MechanicKoopaMini,
+  IceMerameraKing no longer die from messages they do not answer. Beside that: Kuribo / KuriboMini die on a fire floor
+  (isBindedGroundDamageFire: the walker's ground code 10); JumpSpider's and Takobo's kick while stunned; JumpSpider's
+  EyeLight; Takobo's body pushes Mario (isPlayerExistUp as a direction); Karikari's hip drop release (the landing
+  zeroed kari_cling before kari_director ran, so nothing was thrown off), BlowOutStarPiece's sounds, Touch on every
+  DPDAttacked; Teresa's filterBind was inverted (GhostThrough walls pass only while it drifts) and its appear nerves'
+  endAppear was skipped; StinkBugSmall's step counted so a nerve set by a message starts at its first step (a hip
+  drop in DashSignEnd killed it with no Death clip), Panic from a hip drop in Shake; Karon without clipping in
+  Pursue, dark matter, SinkDown's attackSensor; BasaBasa without clipping out of Wait / AirWait (it froze out of
+  view), Ice Mario against BasaBasaIce; Meramera's and MechanicKoopaMini's push between two done twice, IgnitionForce's
+  setVelocityJump; Onimasu's landing rumble / shake distances and FactoryGalaxy's WaitForStamp before SW_A;
+  SpinHitController's star pieces with SE_OJ_STAR_PIECE_BURST (spin_hit_exec). Test: built plain (EggStarGalaxy/1),
+  host tests, the route test, memcheck; NOT run in PCSX2 class by class (D:/smg-ps2-wt/unverified-2026-11-18.md).
+  No repack.
 - Enemies on AreaMove / RailMove floors (feat/611-area-move-walkers, #611, 2026-11-18):
   MR::calcVelocityAreaOrRailMoveOnGround as game.c area_rail_vel (an AreaMove floor, code 28: MR::calcAreaMoveVelocity,
   the AreaMoveSphere holding the place: its up less the part towards its centre x arg0 (10); a RailMove floor, 27: the
