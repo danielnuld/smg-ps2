@@ -11,6 +11,25 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Mario's death cameras and the forced jump floors (feat/726-death-cameras, #726, 2026-11-19): the stage cameras
+  carry neither 昇天カメラ nor 奈落カメラ (only e:引き戻し is in the bcams): MarioActor declares them in code
+  (MarioActor.cpp:388: declareGlobalEventCameraDead(0.35, 0x78, 0x3C), declareGlobalEventCameraAbyss). camera.c:
+  camera_event_death starts a chunk declared in code (ev_code beside the CAMS event cameras; blend 60,
+  CameraManEvent's default), CAM_DEAD is CameraDead.cpp (the eye stays, the watch point and the fovy go to Mario by
+  (frame / 120)^4 of what is left a frame: the fovy to atan2(150 / 0.35, his distance)), 奈落カメラ is
+  CAM_EYEPOS_FIX_THERE with num1 1. miss() starts them as the nerves do: 昇天カメラ in exeGameOver and with no lives
+  left, 奈落カメラ in the Abyss nerve and, with lives left, in the NonStop and Sink ones; a black hole keeps its own.
+  Mario::checkAndTryForceJump (MarioJump.cpp:2219, m_check_force_jump): on a floor of code 6 / 0x22 / 7 / 8 (up his
+  ground's normal at mCodeJumpPower 30 / 30 / 60 / 100) or 0xB (his last velocity across the gravity at 10, 30 up) a
+  free jump is kept and made the frame after (tryFreeJump: m_free_jump), with フリージャンプ and its sounds; hurt, the
+  damage status closes, with no life left as a NonStop game over. Code 0x22 is BeachParasol (OceanPhantomCave) and
+  ForceJumpPlanetA, 6 BossKameckBarrier (floors.py over ObjectData's .pa). PCSX2 (plain builds): DOWN_TEST 2: the eye
+  stays 1681 from him while the fovy goes 45 -> 14.3 in 90 frames (the log; no picture caught it); DOWN_TEST 0: in
+  the NonStop and Abyss nerves the camera stays and turns after him (pictures); XF=-DSINK_TEST=34
+  OceanPhantomCaveGalaxy 1: set on the BeachParasol he is thrown up (フリージャンプ) and lands 80 frames later. The
+  route's star at f 4281.
+  The fast build: scratchpad mariostatus/fb.sh (areas2's idea; a mirror per tag, its seed's objects deleted: with them
+  a build kept the first build's flags).
 - Enemy audit, fourth batch (feat/725-enemy-audit-4, #725, PR #730, 2026-11-19): Kanina's receiveFireBall from a fire
   ball and a thrown shell (kan_fire: doDamageFireBall, not while its sensors are off); Gesso without clipping in Wait
   from step 2 (exeWait). `docs/class-audit-enemy.md`: the rows of the classes compared by clips, sounds, step tests
