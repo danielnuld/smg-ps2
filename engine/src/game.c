@@ -9742,6 +9742,127 @@ static int gcap_pick(void) /* the target under the cursor, -1 none */
     return best;
 }
 
+/* GCaptureTarget.cpp's own nerves (gcap 1), row_turn: 0 not begun, 1 Wait, 2 Pointable, 3 HitPointer, 4 Active, 5
+ * Appear / TryDemoAppear (gap[]). Wait: its BCK rate (mStarAnimSpeed, the clip's speed) down 0.05 a frame to 0, no
+ * effect; Mario within arg1 (2500): Pointable (the TouchAble burst, TargetLight, the rate up 0.05 to 0.5); the pointer
+ * on it and GCapture taking the request (requestTarget: A not held; kept 30 frames after the last one, _12C):
+ * HitPointer (TargetLight + Touch, SE_OJ_LV_MAGIC_PNT_G_POINT, the rate up 0.2 to 1); decidedTarget: Active (React,
+ * TargetLight + Active; its SEs: gcap_update), releasedTarget: the Wait clip and Wait. SW_B kills it
+ * (listenStageSwitchOnB). appear() (its SW_APPEAR, or its demo's appear action): SE_SY_GCAPTURE_APPEAR, hidden; with an
+ * actor camera the 出現 demo is asked first (TryDemoAppear) and the camera started at Appear's first step; step 30
+ * shown, the Appear clip (then Wait), SE_OJ_GCAPTURE_APPEAR, TargetLight; past 150 the demo and camera ended, Wait.
+ * ponytail: the Switch BRK (frame 0 far away with arg2, 1 near) is not shown (one baked colour: slice.py has no
+ * second model of it); no ブルースター出現グループ movement request; the rail (MapPartsRailMover) not run */
+static struct { short row, step, clip; } gap[8];
+static int ngap;
+static int gcap_req = -1, gcap_req_t; /* GCapture::mTarget (the row asked), _12C */
+static int gcap_touch = -1;           /* the AnmModelBindMove instance GCapture's binder touched this frame */
+static void gcap_appear(int row) /* GCaptureTarget::appear */
+{
+    for (int k = 0; k < ngap; k++) if (gap[k].row == row) return;
+    if (ngap == 8) { row_turn[row] = 1; return; }
+    se_start(SE_SY_GCAPTURE_APPEAR, NULL);
+    row_demo_hide[row] = 255; sw_changed = 1; /* hideModel */
+    row_turn[row] = 5; row_step[row] = 0;
+    gap[ngap].row = (short)row; gap[ngap].clip = 0;
+    gap[ngap++].step = row_camset[row] != -1 ? -1 : 0; /* isExistActorCamera: requestStartDemo 出現 (TryDemoAppear) */
+}
+static void update_gcap_targets(void)
+{
+    static const Scene *seen;
+    if (seen != sc) { seen = sc; ngap = 0; gcap_req = -1; gcap_req_t = 0; }
+    for (int k = 0; k < ngap; k++) { /* exeTryDemoAppear / exeAppear */
+        int row = gap[k].row;
+        const Row *r = &sc->objs[row];
+        const char *cls = sc->types + 32 * r->type;
+        V3 p = row_pos(r);
+        if (gap[k].step < 0) { if (!pd_try_start("出現", row)) continue; gap[k].step = 0; }
+        int st = gap[k].step++;
+        if (st == 0 && row_camset[row] != -1) { /* startActorCameraTargetSelf */
+            V3 x, z, up = up_at(p, v3(0, 1, 0));
+            row_axes(r, &x, &z);
+            camera_actor_start(cls, "出現", (unsigned short)row_camset[row], up, z, p);
+        }
+        if (st == 30) { row_demo_hide[row] = 0; sw_changed = 1; se_start(SE_OJ_GCAPTURE_APPEAR, r->pos); } /* showModel */
+        Inst *in = st > 30 ? row_inst(row) : NULL;
+        if (in) {
+            if (!gap[k].clip) { gap[k].clip = 1; obj_play(in, "Appear", 0, 0); }
+            else if (gap[k].clip == 1 && in->anim && in->anim->done) { gap[k].clip = 2; obj_play(in, "Wait", 1, 0); } /* isBckStopped */
+            fx_named(cls, "TargetLight", in->m, NULL, in);
+        }
+        if (st > 150) { /* isGreaterStep(150) */
+            if (row_camset[row] != -1) { pd_end("出現"); camera_event_end(); } /* endDemoWaitCameraInterpolating, endActorCamera */
+            row_turn[row] = 1; row_step[row] = 0;
+            gap[k--] = gap[--ngap];
+        }
+    }
+    if (gcap_req_t > 30) { gcap_req = -1; gcap_req_t = 0; } /* GCapture::control */
+    if (gcap_req >= 0) gcap_req_t++;
+    int pick = gcap.phase || dome_busy() ? -1 : gcap_pick();
+    FOR_KIND(i, gcap) {
+        Inst *in = &insts[i];
+        if (in->gcap != 1 || !row_shown(in->row)) continue;
+        int row = in->row;
+        const Row *r = &sc->objs[row];
+        const char *cls = sc->types + 32 * r->type;
+        signed char *n = &row_turn[row];
+        unsigned short *st = &row_step[row];
+        if (*n == 0) { /* init: syncStageSwitchAppear -> appear(), else makeActorAppeared (Wait) */
+            if (r->sw[SW_APPEAR] >= 0) { gcap_appear(row); continue; }
+            *n = 1; *st = 0;
+        }
+        if (*n == 5) continue;
+        if (r->sw[SW_B] >= 0 && sw_on(r, SW_B)) { /* LiveActor::kill: unrequestGCaptureTarget, isReleaseForce */
+            if (gcap_req == row) gcap_req = -1;
+            row_dead[row] = 1; sw_changed = 1;
+            continue;
+        }
+        int active = gcap.phase && gcap.target == i;
+        if (active && *n != 4) { *n = 4; *st = 0; }                                   /* decidedTarget */
+        else if (!active && *n == 4) { obj_play(in, "Wait", 1, 0); *n = 1; *st = 0; } /* releasedTarget */
+        int near = vlen(vsub(gcap_pos(in), mario->pos)) < (r->arg[1] > 0 ? (float)r->arg[1] : 2500.0f); /* isNearPlayer(mPointableRange) */
+        int point = pick == i, first = !*st;
+        float sp = in->anim ? in->anim->speed : 0.0f;
+#ifdef PUT_TEST
+        if (first) printf("gcap target row %d: nerve %d, rate %.2f, anim %d%c", row, *n, sp, in->anim != NULL, 10);
+#endif
+        if (*st < 0xFFFF) ++*st;
+        switch (*n) {
+        case 1: /* exeWait */
+            sp = sp - 0.05f < 0.0f ? 0.0f : sp - 0.05f;
+            if (near) { *n = 2; *st = 0; }
+            break;
+        case 2: /* exePointable */
+            if (first) fx_named(cls, "TouchAble", in->m, NULL, NULL);
+            fx_named(cls, "TargetLight", in->m, NULL, in);
+            sp = sp + 0.05f > 0.5f ? 0.5f : sp + 0.05f;
+            if (point && !pointer_a()) { gcap_req = row; gcap_req_t = 0; *n = 3; *st = 0; } /* requestGCaptureTarget */
+            else if (!near) { *n = 1; *st = 0; }
+            break;
+        case 3: /* exeHitPointer */
+            if (gcap_req != row) { *n = 1; *st = 0; break; } /* isRequestedGCaptureTarget */
+            fx_named(cls, "TargetLight", in->m, NULL, in);
+            fx_named(cls, "Touch", in->m, NULL, (const char *)in + 1);
+            in->lv[1] = se_level(SE_OJ_LV_MAGIC_PNT_G_POINT, &in->m[12], in->lv[1]);
+            sp = sp + 0.2f > 1.0f ? 1.0f : sp + 0.2f;
+            if (point && near && !pointer_a()) gcap_req_t = 0; /* requestGCaptureTarget again */
+            if (!near) gcap_req = -1;                          /* unrequestGCaptureTarget */
+            break;
+        case 4: /* exeActive (SE_OJ_MAGIC_PNT_G_ON and the level SEs: gcap_update) */
+            if (first) { obj_play(in, "React", 0, 0); sp = 1.0f; }
+            fx_named(cls, "TargetLight", in->m, NULL, in);
+            fx_named(cls, "Active", in->m, NULL, (const char *)in + 2);
+            break;
+        }
+        if (in->anim && *n != 4) in->anim->speed = sp; /* setBckRate(mStarAnimSpeed) */
+    }
+}
+
+static int gcap_nobreak(int inst) /* the binded sensor's host answers ACTMES_IS_NO_BREAK_G_CAPTURE: InvisiblePolygonObjGCapture */
+{
+    return inst >= 0 && inst < ninsts && !strncmp(sc->types + 32 * sc->objs[insts[inst].row].type, "InvisibleWallGCapture", 21);
+}
+
 static void gcap_release(Player *m)
 {
     m->hvel = vtangent(gcap.vel, m->up);
@@ -9762,7 +9883,8 @@ static int gcap_update(Player *m)
             int t = gcap_pick();
             /* GCaptureTarget::exeHitPointer: pointed (touch, "弱"), the hand open for it (requestStarPointerModeBlueStarReady) */
             if (t >= 0 && menu_pointer_touch(&insts[t], 1)) menu_pointer_request(SPM_BLUESTARREADY);
-            if (trig && t >= 0 && mode_rush("GCapture")) { gcap.phase = 1; gcap.t = 0; gcap.target = t; gcap.power = 0; printf("gcapture: target row %d" "\n", insts[t].row); }
+            if (trig && t < 0 && gcap_req >= 0) { Inst *q = row_inst(gcap_req); if (q && q->gcap == 1) t = (int)(q - insts); } /* tryCapture: mTarget (asked within the last 30 frames) */
+            if (trig && t >= 0 && mode_rush("GCapture")) { gcap.phase = 1; gcap.t = 0; gcap.target = t; gcap.power = 0; gcap_req = -1; printf("gcapture: target row %d" "\n", insts[t].row); }
         }
         return 0;
     }
@@ -9807,15 +9929,28 @@ static int gcap_update(Player *m)
     } else
         gcap.vel = vmul(gcap.vel, 0.99f);
     V3 moved = vadd(c, gcap.vel), pushed = moved;
-    int wall = 0, ground = collide_n(&pushed, m->up, BODY_RADIUS, NULL, NULL, &wall);
+    V3 wn = v3(0, 0, 0);
+    int wall = 0, ground = collide_n(&pushed, m->up, BODY_RADIUS, NULL, &wn, &wall), nobreak = 0;
+    gcap_touch = -1;
     if (ground || wall) { /* reboundVelocityFromCollision 0.5: the pushed-out part reflected */
         V3 n = vnorm(vsub(pushed, moved));
+        int gi = ground ? ground_inst : -1, wi = wall ? wall_inst : -1;
         if (vlen(n) > 0.5f && vdot(gcap.vel, n) < 0) gcap.vel = vsub(gcap.vel, vmul(n, 1.5f * vdot(gcap.vel, n)));
-        if (gcap.phase == 3) { m->pos = vsub(pushed, vmul(m->up, BODY_RADIUS)); gcap_release(m); return 0; }
+        /* tryAddVelocityReflectJumpCollision: the binded sensor's host answers ACTMES_IS_REFLECTION_G_CAPTURE
+         * (AnmModelBindMove: its Move starts, isOnStartAnmTrigger): 25 along the collision's normal, 25 at most */
+        if (gi >= 0 && insts[gi].anmmodel == 4) gcap_touch = gi;
+        else if (wi >= 0 && insts[wi].anmmodel == 4) gcap_touch = wi;
+        if (gcap_touch >= 0 && vlen(n) > 0.5f) {
+            gcap.vel = vadd(gcap.vel, vmul(n, 25.0f));
+            float l = vlen(gcap.vel);
+            if (l > 25.0f) gcap.vel = vmul(gcap.vel, 25.0f / l);
+        }
+        nobreak = gcap_nobreak(gi) || gcap_nobreak(wi); /* tryRelease: sendMsgToBindedSensor(ACTMES_IS_NO_BREAK_G_CAPTURE) */
+        if (gcap.phase == 3 && gcap_touch < 0 && !nobreak) { m->pos = vsub(pushed, vmul(m->up, BODY_RADIUS)); gcap_release(m); return 0; }
     }
     m->pos = vsub(pushed, vmul(m->up, BODY_RADIUS));
     m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
-    if (gcap.phase == 3 && gcap.t > 180) { gcap_release(m); return 0; }
+    if (gcap.phase == 3 && gcap.t > 180 && gcap_touch < 0 && !nobreak) { gcap_release(m); return 0; }
     return 1;
 }
 
@@ -42453,12 +42588,13 @@ static void update_anmmodels(void)
         int k = in->stage - 1, cam = stage_cam_of(sc->types + 32 * r->type);
         if (*st < 0xFFFF) ++*st;
         if (*n == 0) {
-            int go = in->anmmodel == 3 ? mario_ground == i : in->anmmodel == 4 ? 0 : r->sw[SW_A] < 0 || sw_on(r, SW_A); /* isOnStartAnmTrigger */
+            /* isOnStartAnmTrigger (AnmModelBindMove: the rush actor, GCapture, binded to its body) */
+            int go = in->anmmodel == 3 ? mario_ground == i : in->anmmodel == 4 ? gcap.phase >= 2 && gcap_touch == i : r->sw[SW_A] < 0 || sw_on(r, SW_A);
             if (in->anim && !*st) { obj_start(in, "Move"); in->anim->speed = 0.0f; in->anim->frame = 0.0f; } /* still at its first frame */
             if (go) {
                 *n = 1; *st = 0;
                 obj_start(in, "Move");
-                if (in->anmmodel == 3 && r->sw[SW_B] >= 0) sw_set((Row *)r, SW_B, 1); /* AnmModelGroundOnMove::control */
+                if ((in->anmmodel == 3 || in->anmmodel == 4) && r->sw[SW_B] >= 0) sw_set((Row *)r, SW_B, 1); /* AnmModelGroundOnMove / AnmModelBindMove::control */
             }
         } else if (*n == 1) {
             if (*st == 1) { /* the first step */
@@ -47160,11 +47296,7 @@ static void dx_cast_hook(int row, int type, int part)
         row_dead[row] = 0; sw_changed = 1; butler_nrv = 2;
         return;
     }
-    if (type == 0 && !strcmp(cls, "GCaptureTarget")) { /* GCaptureTarget::appear: hidden, exeAppear shows it at step 30 */
-        se_start(SE_SY_GCAPTURE_APPEAR, NULL);
-        row_demo_hide[row] = 30;
-        return;
-    }
+    if (type == 0 && !strcmp(cls, "GCaptureTarget")) { gcap_appear(row); return; } /* GCaptureTarget::appear (update_gcap_targets) */
     if (type == 3 && !strcmp(cls, "ElectricRail")) { row_dead[row] = 1; sw_changed = 1; return; } /* ElectricRailNrvDisappear */
     if (type == 2 || type == 3) printf("demo: no %s for %s\n", type == 2 ? "functor" : "nerve", cls);
 }
@@ -57791,6 +57923,7 @@ void game_update(void)
     LQ(15, kari_bite());
     LQ(16, break_boxes());
     LQ(17, update_collapse());
+    update_gcap_targets();
     LQ(18, update_flips());
     LQ(19, update_hip_switches());
     update_bigbubbles();
