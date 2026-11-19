@@ -11,6 +11,26 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Coin::exeMove for the popped coins, CoinGroup's appear (feat/646-coin-move, #646, 2026-11-19): game.c update_pops
+  rewritten after Coin.cpp: the nerve first, with the binder's faces of the last frame (a DamageFire ground past the
+  cannot time 30: LavaFall, SE_OJ_FALL_IN_MAGMA_S, kill; a death area: kill; calcRebouond: roof and wall 0.6 / 0.5, the
+  ground against -gravity 0.75 from an impact of 2 (else 0) with the horizontal part x 0.5 each grounded frame, the
+  port only damped 0.9; gravity x 0.3 and attenuation 0.8 in water, mIsInWater taken at the appear), then the move
+  through its binder (m_bind: 55 at 70 along -gravity; it was a sphere of 30 at the coin). pop_add (appearMove): the
+  coin starts at the place given (pop_coins put it 50 up), its gravity against its velocity where the place has
+  none. FlashingCtrl: flashing from 180 left (it was 120), interval 10, 5 under 90, hidden while (left / interval) is
+  even, not in a demo. CoinGroup (CircleCoinGroup, RailCoin, the purple ones) with an appear switch
+  (update_coin_groups, PICK_WAIT until then): Appear (step 3: SE_SY_COIN_APPEAR / SE_SY_PURPLE_COIN_APPEAR, the coins
+  out) or DemoAppear with an actor camera (出現, 90 frames); arg1 >= 0 the time limit (appearFixTimer: not taken for
+  30 frames, flashing, gone after arg1). ponytail: isPressedRoofAndGround (m_bind has no moving parts' reaction),
+  CoinSpinBlur (no ItemPull), the demo cast's コイン出現 action. jpa.py NAMED: Coin's LavaFall.
+  PCSX2: `box` FlipPanelExGalaxy/1 with XF=-DPOP_LOG: the box's two coins thrown 25 up, falling 1 a frame, each
+  landing answering 0.75 (57 down, 42 up), 10 `se+ 00050017` (SE_OJ_COIN_BOUND); `route` EggStarGalaxy/1: star got, f
+  4281 (built with #652's branch merged in); XF=-DCGROUP_TEST IceVolcanoGalaxy/1: its eight timed groups (arg1 900)
+  out 3 frames after their switch, each with `se? 00000001` (SE_SY_COIN_APPEAR: a new name, in no pack yet). Not
+  run: a lava floor, water, a death area under a coin; the groups' 900 frames to their end. **Release: slice_all.py**
+  (jpa.py NAMED Coin: every scene.bin's PTCL) **+ sound.py --pack** (the global sound.bin and the galaxies': the three
+  new SE names): covered by the full repack.
 - Mario's ponytail marks, batch 2 (feat/749-mario-marks-2, #749, 2026-11-19): Mario::damagePolygonCheck on the
   ceiling within 160 of him (Mario.cpp:1728; m_damage_polygon on calcDistToCeil's face: fire, needle, electric,
   PullBack, Death; DamageNormal is MarioSwim::addDamage); checkPressDamage's push off a faced front wall (its
