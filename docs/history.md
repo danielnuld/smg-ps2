@@ -11,6 +11,14 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- The lava hazards' sounds (feat/593-lava-se, #593, 2026-11-18): update_prom / update_steam / update_geyser had the
+  nerves and no sound. LavaProminence: SE_OJ_LV_PROMINENCE_SIGN through Sign (at the rail's start) and
+  MoveStartExtra, SE_OJ_PROMINENCE_START at MoveStartExtra's first step, SE_OJ_LV_PROMINENCE_MOVE from there on,
+  SE_OJ_LV_PROMINENCE_END through MoveEndExtra. LavaSteam: SE_OJ_LV_LAVA_STEAM_OUT through Steam. LavaGeyser:
+  SE_OJ_LV_LAVA_GEYSER_SIGN from Sign to ShootKeep, SE_OJ_LAVA_GEYSER_SHOOT at ShootUp's first step,
+  SE_OJ_LV_LAVA_GEYSER_KEEP from ShootUp to ShootDown. Left: LavaProminenceTriple, LavaHomeSeesaw and
+  LavaJamboSunPlanet (not ported: static models). **Release: sound.py --pack** HellProminenceGalaxy,
+  FloaterOtaKingGalaxy and the other galaxies that place them (simplest with the full repack).
 - StageEffectDataTable's SEs (feat/stage-se, #588, 2026-11-18): the port played eight names of Petari's table, on
   rail movers only. Now `engine/src/stage_se.inc` is the whole sStageEffectSeDataTable (155 names: start / moving /
   stop SE, the stop SE's step, the riddle type) with sStageEffectPadDataTable's rumbles and the kind of the class that
