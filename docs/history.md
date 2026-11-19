@@ -19,6 +19,24 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   death, the star piece group limit, the story's before scenario; the coin best goes to the cleared star. PCSX2: a
   plain EggStarGalaxy/6 flies in and plays the stage's music. Repack: every galaxy with a hidden star (slice.py:
   StartScenario<placed>.canm, findStarID by the placed number). Not checked one by one: each user above.
+- BombHei carried and thrown (feat/600-bombhei-carry, #600, 2026-11-18): BombHei.cpp's Taken and Thrown nerves in
+  game.c bomb_update. Rolling or stopped (Physics / Stop), 30 frames into SpinHit or 120 into Thrown, Mario touching it
+  takes it (receiveOtherMsg isMsgItemGet, sent by MarioActor's attackSensor on ATYPE_BOMBHEI): Taken (Carry,
+  SE_PV_LIFT_UP + SE_EM_BOMB_LIFT, its fuse lit, the body sensor off), held before him (bh_held: m_carry_jet counts it,
+  so his carrying limits apply); his spin throws it (receiveMsgThrow: 25 along his front, 18 up; no take for 60
+  frames, _3AC): Thrown (Stop, SE_PV_THROW + SE_EM_BOMB_THROW, its gravity kept 30 frames, 0.75 a frame x 0.98, the
+  rebound; on the ground the bound sound, Bound, Physics); drop_taking (#591) lets it go on a damage or a rush
+  (ACTMES_DAMAGEDROP / RUSHDROP: Thrown where it is); blowing up in his hands it hurts him at once. A launcher's bomb
+  (Physics from its landing) can be taken straight away, as in Petari.
+  ponytail: held where the port holds a JetTurtle (70 ahead, 60 up; Petari: his hand joint, updateTakingPosition),
+  thrown along his front (getThrowVec), no isActionOk / doTrampleJump in the take, the spin that threw it does not hit
+  it again (the port's rule: 25 frames), Thrown does not bounce off enemies / NPCs.
+  Test: plain with XF="-DBH_TEST -DSE_LOG" on CannonFleetGalaxy/1 (the hook drops the scenario's Bob-omb before Mario
+  at his start, spins it, puts him on it once it rolls, spins 90 frames after he took it): Launch, Starting, Wait,
+  Pursue, SpinHit, Physics, Stop, `taken` (SE_PV_LIFT_UP plays, SE_EM_BOMB_LIFT asked: `se?` until the pack is cut),
+  `thrown` (SE_PV_THROW, SE_EM_BOMB_THROW asked), the bound, the explosion at the fuse's end. (That Bob-omb's own
+  place cannot be used: a death area and a black hole are next to it.)
+  Repack: sound.py --pack BattleShipGalaxy, CannonFleetGalaxy, TamakoroExLv2Galaxy (SE_EM_BOMB_LIFT / SE_EM_BOMB_THROW).
 - Mario's sounds the port never played (feat/575-mario-sounds, #575, 2026-11-18): the press (プレスダメージ), the bee
   wall landing, Teresa's float, Luigi's slide, the spin back; jumpToHipDrop's spin hip drop (_3E5); tryJump's /
   tryBackJump's dive into deep water (sw_under_water_full: 飛び込みジャンプ, 声高飛び込み) and its failure landing;
