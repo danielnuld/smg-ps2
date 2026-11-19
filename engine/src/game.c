@@ -862,7 +862,7 @@ static int cur_idle;                    /* test builds: always pointing */
 static struct { int phase, t, target; V3 vel; float power; } gcap; /* GCapture (gcap_update) */
 static int test_r2; /* test builds: R2 held */
 static int test_noclip; /* test builds: the walkers move though clipped (game_test_unclip) */
-static struct { int inst, cool; V3 pt, vel, side, front; } jb = {.inst = -1}; /* JumpBranch (jbranch_update) */
+static struct { int inst, cool, rev; u32 spin; V3 pt, vel, side, front; } jb = {.inst = -1}; /* JumpBranch (jbranch_update); rev mSwingReverse, spin its SE_PM_SPIN */
 static void drop_carried(void), drop_damage(void); /* rushDropThrowMemoSensor / damageDropThrowMemoSensor */
 static int rush_drop(int bound) { if (bound) drop_carried(); return bound; } /* MarioActor::settingRush on a bind */
 static struct { int inst, phase, t, drop, row, dground, dwall; V3 dir, head, vel, dgrav; } jet = {.inst = -1}; /* the JetTurtle Mario holds or threw
@@ -874,7 +874,7 @@ static unsigned bh_free_at;    /* MarioActor _3AC: no take for 60 frames after a
 static int m_carry_jet(void) { return (jet.inst >= 0 && jet.phase == 1) || kmj_carry() || bh_held >= 0; } /* MarioActor _468 / getCarrySensor */
 static struct { int inst, phase, t, spins, wtimer; V3 up, front, tup, wdir; float wdist; } flf = {.inst = -1, .wtimer = -1}; /* the Fluff Mario rides (fluff_update): mUp, mFront, mTargetUpVec, mWindDir, mWindDistance, mWindSpinTimer */
 static int nfwind = -1; /* FluffWindHolder's rails (fluff_wind_init), -1 not gathered */
-static struct { int inst, phase, t, wait; V3 vel; } coc = {.inst = -1, .wait = -1}; /* SpaceCocoon Mario hangs on (cocoon_update) */
+static struct { int inst, phase, t, wait, clip; V3 vel; } coc = {.inst = -1, .wait = -1}; /* SpaceCocoon Mario hangs on (cocoon_update); clip his: 0 CocoonLand, 1 CocoonWait, 2 CocoonStretch, 3 CocoonReaction */
 static int sls_pad = -1;  /* the SpiderAttachPoint (SlingShooter) in its pointer command stream (mPadChannel 0), -1 none */
 static int bgb_gen_type = -1; /* BigBubbleGenerator: shown before its SW_APPEAR (only its activity listens to it) */
 static int sls_ride = -1; /* the SpiderAttachPoint Mario is bound to (its mRider), -1 none */
@@ -3855,7 +3855,7 @@ static void update_assembly(void)
  * BWait (WaitBack: before it goes forward) or FWait, Sign FSign (SignForward) or BSign */
 static void tsuki_bva(const Inst *in, const char **key, float *frame) /* startBva of its nerve, from the nerve's first step */
 {
-    if (!in->tsuki) return;
+    if (!in->tsuki || !in->md || !in->md->skin || !in->anim) return; /* (a pack without its clips: drawn as it was) */
     int n = row_turn[in->row], fwd = row_rdir[in->row] >= 0;
     *key = n == 2 ? (fwd ? "tsukidashikun/bwait" : "tsukidashikun/fwait") : n == 3 ? (fwd ? "tsukidashikun/fsign" : "tsukidashikun/bsign") :
            n == 4 ? (fwd ? "tsukidashikun/fsign" : "tsukidashikun/bsign") : "tsukidashikun/bsign";
@@ -4572,7 +4572,10 @@ static void update_pickup_groups(void)
                 if (row_turn[i] == 1) { pgroup_kill_pieces((int)i); row_turn[i] = 3; } /* makeActorDead */
                 continue;
             }
-            if (r->sw[SW_APPEAR] < 0 && !row_turn[i]) row_turn[i] = 1;
+            if (!row_turn[i]) { /* out: at init without an appear switch; else appear() (the switches' pass does the same when it sees the change) */
+                row_turn[i] = 1;
+                if (r->sw[SW_APPEAR] >= 0) { V3 gp = row_pos(r); se_start(SE_OJ_STAR_PIECE_BURST, &gp.x); }
+            }
             if (kind == 1 && r->arg[5] != -1 && row_turn[i] == 1) { /* control: _A4 */
                 if (!(row_hold[i] & 0x8000)) row_hold[i] = (unsigned short)(0x8000 | (r->arg[5] > 0 ? (r->arg[5] > 0x7FFF ? 0x7FFF : r->arg[5]) : 0));
                 int left = (row_hold[i] & 0x7FFF) - 1;
@@ -9595,6 +9598,15 @@ int game_test_capture(int small, float d)
  * fallbacks; ME_MAGIC / ME_MAGIC_L (me.c) when the BGM has a chord, else SE_SY_S_SPIN_DRV_ME_ALT */
 static u32 launch_fly_snd;
 static void launch_sound(const Launch *L, u32 id) { float at[3] = {L->pos.x, L->pos.y, L->pos.z}; se_start(id, at); }
+/* SpinDriver::exeShootStart / SuperSpinDriver's: emitEffect SpinDriverStart / SuperSpinDriverStart (after its Light's
+ * deleteEffect: the light is kept only while lit) */
+static void launch_start_fx(const Launch *L)
+{
+    float m[16];
+    int small = L->start < 45;
+    basis_matrix(m, L->pos, up_at(L->pos, mario->up), v3(0, 0, 1), 0);
+    fx_named(small ? "SpinDriver" : "SuperSpinDriver", small ? "SpinDriverStart" : "SuperSpinDriverStart", m, NULL, NULL);
+}
 static void mario_se(u32 id) { float at[3] = {mario->pos.x, mario->pos.y, mario->pos.z}; se_start(id, at); }
 
 static int update_launch(Player *m)
@@ -9638,6 +9650,7 @@ static int update_launch(Player *m)
                 if (in_water(L->pos, L->up, NULL)) launch_sound(L, SE_PM_SPIN_DRV_IN_WATER_1);
             }
             if (mario_anim) mario_play(small ? "spin" : "superspindriverstart", 1.0f, 0);
+            launch_start_fx(L);
         }
         return 1;
     }
@@ -10310,7 +10323,8 @@ static int gcap_update(Player *m)
  * grab point clamped 50 along it) and 70 of its plane grabs it: a point 30 from the axis, thrown on at his speed,
  * swings round it (gravity 0.2 a frame, strained to 30, friction 0.995) and he hangs under it, the branch at his
  * hands. X jumps off (16 up, plus 10 along the branch's front by the stick), a spin lets go; then it ignores him 30
- * frames (WaitInvalid). jb.inst -1 none. ponytail: hangwait / jumpspin stand in for JumpBranchWait and its spins,
+ * frames (WaitInvalid). jb.inst -1 none. Mario's clips JumpBranchWait / FrontSpin / BackSpin (startBckPlayer), SE_PM_GRAB_OBJ and
+ * SE_PM_SPIN at the grab (stopped at the release), SE_PM_JUMP_M / SE_PV_JUMP_S at the jump. ponytail:
  * gravity's up for the jump's world Y */
 static int jbranch_try(Player *m)
 {
@@ -10334,7 +10348,9 @@ static int jbranch_try(Player *m)
         jb.pt = vadd(bar, vmul(radial, 30.0f));
         jb.vel = vtangent(vtangent(v, side), radial); /* his speed along the swing */
         m->hip = 0; m->spin_timer = 0;
-        if (mario_anim) mario_play("hangwait", 1.0f, 1);
+        jb.rev = vdot(m->face, front) < 0.0f; /* mSwingReverse: his front against the branch's */
+        if (mario_anim) { int mode = 0; anim_clip_info("jumpbranchwait", &mode); mario_play("jumpbranchwait", 1.0f, mode == 2 || mode == 4); } /* startBckPlayer */
+        se_start(SE_PM_GRAB_OBJ, &m->pos.x); jb.spin = se_start(SE_PM_SPIN, &m->pos.x);
         printf("jump branch row %d: grabbed" "\n", in->row);
         return 1;
     }
@@ -10354,7 +10370,10 @@ static int jbranch_update(Player *m)
         V3 v = jump ? vadd(vmul(jb.front, 10.0f * proj), vmul(m->up, 16.0f)) : v3(0, 0, 0);
         m->hvel = vtangent(v, m->up); m->vup = vdot(v, m->up);
         m->grounded = 0; m->jump_kind = 0; m->air_timer = 0; m->spin_lock = 0;
-        if (mario_anim) mario_play(jump ? "jumpspin" : "fall", 1.0f, 0);
+        V3 fr = jb.rev ? vmul(jb.front, -1.0f) : jb.front; /* updateBind: the jump's clip by its way against his front */
+        if (mario_anim) mario_play(!jump ? "fall" : vdot(fr, v) >= 0.0f ? "jumpbranchfrontspin" : "jumpbranchbackspin", 1.0f, 0);
+        if (jump) { se_start(SE_PM_JUMP_M, &m->pos.x); se_start(SE_PV_JUMP_S, &m->pos.x); }
+        if (jb.spin) { se_stop(jb.spin); jb.spin = 0; } /* stopSound SE_PM_SPIN */
         printf("jump branch row %d: %s" "\n", in->row, jump ? "jump" : "let go");
         jb.inst = -1; jb.cool = 30;
         return 0;
@@ -10463,6 +10482,7 @@ static int cocoon_try(Player *m)
         in->hvel = vtangent(vadd(m->hvel, vmul(m->up, m->vup)), up); /* mSpringVel: his speed along side and front */
         m->hip = 0; m->spin_timer = 0;
         if (mario_anim) mario_play("cocoonland", 1.0f, 0);
+        coc.clip = 0;
         printf("space cocoon row %d: Mario hangs on" "\n", in->row);
         return 1;
     }
@@ -10508,14 +10528,22 @@ static int cocoon_update(Player *m)
         cocoon_release(m, v3(0, 0, 0));
         return 0;
     }
-    if (coc.phase == 1 && cursor_sees(in->head, 40.0f) && menu_pointer_touch(in, 1)) /* updateBindWait: pointed (touch, "弱") */
+    if (coc.phase == 1 && cursor_sees(in->head, 40.0f) && menu_pointer_touch(in, 1)) { /* updateBindWait: pointed (touch, "弱") */
         menu_pointer_request(SPM_BLUESTARREADY);
+        if (coc.clip == 1 && mario_anim) { mario_play("cocoonreaction", 1.0f, 0); coc.clip = 3; } /* exeBindWait: tryTouch, CocoonReaction */
+    }
+    if (coc.phase == 1 && coc.clip != 1 && coc.clip != 2 && mario_anim && mario_anim->done) { /* exeBindLand's isBckStopped: BindWait;
+        * exeBindWait's isBckOneTimeAndStopped: startBckPlayer CocoonWait */
+        mario_play("cocoonwait", 1.0f, 1); coc.clip = 1;
+    }
     if (coc.phase == 1 && pointer_a() && cursor_sees(in->head, 40.0f)) { /* BindAim */
         coc.phase = 2; coc.t = 0; cocoon_cam(in, "狙い中");
         se_start(SE_OJ_SPACE_COCOON_DRAG_ST, &in->head.x);
     }
     if (coc.phase == 2) {
         float dist = vlen(vsub(in->head, n));
+        if (mario_anim && dist < 200.0f && coc.clip != 1) { mario_play("cocoonwait", 1.0f, 1); coc.clip = 1; }    /* updateHang: sAimDistanceToWait */
+        if (mario_anim && dist > 300.0f && coc.clip != 2) { mario_play("cocoonstretch", 1.0f, 1); coc.clip = 2; } /* sAimDistanceToStretch */
         if (dist >= 100.0f) { /* sAimDistanceMin .. sDistanceMax */
             float t = fminf((dist - 100.0f) / 400.0f, 1.0f);
             in->lv[0] = se_level(SE_OJ_LV_SPACE_COCOON_DRAG, &in->head.x, in->lv[0]);
@@ -10671,6 +10699,32 @@ static void snow_joints(Inst *in) /* the bucket gone with the head (hideMaterial
 static void update_snowmen(void)
 {
     static const char *const clip[7] = {"", "melthead", "meltbody", "", "", "downhead", "downbody"};
+#ifdef SNOW_TEST /* plain build XF=-DSNOW_TEST (IceVolcanoGalaxy/1, SnowMan sliced with its clips): Mario held by the
+                  * first SnowMan, a fire ball on its head 100 frames after it is in, one on its body 100 after that */
+    {
+        static int tf, t0 = -1;
+        tf++;
+        int ty = scene_type(sc, "SnowMan");
+        for (u32 q = 0; ty >= 0 && q < sc->nobjs && t0 < 0; q++)
+            if ((int)sc->objs[q].type == ty) { V3 p = row_pos(&sc->objs[q]); mario->pos = vadd(p, vmul(up_at(p, mario->up), 900.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; break; }
+        FOR_KIND(i, snowman) {
+            Inst *in = &insts[i];
+            if (!in->snowman || in->kparent >= 0 || row_dead[in->row]) continue;
+            V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), base = v3(in->m[12], in->m[13], in->m[14]);
+            if (t0 < 0) { t0 = tf; printf("snow test: snowman row %d in at f %d, anim %p skin %p%c", in->row, tf, (const void *)in->anim, (const void *)in->md->skin, 10); }
+            if (tf < t0 + 400) { mario->pos = vadd(base, vadd(vmul(up, 500.0f), vmul(vnorm(v3(in->m[8], in->m[9], in->m[10])), 700.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+            if (tf == t0 + 100) fireball_hits_snowman(vadd(base, vmul(up, 250.0f * in->s)));
+            if (tf == t0 + 200) fireball_hits_snowman(vadd(base, vmul(up, 100.0f * in->s)));
+            if (tf > t0 + 95 && tf % 10 == 0) {
+                int parts = 0, on = 0;
+                for (int j = i + 1; j < ninsts; j++) if (insts[j].kparent == i && insts[j].row == in->row) { parts++; on += insts[j].kcl != NULL; }
+                printf("snow test f %d: nerve %d step %d parts %d (on %d) sw %d %d%c", tf - t0, row_turn[in->row], row_step[in->row], parts, on,
+                       sc->objs[in->row].sw[SW_A] >= 0 ? sw_on(&sc->objs[in->row], SW_A) : -1, sc->objs[in->row].sw[SW_B] >= 0 ? sw_on(&sc->objs[in->row], SW_B) : -1, 10);
+            }
+            break;
+        }
+    }
+#endif
     FOR_KIND(i, snowman) {
         Inst *in = &insts[i];
         if (!in->snowman || in->kparent >= 0 || row_dead[in->row] || !row_shown(in->row)) continue;
@@ -15841,7 +15895,10 @@ static void update_screws(void)
         } else { /* ScrewSwitch / ScrewSwitchReverse::exeScrew (from Adjust's 3 steps on) */
             int rev = in->screw == 2, sst = row_step[row] - 3, mode;
             const char *clip = rev ? "ScrewSwitchReverseOn" : "ScrewSwitchOn";
-            if (sst == 0) obj_play(in, clip, 0, 0); /* startBck (startBckPlayer: ponytail, no such Mario clip here) */
+            if (sst == 0) { /* startBck, startBckPlayer (MarioAnime's ScrewSwitchOn / ScrewSwitchReverseOn) */
+                obj_play(in, clip, 0, 0);
+                if (mario_anim) mario_play(rev ? "screwswitchreverseon" : "screwswitchon", 1.0f, 0);
+            }
             if (sst >= 0 && sst < (rev ? 25 : 30)) in->lv[0] = se_level(rev ? SE_OJ_LV_SCR_SWITCH_R_MOVE : SE_OJ_LV_SCREW_SWITCH_MOVE, &in->m[12], in->lv[0]);
             if (sst == (rev ? 25 : 30)) { /* sStepToRumbleCamera */
                 se_start(rev ? SE_OJ_SCR_SWITCH_R_ON : SE_OJ_SCREW_SWITCH_ON, &in->m[12]);
@@ -16179,6 +16236,7 @@ static int fluff_try(Player *m) /* receiveOtherMsg isMsgAutoRushBegin */
         flf.tup = flf.up;
         flf.inst = i; flf.phase = 1; flf.t = 0; flf.spins = 3;
         m->hip = 0; m->spin_timer = 0;
+        if (mario_anim) mario_play("fluffstart", 1.0f, 0); /* exeRideStart: startBckPlayer FluffStart */
         fx_named("Fluff", "Splash", in->m, NULL, NULL);
         pad_rumble(RUMBLE_WEAK);
         se_start(SE_PV_CATCH, &m->pos.x); se_start(SE_PM_GRAB_OBJ, &m->pos.x);
@@ -16267,12 +16325,24 @@ static int fluff_update_ride(Player *m, Inst *in, V3 grav)
     return 0;
 }
 
-/* returns 1 while Mario rides. flf.phase 1 RideStart, 2 RideFly, 3 RideSpinUp, 4 RideFlyOnWind, 5 RideSpinUpOnWind */
+static void flf_bck(const char *clip) /* startBckPlayer: MarioAnime's Fluff* clips, looping by the clip's own mode */
+{
+    int mode = 0;
+    if (!mario_anim) return;
+    anim_clip_info(clip, &mode);
+    mario_play(clip, 1.0f, mode == 2 || mode == 4);
+}
+/* returns 1 while Mario rides. flf.phase 1 RideStart, 2 RideFly, 3 RideSpinUp, 4 RideFlyOnWind, 5 RideSpinUpOnWind.
+ * Mario's clips: FluffStart (RideStart), FluffFly / FluffFlyLast with no spin left (RideFly), FluffFlyWind
+ * (RideFlyOnWind), FluffSpin (the spin ups) */
 static int fluff_update(Player *m)
 {
     Inst *in = &insts[flf.inst];
     V3 up = up_at(in->head, m->up), grav = vmul(up, -1.0f);
     int first = ++flf.t == 0;
+    if (first && flf.phase == 2) flf_bck(flf.spins > 0 ? "flufffly" : "fluffflylast");
+    if (first && flf.phase == 4) flf_bck("fluffflywind");
+    if (first && (flf.phase == 3 || flf.phase == 5)) flf_bck("fluffspin");
     if (flf.phase == 1) { /* RideStart */
         if (vdot(in->hvel, flf.up) < 15.0f) in->hvel = vadd(in->hvel, vmul(flf.up, 0.2f)); /* sRideStartUpSpeedMax / Accel */
         if (fluff_update_ride(m, in, grav)) return 0;
@@ -24595,6 +24665,7 @@ static void update_mario_(void)
                     if (in_water(launches[i].pos, launches[i].up, NULL)) launch_sound(&launches[i], SE_PM_SPIN_DRV_IN_WATER_1);
                 }
                 if (mario_anim) mario_play(launches[i].start < 45 ? "spin" : "superspindriverstart", 1.0f, 0);
+                launch_start_fx(&launches[i]);
 #ifdef BENCH
                 printf("launch %d\n", i);
 #endif
@@ -37748,7 +37819,9 @@ static int explosion_breaks_inst(int i)
 {
     if (pol_inst_explosion(i)) return 1; /* Polta's ground rocks */
     if (i < 0 || i >= ninsts || row_dead[insts[i].row]) return 0;
-    if (insts[i].breaks != 5 && (insts[i].breaks != 1 || strcmp(sc->types + 32 * sc->objs[insts[i].row].type, "WoodBox"))) return 0;
+    if (insts[i].breaks != 5 && (insts[i].breaks != 1 || (strcmp(sc->types + 32 * sc->objs[insts[i].row].type, "WoodBox") &&
+                                                           strcmp(sc->types + 32 * sc->objs[insts[i].row].type, "PunchBox")))) return 0; /* (PunchBox::receiveMsgEnemyAttack:
+        * its body sensor is invalid, so only an attack sent to the sensor of its collision reaches it) */
     break_inst(&insts[i], 1);
     game_rebind();
     return 1;
@@ -42143,13 +42216,13 @@ static void update_leakpipes(void)
     {
         static int tf, t0 = -1;
         tf++;
-        int ty = scene_type(sc, "WaterLeakPipe");
+        int ty = game_frame >= 900 ? scene_type(sc, "WaterLeakPipe") : -1; /* (once Mario is free of the start's demo) */
         for (u32 q = 0; ty >= 0 && q < sc->nobjs && t0 < 0; q++)
             if ((int)sc->objs[q].type == ty) { V3 p = row_pos(&sc->objs[q]); mario->pos = vadd(p, vmul(up_at(p, mario->up), 1500.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; break; }
         FOR_KIND(i, leakpipe) {
             Inst *in = &insts[i];
             float tm[16];
-            if (in->leakpipe != 1) continue;
+            if (in->leakpipe != 1 || ty < 0) continue;
             leak_top(in, tm);
             V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), top = v3(tm[12], tm[13], tm[14]);
             if (t0 < 0) { t0 = tf; set_player_mode(PM_ICE, 1); printf("leak test: pipe row %d in at f %d, kcl %p%c", in->row, tf, (const void *)scene_kcl(sc, "IceStepNoSlip"), 10); }
@@ -44912,8 +44985,8 @@ int game_test_bigbubble(int f)
  * of +-500 * scale, Mario is inhaled: a miss; walkers in it die (nothing dropped); SW_A kills it. A star piece shot
  * blows the mine up and shakes the plant (hazard_shot), invincible Mario kills either, and an attack he does not take
  * pushes him off; the mine turns a degree a frame, rides its rail (setupRailMover: update_railers) and with arg1 set
- * blows up on the ground (setupBinder). SpaceMine's Appear nerve is set nowhere in Petari. ponytail: the bound mine's
- * explosion does not reach the sensor it hit (sendMsgEnemyAttackExplosionToBindedSensor); Mario's inhale is bh_start /
+ * blows up on the ground (setupBinder). SpaceMine's Appear nerve is set nowhere in Petari. The bound mine's explosion
+ * goes to what it hit (sendMsgEnemyAttackExplosionToBindedSensor: explosion_breaks_inst); Mario's inhale is bh_start /
  * bh_update. BlackHole's Disappear
  * (its demo's action nerve, dx_cast_hook; row_turn 1, row_step its step): SE_OJ_BLACK_HOLE_DISAPPEAR, the core's scale
  * eased in from _9C to 0 over steps 30 .. 90 (calcNerveEaseInValue), killed at 90; nothing inhaled meanwhile
@@ -45021,7 +45094,10 @@ static void update_hazards(void)
             row_angle[in->row] = fmodf(row_angle[in->row] + 1.0f, 360.0f);
             float rot[3] = {rw->rot[0], rw->rot[1] + row_angle[in->row], rw->rot[2]}, at[3] = {p.x, p.y, p.z};
             mat_translate_rot_scale(in->m, at, rot, rw->scale);
-            if (rw->arg[1] != -1 && kcl_query(p, 100.0f, h, 1)) { mine_kill(in); game_rebind(); return; } /* isBinded: offBind, kill */
+            if (rw->arg[1] != -1 && kcl_query(p, 100.0f, h, 1)) { /* isBinded: sendMsgEnemyAttackExplosionToBindedSensor, offBind, kill */
+                explosion_breaks_inst(h[0].inst);
+                mine_kill(in); game_rebind(); return;
+            }
         }
         if (in->hazard == 2) {
             p = vadd(p, vmul(up_at(p, mario->up), 150.0f * in->s));
@@ -45693,7 +45769,8 @@ static V3 firebar_ball(const Inst *in, int j, int k)
  * frame spinning 10 degrees a frame; on the ground it bursts into arg0 star pieces (default 5) of the arg3 it holds
  * (default 5), hides for arg1 frames (default 240) and starts over until it holds none; after 360 frames of falling it
  * starts over. row_turn: 0 appearing, 1 falling, 2 waiting; row_step its frames; row_hold the pieces left. The burst
- * is appearStarPiece(arg0, 15, sLaunchYVel 40). ponytail: the binder's NoAction wall filter is not applied */
+ * is appearStarPiece(arg0, 15, sLaunchYVel 40). Its effects by name: ShootingStarAppear, ShootingStarBlur (while it
+ * falls), ShootingStarBreak. ponytail: the binder's NoAction wall filter is not applied */
 static V3 shoot_pos(const Inst *in, float *k)
 {
     const Row *r = &sc->objs[in->row];
@@ -45714,6 +45791,14 @@ static void update_shooting(void)
         unsigned short *t = &row_step[row];
         signed char *ph = &row_turn[row];
         ++*t;
+        { /* its effects: ShootingStarAppear at exePreShooting's first step, ShootingStarBlur through exeShooting */
+            float fk, fm[16];
+            V3 fp = shoot_pos(in, &fk);
+            memcpy(fm, in->m, 64);
+            fm[12] = fp.x; fm[13] = fp.y; fm[14] = fp.z;
+            if (*ph == 0 && *t == 1) fx_named("ShootingStar", "ShootingStarAppear", fm, NULL, NULL);
+            if (*ph == 1) fx_named("ShootingStar", "ShootingStarBlur", fm, NULL, &row_turn[row]);
+        }
         if (*ph == 0 && *t > 20) { *ph = 1; *t = 0; }
         else if (*ph == 2 && *t > (r->arg[1] >= 0 ? r->arg[1] : 240)) { *ph = 0; *t = 0; }
         else if (*ph == 1) {
@@ -45729,6 +45814,7 @@ static void update_shooting(void)
             se_start(n > 0 ? SE_OJ_STAR_PIECE_BURST : SE_OJ_STAR_PIECE_NOT_BURST, &p.x);
             row_hold[row] -= n;
             *ph = 2; *t = 0;
+            { float bm[16]; memcpy(bm, in->m, 64); bm[12] = p.x; bm[13] = p.y; bm[14] = p.z; fx_named("ShootingStar", "ShootingStarBreak", bm, NULL, NULL); } /* exeWaitForNextShoot's first step */
             if (!row_hold[row]) row_dead[row] = 1;
             printf("shooting star %d burst %d, %d left\n", row, n, row_hold[row]);
         }
