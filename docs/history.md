@@ -92,6 +92,22 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   run: a lava floor, water, a death area under a coin; the groups' 900 frames to their end. **Release: slice_all.py**
   (jpa.py NAMED Coin: every scene.bin's PTCL) **+ sound.py --pack** (the global sound.bin and the galaxies': the three
   new SE names): covered by the full repack.
+- JetTurtle's Throwing, a first batch of #649 (feat/649-jet-turtle-throw, 2026-11-19): game.c update_jets after
+  JetTurtle.cpp receiveMsgThrow / exeThrowing: _9C the throw vector and the speed _8C + sThrowSpdStraight along it
+  (_8C Mario's speed for the plain type, _92 0), its binder 35 at 20 through m_bind (it was a sphere of 60), a wall
+  or roof resets it unless its wall code is Rebound (bound(): 0.9 off a wall, 0.8 off a roof or the ground), _9C bent
+  to the gravity by sGravityLevel (0.017 / 0.01 / 0.0055) where it changes, no gravity: reset, its pose its velocity
+  ahead and -gravity up, the 5000 / 10000 limits from the throw's place (_C0: they were measured from its home); its
+  first step's Ignition, Bullet / BulletWater clips and Blur / BlurRed / BlurGold / WaterBlur; held (exeThrowWait):
+  CarryWait / SwimFlutterboard and SwimBubble / SwimBubbleRed; Wait's clip at its revival; a hip drop resets the
+  waiting shell; the swim type from its colour (arg0: the red one fast, green and gold ATYPE_JET_TURTLE_SLOW; it was
+  read from arg1). CocoNut: stopScene(4) at Move's step 1 after a spin. Left of #649, not done: the homing (the eye
+  sensor's SearchTurtle target, BulletSearch), JET_TURTLE_ATTACK to the binded faces' map objects, the pull by a spin
+  (TakenReserve, SpinBlur*, YRotation), the trample's SE_EM_TURTLE_SHELL_TRAMPLE, the enemy attack's reset, Drop's
+  clip, GoldenTurtle's special weapon type and BTK, Mario's speed for _92 from appear()'s gravity test; CocoNut's
+  WaitOnBind, reviseFrontVec, the water test point, Watermelon. Test: `build.sh jet` FishTunnelGalaxy/1.
+  PCSX2: taken, thrown, reset 0 at a wall 72 frames on, revived (the ELF was built before the last commit: the
+  hip drop's reset and CocoNut's stopScene were not run). No repack; memory: about 1 KB.
 - Mario's ponytail marks, batch 2 (feat/749-mario-marks-2, #749, 2026-11-19): Mario::damagePolygonCheck on the
   ceiling within 160 of him (Mario.cpp:1728; m_damage_polygon on calcDistToCeil's face: fire, needle, electric,
   PullBack, Death; DamageNormal is MarioSwim::addDamage); checkPressDamage's push off a faced front wall (its
