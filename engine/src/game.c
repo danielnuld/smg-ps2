@@ -46784,20 +46784,89 @@ static void update_firebars(void)
  * arg1 1 (appearGround): when its appear switch brings it out, hidden 60 frames, then Appear (its clip), then Wait or,
  * with arg2, PreEscape (30) and Escape: 7 along its Z, kept on the ground (its gravity its placed down: offCalcGravity)
  * at 5, 1 a frame (at most 20) in the air with x 0.95, off a wall it jumps 20; after 600 frames blinking faster it
- * vanishes. row_turn 0 wait, 1 appear ground, 2 pre-escape, 3 escape, 4 gone; row_step its frames.
- * ponytail: arg2 2 (fleeing Mario) runs as 1, no Glow / Move / Vanish effects */
+ * vanishes (Vanish, makeActorDead: no dead switch). row_turn 0 wait, 1 appear ground, 2 pre-escape, 3 escape, 4 gone,
+ * 5 shoot; row_step its frames. Its appear switch's appear(): arg1 & 15: 0 PreEscape with arg2, 1 appearGround
+ * (SE_SY_ITEM_APPEAR; SE_OJ_KINOKO_1UP_GROW with the clip), 2 / 3 appearThrowUp (SE_SY_ITEM_APPEAR, Appear, 10 along
+ * its Y, Shoot: gravity 0.5, off a wall less 1.3 x its part into it; on the ground Land, then Wait after step 10 or
+ * Escape with arg2); arg1 & 0x80 the AppearPicture effect. Wait turns (arg6) only once _DF holds (arg0, or brought
+ * out by its switch); Escape with arg6 & 4. Escape: SE_OJ_KINOKO_1UP_RUN_START, the RUN level sound, Move on the
+ * ground; arg2 2 it flees Mario (0.02 off him when it heads for him, else 0.01, x 1.1, at most 7); on a rail it
+ * follows it at 5. control: a fire floor under it, or a death area while it moves: Vanish, kill. Glow while it is out
+ * (runEfx: KinokoOneUp's, BenefitItemObj's ...LifeUp / GlowPowerUpInvincible). BenefitItemLifeUp / Invincible are
+ * dead under the Dark comet (_D8). BenefitItemInvincible's own Escape (initEscape / doEscape: 20 up and 10 along its
+ * Z at each landing, SE_OJ_POW_INVINCIBLE_BOUND, its real gravity 0.5 a frame, x 0.98; binder 60) and appearThrowUp
+ * with arg2 (10 up, 5 along its Z).
+ * ponytail: arg5 1's appear camera demo (出現) is not run; the rail's arg0 speed is not read (5); an item with arg0
+ * and an appear switch is not shown before it (sensor off); in Escape / Shoot its matrix keeps its placed rotation
+ * (calcAndSetBaseMtxInMovement's up and front) */
+static void bi_fx(const Inst *in, const char *name, const void *key) /* runEfx */
+{
+    char n[40];
+    if (in->item == ITEM_ONEUP) { fx_named("KinokoOneUp", name, in->m, NULL, key); return; }
+    if (in->item == ITEM_INVINCIBLE && strcmp(name, "Glow")) return; /* BenefitItemInvincible::runEfx: Glow only */
+    snprintf(n, sizeof n, "%s%s", name, in->item == ITEM_LIFEUP ? "LifeUp" : "PowerUpInvincible");
+    fx_named("BenefitItemObj", n, in->m, NULL, key);
+}
 static void benefit_update(Inst *in)
 {
     const Row *r = &sc->objs[in->row];
     signed char *ph = &row_turn[in->row];
     unsigned short *t = &row_step[in->row];
+    int inv = in->item == ITEM_INVINCIBLE, da = r->arg[2] >= 1 && r->arg[2] <= 3 ? r->arg[2] : 0; /* _DA */
+    int df = (r->arg[0] != -1 && r->arg[0] != 0) || r->sw[SW_APPEAR] >= 0, db = r->arg[6] == -1 ? 0 : r->arg[6]; /* _DF, _DB */
+    float br = inv ? 60.0f : 50.0f; /* initBinder */
     V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), g = vmul(up, -1.0f);
-    if (*ph == 0 && *t == 0 && r->sw[SW_APPEAR] >= 0 && (r->arg[1] & 0xF) == 1 && r->arg[1] != -1) { *ph = 1; } /* appear(): appearGround */
-    ++*t;
+    if (*ph == 4) { in->invisible = 1; return; }
+    if (in->item != ITEM_ONEUP && !strcmp(cur_comet(), "Dark")) { *ph = 4; in->invisible = 1; row_dead[in->row] = 1; return; } /* _D8: makeActorDead */
+    if (*ph == 0 && *t == 0 && r->sw[SW_APPEAR] >= 0) { /* appear() */
+        int d9 = r->arg[1] == -1 ? 0 : r->arg[1] & 0xF;
+        if (d9 == 1) { se_start(SE_SY_ITEM_APPEAR, NULL); *ph = 1; } /* appearGround */
+        else if (d9 == 2 || d9 == 3) { /* appearThrowUp (appearThrowUpQuestionBox) */
+            V3 x, z;
+            row_axes(r, &x, &z);
+            se_start(SE_SY_ITEM_APPEAR, NULL);
+            if (inv && da) in->hvel = vadd(vmul(up, 10.0f), vmul(vnorm(z), 5.0f)); /* cAppearThrowUpSpd, cAppearThrowFwdSpd */
+            else { if (!inv) obj_play(in, "appear", 0, 0); in->hvel = vmul(up, 10.0f); }
+            *ph = 5;
+        } else if (da) *ph = 2;
+        if (r->arg[1] != -1 && (r->arg[1] & 0x80)) bi_fx(in, "AppearPicture", NULL); /* _DE */
+    }
+    if (*t < 60000) ++*t; /* (not round to 0: appear() again) */
     in->invisible = 0;
+    bi_fx(in, "Glow", in);
+    if (*ph == 1 || *ph == 3 || *ph == 5) { /* control (bound from those nerves on): a fire floor, a death area while it moves */
+        V3 pos = v3(in->m[12], in->m[13], in->m[14]), center = vadd(pos, vmul(up, br)), gn = up, wn = up;
+        int wall = 0, ground = collide_n(&center, up, br, &gn, &wn, &wall);
+        if ((ground && (ground_attr & 0x3F) == 10) || (*ph != 1 && in_death(pos))) {
+            bi_fx(in, "Vanish", NULL);
+            *ph = 4; in->invisible = 1; row_kill(in->row); /* kill */
+            printf("benefit item %d: vanished (%s)%c", in->row, ground && (ground_attr & 0x3F) == 10 ? "a fire floor" : "a death area", 10);
+            return;
+        }
+    }
     switch (*ph) {
+    case 5: { /* exeShoot */
+        V3 pos = v3(in->m[12], in->m[13], in->m[14]), center = vadd(pos, vmul(up, br)), gn = up, wn = up;
+        int wall = 0, ground = collide_n(&center, up, br, &gn, &wn, &wall);
+        (void)center;
+        if (ground && *t > 1) {
+            if (!inv) obj_play(in, "land", 0, 0);
+            in->hvel = v3(0, 0, 0);
+            if (da) { *ph = 3; *t = 0; } else if (*t > 11) { *ph = 0; *t = 1; }
+            break;
+        }
+        float vs = vdot(in->hvel, g);
+        V3 h = vsub(in->hvel, vmul(g, vs));
+        if (wall) { float s = vdot(h, wn); h = vsub(h, vmul(wn, s)); h = vsub(h, vmul(wn, s * 0.3f)); } /* cReflectWallX */
+        in->hvel = vadd(h, vmul(g, vs + 0.5f)); /* cGravity */
+        V3 c = vadd(vadd(pos, in->hvel), vmul(up, br));
+        collide(&c, up, br);
+        pos = vsub(c, vmul(up, br));
+        in->m[12] = pos.x; in->m[13] = pos.y; in->m[14] = pos.z;
+        break;
+    }
     case 0:
-        if (r->arg[6] > 0) { /* doRotateY: pi / 60 a frame about its up */
+        if (df && db) { /* exeWait: doRotateY, pi / 60 a frame about its up */
             V3 x = v3(in->m[0], in->m[1], in->m[2]), z = v3(in->m[8], in->m[9], in->m[10]);
             x = rot_axis(x, up, 3.14159265f / 60.0f); z = rot_axis(z, up, 3.14159265f / 60.0f);
             in->m[0] = x.x; in->m[1] = x.y; in->m[2] = x.z; in->m[8] = z.x; in->m[9] = z.y; in->m[10] = z.z;
@@ -46805,42 +46874,88 @@ static void benefit_update(Inst *in)
         break;
     case 1: /* exeAppearGround */
         if (*t < 61) { in->invisible = 1; break; }
-        if (*t == 61) obj_play(in, "appear", 0, 0);
-        if (*t > 62 && in->anim && in->anim->done) { *ph = r->arg[2] > 0 ? 2 : 0; *t = 0; }
+        if (*t == 61) { obj_play(in, "appear", 0, 0); se_start(SE_OJ_KINOKO_1UP_GROW, &in->m[12]); }
+        if (*t > 62 && in->anim && in->anim->done) { *ph = da ? 2 : 0; *t = 1; }
         break;
     case 2: if (*t >= 31) { *ph = 3; *t = 0; } break; /* exePreEscape */
     case 3: { /* exeEscape: doEscape */
         V3 x, z;
         row_axes(r, &x, &z);
-        if (*t == 1) { in->head = vmul(vnorm(z), 7.0f); in->hvel = v3(0, 0, 0); in->cstrong = 0; } /* initEscape: _BC, _C8, _E5 */
         V3 *bc = &in->head, *c8 = &in->hvel, pos = v3(in->m[12], in->m[13], in->m[14]);
-        V3 center = vadd(pos, vmul(up, 50.0f)), gn = up, wn = up;
-        int wall = 0, ground = collide_n(&center, up, 50.0f, &gn, &wn, &wall);
+        if (inv) g = vmul(up_at(pos, up), -1.0f); /* BenefitItemInvincible::doEscape: calcGravity */
+        if (*t == 1) { /* initEscape: _BC, _C8, _E5 */
+            *bc = vmul(vnorm(z), 7.0f); *c8 = v3(0, 0, 0); in->cstrong = 0;
+            se_start(SE_OJ_KINOKO_1UP_RUN_START, &in->m[12]);
+            if (inv) *bc = vadd(vmul(g, -20.0f), vmul(vnorm(z), 10.0f)); /* cBoundUpSpd, mFwdAxis x 10 */
+        }
+        V3 center = vadd(pos, vmul(up, br)), gn = up, wn = up;
+        int wall = 0, ground = collide_n(&center, up, br, &gn, &wn, &wall);
         (void)center;
-        if (ground) {
-            float l = vlen(*bc);
-            *bc = vmul(vnorm(vtangent(*bc, g)), l);
-            if (vlen(*bc) > 7.0f) *bc = vmul(vnorm(*bc), 7.0f);
-            if (in->cstrong) { in->cstrong = 0; obj_play(in, "land", 0, 0); }
-            *c8 = vmul(g, 5.0f);
+        if (inv) { /* BenefitItemInvincible::doEscape */
+            if (ground && *t > 1) {
+                V3 f = vtangent(vlen(vtangent(*bc, g)) > 1e-4f ? *bc : z, g); /* mFwdAxis, its part along the gravity killed */
+                *bc = vadd(vmul(vlen(f) > 1e-6f ? vnorm(f) : v3(0, 0, 0), 10.0f), vmul(g, -20.0f));
+                se_start(SE_OJ_POW_INVINCIBLE_BOUND, &in->m[12]);
+                *c8 = v3(0, 0, 0);
+            } else {
+                *bc = vmul(*bc, 0.98f); in->cstrong = 1;
+                *c8 = vadd(*c8, vmul(g, 0.5f));
+                if (vlen(*c8) > 20.0f) *c8 = vmul(vnorm(*c8), 20.0f);
+            }
+            wall = 0; /* (no wall jump of its own) */
         } else {
-            *bc = vmul(*bc, 0.95f); in->cstrong = 1;
-            *c8 = vadd(*c8, g);
-            if (vlen(*c8) > 20.0f) *c8 = vmul(vnorm(*c8), 20.0f);
+            in->lv[0] = se_level(SE_OJ_LV_KINOKO_1UP_RUN, &in->m[12], in->lv[0]);
+            if (ground) {
+                float l = vlen(*bc);
+                *bc = vmul(vnorm(vtangent(*bc, g)), l);
+                if (da == 2) { /* it flees Mario */
+                    V3 off = vtangent(vsub(pos, mario->pos), g);
+                    off = vlen(off) > 1e-6f ? vnorm(off) : v3(0, 0, 0);
+                    *bc = vmul(vadd(*bc, vmul(off, vdot(*bc, off) < 0.0f ? 0.02f : 0.01f)), 1.1f);
+                }
+                if (vlen(*bc) > 7.0f) *bc = vmul(vnorm(*bc), 7.0f);
+                if (in->cstrong) { in->cstrong = 0; obj_play(in, "land", 0, 0); }
+                *c8 = vmul(g, 5.0f);
+                bi_fx(in, "Move", &in->m[1]);
+            } else {
+                *bc = vmul(*bc, 0.95f); in->cstrong = 1;
+                *c8 = vadd(*c8, g);
+                if (vlen(*c8) > 20.0f) *c8 = vmul(vnorm(*c8), 20.0f);
+                if (in->item != ITEM_ONEUP) bi_fx(in, "Move", &in->m[1]); /* (BenefitItemLifeUp::stopEfx emits it again) */
+            }
         }
         V3 vel = vadd(*bc, *c8);
         if (wall && !in->cstrong && vdot(wn, vel) < 0.0f) {
             *bc = vsub(vtangent(*bc, wn), vmul(wn, vdot(*bc, wn)));
             *c8 = vadd(*c8, vmul(g, -20.0f));
             in->cstrong = 1;
-            vel = vadd(*bc, *c8);
         }
-        V3 c = vadd(vadd(pos, vel), vmul(up, 50.0f));
-        collide(&c, up, 50.0f);
-        pos = vsub(c, vmul(up, 50.0f));
+        if (r->path >= 0 && scene_blob_g) { /* _E3: moveCoord(_E8 5), _BC = its rail's place - its own */
+            u32 np = 0;
+            int closed = 0;
+            const float *pts = find_rail(scene_blob_g, r->zone, r->path, &np, &closed);
+            if (pts && np > 1) {
+                if (*t == 1) row_coord[in->row] = rail_nearest(pts, (int)np, pos); /* initAfterPlacement: moveCoordAndTransToNearestRailPos */
+                row_coord[in->row] += 5.0f;
+                *bc = vsub(rail_at(pts, np, row_coord[in->row]), pos);
+            }
+        }
+        vel = vadd(*bc, *c8);
+        V3 c = vadd(vadd(pos, vel), vmul(up, br));
+        collide(&c, up, br);
+        pos = vsub(c, vmul(up, br));
         in->m[12] = pos.x; in->m[13] = pos.y; in->m[14] = pos.z;
+        if (db & 4) { /* doRotateY */
+            V3 mx = v3(in->m[0], in->m[1], in->m[2]), mz = v3(in->m[8], in->m[9], in->m[10]);
+            mx = rot_axis(mx, up, 3.14159265f / 60.0f); mz = rot_axis(mz, up, 3.14159265f / 60.0f);
+            in->m[0] = mx.x; in->m[1] = mx.y; in->m[2] = mx.z; in->m[8] = mz.x; in->m[9] = mz.y; in->m[10] = mz.z;
+        }
         int left = 600 - *t; /* _B0 and its blink pattern: from 180 4 of 12 hidden, 120 3 of 8, 60 2 of 4 */
-        if (left <= 0) { *ph = 4; row_kill(in->row); break; }
+        if (left <= 0) { /* runEfx Vanish, makeActorDead (not kill: no dead switch) */
+            bi_fx(in, "Vanish", NULL);
+            *ph = 4; in->invisible = 1; row_dead[in->row] = 1;
+            break;
+        }
         if (left <= 180) { int per = left <= 60 ? 4 : left <= 120 ? 8 : 12, off = left <= 60 ? 2 : left <= 120 ? 3 : 4; in->invisible = left % per < off; }
         break;
     }
@@ -47682,7 +47797,7 @@ static void update_items(void)
             if (state < 3) { row_step[in->row] += state == 2; continue; } /* row_step: its appear demo */
         }
 
-        if (in->item == ITEM_ONEUP || in->item == ITEM_LIFEUP || in->item == ITEM_INVINCIBLE) { benefit_update(in); if (in->invisible && row_turn[in->row] == 1) continue; }
+        if (in->item == ITEM_ONEUP || in->item == ITEM_LIFEUP || in->item == ITEM_INVINCIBLE) { benefit_update(in); if (row_turn[in->row] == 4 || (in->invisible && row_turn[in->row] == 1)) continue; }
         float r;
         V3 p = item_sensor(in, &r);
         if (vlen(vsub(c, p)) > r + HIT_BODY_R) continue;
