@@ -18843,6 +18843,7 @@ static int m_flip_jump(Player *m, V3 dir) /* Mario::doFlipJump */
     m_anim("壁はじき");
     m->spin_timer = 0; /* stopPunch */
     m->spin_lock = 1;  /* _2B */
+    m->jump_kind = 3;  /* _430 */
     m_pad_vib(2);
     return 1;
 }
@@ -18946,10 +18947,12 @@ static int dm_check(Player *m) /* Mario::checkDamage (decDamageAfterTimer first)
     return s;
 }
 
+static int m_dstate10;
+static V3 m_wall_norm(const Player *m);
 static void dm_fd_impact(Player *m) /* MarioFireDance::impact */
 {
     m_anim("ファイアダンス");
-    if (!m->wall) {
+    if (!m_dstate10) {
         float l = vlen(dmg.fd14), mx = 2.0f * MC.mFireDanceMoveSpeed;
         if (l > mx) { dmg.fd14 = vmul(dmg.fd14, mx / l); l = mx; }
         if (l > 1e-6f) dmg.fd14 = vmul(dmg.fd14, 0.5f);
@@ -19024,10 +19027,10 @@ static void dm_start(Player *m)
         dmg.fd20 = -MC.mFireDanceFirstJump;
         dmg.fd14 = vtangent(m_jv(m), m->up);
         dmg.fd24 = 0; dmg.fd26 = 0;
-        if (m->wall) { /* mDrawStates._10: off a wall */
+        if (m_dstate10) { /* mDrawStates._10: off a wall (getWallNorm) */
             dmg.fd20 *= 0.25f;
-            dmg.fd14 = vmul(m->wall_n, MC.mFireDanceFirstJump * 0.5f);
-            m_front(m, m->wall_n);
+            dmg.fd14 = vmul(m_wall_norm(m), MC.mFireDanceFirstJump * 0.5f);
+            m_front(m, m_wall_norm(m));
             dmg.fd24 = 1; dmg.fd26 = 60;
         }
         dmg.fd28 = 0;
@@ -19564,10 +19567,13 @@ static int mario_attack(int msg, V3 from)
     return m->jumping || msg == ATK_STRONG ? m_damage(m, d) : m_faint(m, d);
 }
 
-/* Mario::damageFloorCheck / damageWallCheck: the ground's (_960) or a wall's floor code: Death (1) a miss
- * (forceKill), DamageNormal (4) a damage, DamageFire (10) / 0x81 the fire dance, Needle (24) the needle's, DamageElectric
- * (15) the paralysis. ponytail: checkCurrentFloorCodeSevere's shadow test not done; PullBack (16: doRecovery) and the
- * Rebound wall (doFlipJump) wait for MarioRecovery / the wall codes */
+/* Mario::damageFloorCheck / damageWallCheck (MarioDamage.cpp:243 / 301; m_damage_floor / m_damage_wall): the ground's
+ * (_960) or a wall's floor code: Death (1) a miss (forceKill 3), DamageNormal (4) a damage (off the ground's / the
+ * wall's normal x 10), DamageFire (10) / 0x81 the fire dance, Needle (24) the needle's, DamageElectric (15) the
+ * paralysis, PullBack (16) doRecovery; the ground's fire and needle codes only when checkCurrentFloorCodeSevere holds.
+ * A wall of the Rebound wall code (6) first: doFlipJump off its normal. The wall check runs every frame, with
+ * mDrawStates._10 on (MarioFireDance starts off the wall).
+ * ponytail: mMovementStates._1F and _1C._16 are not kept */
 /* MR::getFirstPolyOnLineToMap: the first face the segment from + d enters from its front (kcl_line: checkArrow), its
  * point, normal and part; map_line_attr its codes */
 static int map_line(V3 from, V3 d, V3 *hp, V3 *n, int *inst)
@@ -20408,8 +20414,9 @@ static int slider_update(Player *m) /* MarioSlider::update: 0 ends it */
 }
 
 /* tryDrop: off a ledge (cDropFrontSpeed 2); a front / side wall within 80 of his ground place keeps him on the ground,
- * pushed off it a tenth of the rest. ponytail: mDrawStates._B, the carried move (_184), _340, _428 after the slope
- * slides, the bee's timers and ショート着地 are not kept */
+ * pushed off it a tenth of the rest. The carried move (_184) across the gravity goes into the jump (a tenth of it
+ * when it points at his ground place); _428 15 after the slope slides' clips; the Bee's mBeeGravityPowerTimeD and
+ * air walk wait; ショート着地 keeps the slide (_23). _340 is read nowhere. ponytail: mDrawStates._B is not kept */
 static void m_try_drop(Player *m)
 {
     if (mw.w8) {
@@ -20434,9 +20441,18 @@ static void m_try_drop(Player *m)
         else { jv = vadd(jv, vmul(m->up, fminf(vlen(m->s288), 8.0f))); m->s8F8 = v3(0, 0, 0); }
         m_set_jv(m, jv);
     }
+    {
+        V3 carry = vtangent(carry_d, m->up); /* _184, vecKillElement(gravity); invalidateRelativePosition */
+        if (vdot(carry, vtangent(vsub(mw.ground_pos, m->pos), m->up)) > 0.0f) carry = vmul(carry, 0.1f);
+        m_set_jv(m, vadd(m_jv(m), carry));
+        carry_d = v3(0, 0, 0);
+    }
     m->jump_kind = 0;
     m_proc_jump(m, 1);
-    m->jumping = 1; m->connect = 0; m->digital = 1;
+    m->jumping = 1; m->connect = 0; m->digital = 1; m->hip = 0;
+    if (m_anim_on("坂すべり上向きうつぶせ") || m_anim_on("坂すべり下向きあおむけ")) m->air_lock = 0xF; /* _428 */
+    if (player_mode == PM_BEE) { m->s408 = MC.mBeeGravityPowerTimeD; m->air_timer = MC.mBeeAirWalkInhibitTimeD - 5; }
+    if (m_anim_on("ショート着地")) m->s23 = 1;
     if (mw.w8) m_stop_walk(m);
 }
 
@@ -21493,21 +21509,36 @@ static int m_check_press(Player *m)
 }
 
 static void hurt_mario(V3 from, float push);
-static void m_damage_floor(Player *m)
+static int m_floor_severe(const Player *m, int code);
+static int m_do_recovery(Player *m);
+static int m_damage_floor(Player *m) /* damageFloorCheck: 1 the update ends there */
 {
-    int f = m->grounded && !m->jumping ? m->floor : -1, w = m->wall ? wall_attr & 0x3F : -1;
-    if (f == 1 || w == 1) { printf("death floor\n"); miss(); return; }
-    if (player_mode == PM_TERESA) return; /* isDamageFloor: not as Teresa */
+    int f = m->grounded && !(m->jumping && !m->hip) ? m->floor : -1; /* _1 && !(jumping && !_B) */
+    if (f == 1) { printf("death floor\n"); m_pad_vib(3); life = 0; miss(); return 1; } /* forceKill(3) */
+    if (player_mode == PM_TERESA) return 0; /* isDamageFloor: not as Teresa */
     switch (f) {
-    case 24: if (m_fire_dance_damage(m, 1)) return; break;
-    case 0x81: case 10: if (m_fire_dance_damage(m, 0)) return; break;
-    case 4: if (!dm_damaging() && m_damage(m, vmul(m->up, 10.0f))) return; break;
-    case 15: if (m_paralyze(m)) return; break;
+    case 24: if (m_floor_severe(m, 24) && m_fire_dance_damage(m, 1)) return 1; break;
+    case 0x81: case 10: if (m_floor_severe(m, f) && m_fire_dance_damage(m, 0)) return 1; break;
+    case 4: if (!dm_damaging() && m_damage(m, vmul(m->ground_n, 10.0f))) return 1; break; /* _368 x 10 */
+    case 15: if (m_paralyze(m)) return 1; break;
+    case 16: if (m_do_recovery(m)) return 1; break;
     }
-    if (w == 10 && m_fire_dance_damage(m, 0)) return;
-    if (w == 24 && m_fire_dance_damage(m, 1)) return;
-    if (w == 15 && m_paralyze(m)) return;
-    if (w == 4) m_damage(m, vmul(m->wall_n, 10.0f));
+    return 0;
+}
+static int m_dstate10; /* mDrawStates._10: in damageWallCheck (MarioFireDance::start / impact: off the wall) */
+static int m_damage_wall(Player *m) /* damageWallCheck */
+{
+    const Tri *rb = mw.w19 && m_wall_code_is(&mw.back, 6) ? &mw.back : (mw.w8 || mw.w32) && m_wall_code_is(&mw.front, 6) ? &mw.front :
+                    mw.w1A && m_wall_code_is(&mw.side, 6) ? &mw.side : NULL; /* checkWallCodeNorm(Rebound, &normal, false) */
+    if (rb) return m_flip_jump(m, vmul(tri_n(rb), 5.0f));
+    if (m_wall_floor_code(1)) { printf("death wall\n"); m_pad_vib(3); life = 0; miss(); return 1; } /* forceKill(3) */
+    if (player_mode == PM_TERESA) return 0;
+    if (m_wall_floor_code(10) && m_fire_dance_damage(m, 0)) return 1;
+    if (m_wall_floor_code(24) && m_fire_dance_damage(m, 1)) return 1;
+    if (m_wall_floor_code(15) && m_paralyze(m)) return 1;
+    if (m_wall_floor_code(16) && m_do_recovery(m)) return 1;
+    if (m_wall_floor_code(4) && m_damage(m, vmul(m_wall_norm(m), 10.0f))) return 1;
+    return 0;
 }
 
 static void foo_set_front_keep_side(V3 f);
@@ -24406,6 +24437,9 @@ static void update_mario_(void)
         if (!m->hip) { m->vup = 0; m->hvel = vtangent(m->vel, m->up); }
         m_damage_floor(m);
     } else if (!ground) m->grounded = 0;
+    m_dstate10 = 1;
+    m_damage_wall(m);
+    m_dstate10 = 0;
     if (!pg) m->slip_poly = m->grounded && slip_polygon(m, ground_attr & 0x3F, m->ground_n); /* updateGroundInfo: mDrawStates._C */
     if (m->grounded && !m->jumping) m->land_timer++; /* updateTimers: _3CE */
     mario_ground = m->grounded ? ground_inst : -1; mario_ground_sub = ground_sub; mario_wall_inst = m->wall ? wall_inst : -1;
