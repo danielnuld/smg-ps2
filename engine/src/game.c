@@ -861,7 +861,7 @@ static int cur_idle;                    /* test builds: always pointing */
 static struct { int phase, t, target; V3 vel; float power; } gcap; /* GCapture (gcap_update) */
 static int test_r2; /* test builds: R2 held */
 static int test_noclip; /* test builds: the walkers move though clipped (game_test_unclip) */
-static struct { int inst, cool; V3 pt, vel, side, front; } jb = {.inst = -1}; /* JumpBranch (jbranch_update) */
+static struct { int inst, cool, rev; u32 spin; V3 pt, vel, side, front; } jb = {.inst = -1}; /* JumpBranch (jbranch_update); rev mSwingReverse, spin its SE_PM_SPIN */
 static void drop_carried(void), drop_damage(void); /* rushDropThrowMemoSensor / damageDropThrowMemoSensor */
 static int rush_drop(int bound) { if (bound) drop_carried(); return bound; } /* MarioActor::settingRush on a bind */
 static struct { int inst, phase, t, drop, row, dground, dwall; V3 dir, head, vel, dgrav; } jet = {.inst = -1}; /* the JetTurtle Mario holds or threw
@@ -10088,7 +10088,8 @@ static int gcap_update(Player *m)
  * grab point clamped 50 along it) and 70 of its plane grabs it: a point 30 from the axis, thrown on at his speed,
  * swings round it (gravity 0.2 a frame, strained to 30, friction 0.995) and he hangs under it, the branch at his
  * hands. X jumps off (16 up, plus 10 along the branch's front by the stick), a spin lets go; then it ignores him 30
- * frames (WaitInvalid). jb.inst -1 none. ponytail: hangwait / jumpspin stand in for JumpBranchWait and its spins,
+ * frames (WaitInvalid). jb.inst -1 none. Mario's clips JumpBranchWait / FrontSpin / BackSpin (startBckPlayer), SE_PM_GRAB_OBJ and
+ * SE_PM_SPIN at the grab (stopped at the release), SE_PM_JUMP_M / SE_PV_JUMP_S at the jump. ponytail:
  * gravity's up for the jump's world Y */
 static int jbranch_try(Player *m)
 {
@@ -10112,7 +10113,9 @@ static int jbranch_try(Player *m)
         jb.pt = vadd(bar, vmul(radial, 30.0f));
         jb.vel = vtangent(vtangent(v, side), radial); /* his speed along the swing */
         m->hip = 0; m->spin_timer = 0;
-        if (mario_anim) mario_play("hangwait", 1.0f, 1);
+        jb.rev = vdot(m->face, front) < 0.0f; /* mSwingReverse: his front against the branch's */
+        if (mario_anim) { int mode = 0; anim_clip_info("jumpbranchwait", &mode); mario_play("jumpbranchwait", 1.0f, mode == 2 || mode == 4); } /* startBckPlayer */
+        se_start(SE_PM_GRAB_OBJ, &m->pos.x); jb.spin = se_start(SE_PM_SPIN, &m->pos.x);
         printf("jump branch row %d: grabbed" "\n", in->row);
         return 1;
     }
@@ -10132,7 +10135,10 @@ static int jbranch_update(Player *m)
         V3 v = jump ? vadd(vmul(jb.front, 10.0f * proj), vmul(m->up, 16.0f)) : v3(0, 0, 0);
         m->hvel = vtangent(v, m->up); m->vup = vdot(v, m->up);
         m->grounded = 0; m->jump_kind = 0; m->air_timer = 0; m->spin_lock = 0;
-        if (mario_anim) mario_play(jump ? "jumpspin" : "fall", 1.0f, 0);
+        V3 fr = jb.rev ? vmul(jb.front, -1.0f) : jb.front; /* updateBind: the jump's clip by its way against his front */
+        if (mario_anim) mario_play(!jump ? "fall" : vdot(fr, v) >= 0.0f ? "jumpbranchfrontspin" : "jumpbranchbackspin", 1.0f, 0);
+        if (jump) { se_start(SE_PM_JUMP_M, &m->pos.x); se_start(SE_PV_JUMP_S, &m->pos.x); }
+        if (jb.spin) { se_stop(jb.spin); jb.spin = 0; } /* stopSound SE_PM_SPIN */
         printf("jump branch row %d: %s" "\n", in->row, jump ? "jump" : "let go");
         jb.inst = -1; jb.cool = 30;
         return 0;
