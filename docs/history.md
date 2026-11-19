@@ -11,6 +11,45 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Enemy audit, fourth batch (feat/725-enemy-audit-4, #725, PR #730, 2026-11-19): Kanina's receiveFireBall from a fire
+  ball and a thrown shell (kan_fire: doDamageFireBall, not while its sensors are off); Gesso without clipping in Wait
+  from step 2 (exeWait). `docs/class-audit-enemy.md`: the rows of the classes compared by clips, sounds, step tests
+  and constants (KoteBug, Poihana, Gesso, Snakehead, Mogu, Metbo: equal) and the PCSX2 runs: #693's BombHei carry
+  (BH_TEST: taken, thrown, Physics) and #637's AnimScaleController kinds (way 2 starts none of them: see the table).
+  Test: built plain, host tests, the route test, memcheck. No repack.
+- RainCloud (feat/692-raincloud, #692, 2026-11-18): 69 placed (OceanRingZone layers C / D, ReverseForestHomeZone),
+  generic rail parts before. update_rainclouds after RainCloud.cpp: Wait / Appear / Disappear / End / SoftTouch /
+  HardTouch (Mario falls through a cloud for 60 frames unless he is a bee; OnBee under a bee; Disappear at its rail's
+  end, End back at the start until its whole group is there, Appear with THUNDER at 140), the rain (its length from
+  the ground under it up to arg0, the Splash and Line10 / Line20 effects, SE_OJ_LV_FOREST_RAIN; the
+  RainCloudCylinder model on the Shadow joint is written (rc_draw) but off, `XF=-DRAINCLOUD_CYLINDER`: it came out an
+  opaque dark column in ReverseKingdomGalaxy 3), the drop_water sensor (a bee's form washed away). Its state
+  (RainCloud, 60 B a cloud) comes from the arena at game_init (row_table), no static table and no Inst field.
+  Its end is read from the rail mover's coord (main's MapPartsRailMover stops at the end, then starts over). slice.py: RainCloud
+  skinned (its four clips, its AutoEffectList rows), RainCloudCylinder its EXTRA model. Test:
+  `XF=-DRAINCLOUD_TEST=k` on a plain build (Mario dropped on the k-th cloud; nerve changes logged). Seen: HardTouch
+  (OceanRingGalaxy 5, ReverseKingdomGalaxy 3), the rail clouds' Disappear / End / Appear and the rain's length
+  (ReverseKingdomGalaxy 3); not seen: a bee (SoftTouch, the wash), the effects, a posed cloud's Appear. ponytail: no BPK
+  colours, no LOD model, no shadow volume, ACTMES_PUDDLE_TOUCH_GROUND not sent, the projection read every 8th frame
+  and (with the effects and the rain's sound) only in view. **Release: slice_all.py** OceanRingGalaxy and
+  ReverseKingdomGalaxy **+ sound.py --pack** for them (the four RainCloud SEs are new in game.c).
+- ViewGroupCtrlCube (feat/718-view-group, #718, 2026-11-19, agent areas2): the last placed manager of
+  AreaObjContainer's table the engine did not read (624 cubes in 97 stage archives; 9365 rows carry a ViewGroupId:
+  coins, star pieces, enemies, NPCs, map parts; no planet does). Pack format: a new chunk **VGRP** in scene.bin
+  (u32 n, n x {u16 row, s16 ViewGroupId; bit 14 a planetobjinfo row}), and the cubes' rows through slice.py LOGIC; a
+  pack without the chunk (every pack before this repack) has no groups and plays as before (vg_init). `vg_update`
+  (ViewGroupCtrl::update, keep_effects): each cube holding Mario turns its group (arg0) on: _0 in view, arg1 1 / 2 /
+  3 the LodCtrl's high / middle / low model forced, arg1 4 not in view and hidden. `vg_of(row)`: obj_clipped and
+  the walkers' ClippingJudge call take far level 0 (no far clipping) for a row whose group is in view
+  (ClippingActorInfo::isJudgedToClip); `vg_hidden`: an instance of a hidden group is not drawn when its class has
+  a LodCtrl (LodCtrl::hideAllModel): the NPCs (clipcls 1), BeeFlowerHover, planets. ponytail: the port has no
+  LodCtrl, so the forced high / middle / low models do nothing and the other LodCtrl holders (UFOBase,
+  LavaStrangeRock, MapObjActor's planet LOD...) are not hidden; far level 0 reaches only what the port clips by
+  ClippingJudge (NPCs, walkers, SuperSpinDrivers: the rest is drawn by the port's own distances). Test: route with
+  `XF="-DVG_TEST -DPACKS_OVERLAY=<overlay>"` ("view groups: n on id:flags" when the count changes): EggStarGalaxy/1 on
+  the old packs, the star at f 4281; with its scene sliced anew (163 VGRP rows) the groups go on and off along the
+  flight ("2 on 1:3 13:3" ... "0 on") and the star is at f 4281 again. Not seen: a hidden group (arg1 4: 42 cubes).
+  Memory: about 1.5 KB of code, 2 bytes a row from the scene arena with the chunk. Repack: every galaxy.
 - UI audit, SysInfoWindow and the sub meter (fix/679-sysinfo-abutton, #679 #707, 2026-11-19): menu.c si_* gets
   SysInfoWindow's mIconAButton (an IconAButton at AButtonPosition: openWithoutMessage when a Type_Key window appears,
   term at Disappear's first step, killed, moved and drawn with the window: the save's done / error windows had no
