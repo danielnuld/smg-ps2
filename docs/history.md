@@ -11,6 +11,17 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- DinoPackun's star piece reaction (feat/se-dinopackun-star-piece, #642, 2026-11-18): no star piece reached it
+  (dino.react was never set). game.c dino_shot (update_shots): in a battle its head (270) / body (200) take the piece
+  (Vs1: isMsgStarPieceAttack, Vs2Lv1: isMsgStarPieceReflect) and start DinoPackun::startHitReaction:
+  SE_OJ_STAR_PIECE_HIT_STOP, its AnimScaleController's HitReaction (asc_core with DinoPackunParam 0.1 / 0.91 / 0.2 /
+  1.8 / 0.07 / 0.12 / 0.92) scaling Spine1 and its children (dino_scale_joint: hitScaleJoint's (_C.y, _C.z, _C.x) on
+  joints 21-45), the chase held while isHitReaction(15); the egg's sensor (400) in the egg's battle, the tail's parts
+  (1.25 + sJointRadius) and its ball (135) reflect it. appearStarPiece plays SE_OJ_STAR_PIECE_BURST with its 8
+  pieces. Test: `build.sh dino` with `XF=-DDINO_STAR` (a piece on its body 30 frames into each chase).
+  PCSX2 (EggStarGalaxy/1, SE_LOG): `se+ 00050376`, "dino packun: star piece hit reaction", `se+ 00050089` at each
+  battle's start, the fight still ends with its star. Not looked at in a picture: the Spine1 wobble; not run: Vs2
+  (the reflect), a piece on the egg / tail. Memory: about 1.2 KB of code (estimated). No repack.
 - RandomEffectObj (feat/631-random-effect, #631, 2026-11-18): FireworksA (10 placed) and ShootingStarArea (56) played
   as steady SimpleEffectObj ambient effects. Now in ambient_effects (amb_once 2 / 3; row_step mStep + 2, row_turn
   mSeStep + 1): the first emit |repeat(x + y + z, 0, arg1)| frames after its placement (0: never, as Petari), then
