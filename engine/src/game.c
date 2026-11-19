@@ -2093,6 +2093,18 @@ typedef struct { V3 n; float dist; int inst, attr, sub; V3 pos; int prism, flag;
 /* Triangle (Map/HitInfo.hpp): a prism of a placed collision, its data from the part's matrix now (calcAndGetNormal /
  * Pos); inst -1 an IceStep's (sub its index), prism 0 none (mIdx -1) */
 typedef struct { int inst, sub, prism; const unsigned char *kcl; } Tri;
+/* the collision parts that are no instance's (Hit.inst -1): sub under ICE_STEPS an IceStep, from ICE_STEPS on a
+ * CollisionArea's AreaPolygon (cpoly_at: its KCL in world space, NULL while invalid; its bounding sphere) */
+static int ncpolys;
+static const unsigned char *cpoly_at(int i, V3 *c, float *r);
+static const float cp_ident[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+#ifdef PUT_TEST
+static int cpoly_hits; /* the AreaPolygons' sphere hits since the put test's last line */
+#endif
+static const unsigned char *xpart_kcl(int sub)
+{
+    return sub < ICE_STEPS ? kcl_icestep : sub - ICE_STEPS < ncpolys ? cpoly_at(sub - ICE_STEPS, NULL, NULL) : NULL;
+}
 static int nlfs, ground_sub, mario_ground_sub; static int lf_mats(const Inst *in, const float (**mats)[16], const int **coll);
 static void update_leaves(void), leaf_joints(Inst *in), lf_alloc(void);
 static int npls; static void update_palms(void), pl_place(Inst *in);
@@ -2251,6 +2263,30 @@ static int kcl_query_(V3 c, float radius, Hit *out, int max)
             out[n++].dist = h[j].dist;
         }
     }
+    for (int i = 0; i < ncpolys && n < max; i++) { /* CollisionArea's AreaPolygons (inst -1, sub ICE_STEPS + i) */
+        V3 pc;
+        float pr;
+        const unsigned char *pk = cpoly_at(i, &pc, &pr);
+        if (!pk) continue;
+        V3 d = vsub(c, pc);
+        if (vdot(d, d) > (pr + radius) * (pr + radius)) continue;
+        float lc[3] = {c.x, c.y, c.z};
+        KclHit h[4];
+        int got = kcl_check_sphere(pk, lc, radius, h, max - n < 4 ? max - n : 4);
+#ifdef PUT_TEST
+        cpoly_hits += got;
+#endif
+        for (int j = 0; j < got; j++) {
+            const float *fn = kcl_face_normal(pk, h[j].prism);
+            float lp[3] = {lc[0], lc[1], lc[2]};
+            kcl_collide_pos(pk, h[j].prism, h[j].flag, lp);
+            out[n].n = v3(fn[0], fn[1], fn[2]);
+            out[n].inst = -1; out[n].attr = kcl_attribute(pk, h[j].prism); out[n].sub = ICE_STEPS + i;
+            out[n].prism = h[j].prism; out[n].flag = h[j].flag;
+            out[n].pos = v3(lp[0], lp[1], lp[2]);
+            out[n++].dist = h[j].dist;
+        }
+    }
     return n;
 }
 /* Collision::checkStrikeLine over every placed collision (KCollisionServer::checkArrow): the nearest face the segment
@@ -2284,6 +2320,12 @@ static int kcl_line(V3 a, V3 b, V3 *hp, V3 *n, int *inst)
     for (int i = 0; kcl_icestep && i < ICE_STEPS; i++) /* IceStep's collision parts */
         if (ice_steps[i].alive && vlen(vsub(vadd(a, vmul(q.d, 0.5f)), v3(ice_steps[i].m[12], ice_steps[i].m[13], ice_steps[i].m[14]))) < 300.0f + len * 0.5f)
             kl_hit(&q, kcl_icestep, ice_steps[i].m, 1.0f, -1, i);
+    for (int i = 0; i < ncpolys; i++) { /* CollisionArea's AreaPolygons */
+        V3 pc;
+        float pr;
+        const unsigned char *pk = cpoly_at(i, &pc, &pr);
+        if (pk && vlen(vsub(vadd(a, vmul(q.d, 0.5f)), pc)) < pr + len * 0.5f) kl_hit(&q, pk, cp_ident, 1.0f, -1, ICE_STEPS + i);
+    }
     if (q.frac > 1.0f) return 0;
     kcl_line_tri = (Tri){q.inst, q.sub, q.prism, q.kcl};
     if (hp) *hp = vadd(a, vmul(q.d, q.frac));
@@ -2350,7 +2392,13 @@ static int tri_part(const Tri *t, float m[16], float *k)
 {
     if (!t->prism) return 0;
     if (t->inst < 0) {
-        if (t->sub >= ICE_STEPS || !ice_steps[t->sub].alive || t->kcl != kcl_icestep) return 0;
+        if (t->sub >= ICE_STEPS) { /* an AreaPolygon: its KCL is in world space */
+            if (!t->kcl || xpart_kcl(t->sub) != t->kcl) return 0;
+            memcpy(m, cp_ident, 64);
+            *k = 1.0f;
+            return 1;
+        }
+        if (!ice_steps[t->sub].alive || t->kcl != kcl_icestep) return 0;
         memcpy(m, ice_steps[t->sub].m, 64);
         *k = 1.0f;
         return 1;
@@ -2554,7 +2602,7 @@ static int bind_find(V3 *pos, V3 *mv, int *rest, float r, int skip0)
             *rest = i != steps;
             int c = 0;
             for (int k = 0; k < n && b_n < BIND_MAX; k++, c++) {
-                b_tri[b_n] = (Tri){h[k].inst, h[k].sub, h[k].prism, h[k].inst < 0 ? kcl_icestep : insts[h[k].inst].kcl};
+                b_tri[b_n] = (Tri){h[k].inst, h[k].sub, h[k].prism, h[k].inst < 0 ? xpart_kcl(h[k].sub) : insts[h[k].inst].kcl};
                 b_dep[b_n++] = h[k].dist + 1.2f;
             }
             return c;
@@ -20721,7 +20769,7 @@ static void m_check_all_wall(Player *m)
         V3 dir = vsub(h[i].pos, c), fb = vsub(h[i].pos, m->pos);
         dir = vlen(dir) > 1e-6f ? vnorm(dir) : v3(0, 0, 0); fb = vlen(fb) > 1e-6f ? vnorm(fb) : v3(0, 0, 0);
         float un = vdot(m->up, h[i].n), deg = 180.0f * (acosf(un > 1.0f ? 1.0f : un < -1.0f ? -1.0f : un) / 3.14159f);
-        Tri ht = {h[i].inst, h[i].sub, h[i].prism, h[i].inst < 0 ? kcl_icestep : insts[h[i].inst].kcl};
+        Tri ht = {h[i].inst, h[i].sub, h[i].prism, h[i].inst < 0 ? xpart_kcl(h[i].sub) : insts[h[i].inst].kcl};
         if (deg >= MC.mFlatAngle && vdot(dir, m->face) > 0.0f && vdot(fb, m->face) > 0.0f &&
             angle_d(m, h[i].n) <= MC.mSlipAngle && ang_abs(m->ground_n, h[i].n) > 30.0f) { mw.t4DC = ht; mw.p518 = h[i].pos; mw.f4DC = 1; }
         if (fabsf(un) > 0.5f) { /* (mHeadVec) */
@@ -20738,7 +20786,7 @@ static void m_check_all_wall(Player *m)
         const Hit *w = &h[walls[0]];
         V3 d = vsub(w->pos, c);
         d = vlen(d) > 1e-6f ? vnorm(d) : v3(0, 0, 0);
-        mw.front = (Tri){w->inst, w->sub, w->prism, w->inst < 0 ? kcl_icestep : insts[w->inst].kcl};
+        mw.front = (Tri){w->inst, w->sub, w->prism, w->inst < 0 ? xpart_kcl(w->sub) : insts[w->inst].kcl};
         m_front_tri_n = tri_n(&mw.front);
         mw.p4E8 = w->pos;
         if (vdot(d, w->n) < (m->walling ? -0.9f : -0.999f)) mw.w8 = 1;
@@ -20747,7 +20795,7 @@ static void m_check_all_wall(Player *m)
     }
     if (walls[1] >= 0) {
         const Hit *w = &h[walls[1]];
-        mw.side = (Tri){w->inst, w->sub, w->prism, w->inst < 0 ? kcl_icestep : insts[w->inst].kcl};
+        mw.side = (Tri){w->inst, w->sub, w->prism, w->inst < 0 ? xpart_kcl(w->sub) : insts[w->inst].kcl};
         mw.p500 = w->pos;
         mw.w1A = 1;
         if (w->flag >= 2) mw.w33 = 1; /* isCollisionAtCorner / AtEdge */
@@ -20756,7 +20804,7 @@ static void m_check_all_wall(Player *m)
         const Hit *w = &h[walls[2]];
         V3 bd = vsub(w->pos, c), fd = vsub(mw.p4E8, c);
         if (!(mw.w8 && vdot(bd, fd) >= 0.0f && vlen(bd) >= vlen(fd))) {
-            mw.back = (Tri){w->inst, w->sub, w->prism, w->inst < 0 ? kcl_icestep : insts[w->inst].kcl};
+            mw.back = (Tri){w->inst, w->sub, w->prism, w->inst < 0 ? xpart_kcl(w->sub) : insts[w->inst].kcl};
             mw.p4F4 = w->pos;
             mw.w19 = 1;
         }
@@ -21223,7 +21271,7 @@ static void m_map_info(Player *m)
     if (m->grounded && !m_pg) {
         mw.ground_pos = m->pos;
         if (ground_prism) {
-            mw.last = (Tri){ground_inst, ground_sub, ground_prism, ground_inst < 0 ? kcl_icestep : insts[ground_inst].kcl};
+            mw.last = (Tri){ground_inst, ground_sub, ground_prism, ground_inst < 0 ? xpart_kcl(ground_sub) : insts[ground_inst].kcl};
             mw.l4BC = tri_pt_in(&mw.last, mw.ground_pos);
         }
     }
@@ -23856,7 +23904,7 @@ static void m_create_at_field(Player *m)
                 if (fabsf(vdot(vsub(h[j].pos, c), m->up)) > 80.0f) continue;
                 if (h[j].flag >= 2 && h[j].flag <= 4 && ang_abs_h(m_jv(m), vmul(h[j].n, -1.0f), m->up) < 0.7853982f) continue;
             } else if (!swimming) {
-                Tri t = {h[j].inst, h[j].sub, h[j].prism, h[j].inst < 0 ? kcl_icestep : insts[h[j].inst].kcl};
+                Tri t = {h[j].inst, h[j].sub, h[j].prism, h[j].inst < 0 ? xpart_kcl(h[j].sub) : insts[h[j].inst].kcl};
                 float a = (tri_attr(&t) & 0x3F) == 3 ? 60.0f : 45.0f; /* CollisionFloorCode_NoSlip */
                 if (m2.on && tri_moved(&t) && t.inst != m_gtri.inst) {
                     a = -1.0f;
@@ -49052,6 +49100,16 @@ static void put_test(void)
                     row_axes(&sc->objs[row], &x, &z);
                     mario->pos = vadd(row_pos(&sc->objs[row]), vmul(vcross(z, x), PUT_UP));
                 }
+                if (row >= 0 && !strcmp(cls, "CollisionArea")) { /* 30 before the +X face (its AreaPolygon's first face) of
+                                                                   * the first shown one that has a polygon there */
+                    int t = (int)sc->objs[row].type;
+                    for (u32 i = 0; i < sc->nobjs; i++)
+                        if ((int)sc->objs[i].type == t && (sc->objs[i].arg[3] & 1) && row_shown((int)i)) { row = (int)i; break; }
+                    V3 x, z;
+                    row_axes(&sc->objs[row], &x, &z);
+                    mario->pos = vadd(row_pos(&sc->objs[row]), vmul(x, 500.0f * sc->objs[row].scale[0] + 30.0f));
+                    mario->hvel = v3(0, 0, 0); mario->vup = 0;
+                }
                 printf("put file: %s row %d, inside %d, SW_A %d" "\n", cls, row, row >= 0 && area_inside(&sc->objs[row], mario->pos),
                        row >= 0 ? sc->objs[row].sw[SW_A] : -1);
             }
@@ -50954,11 +51012,75 @@ static int vg_hidden(const Inst *in)
  * (_40), from outside to the radius off the point of the face or edge (if that goes along the normal).
  * hitCheck's corner region (out of all three extents) measures from the corner without the box's centre, as Petari
  * does: it only hits by the world's origin.
- * ponytail: AreaPolygon (arg3 not 0: the face's two triangles 10 out as a DynamicCollisionObj, a wall for his binder
- * and for the other actors) is not ported, the push alone holds him; MarioAccess::addVelocityFromArea's _EA4 and the
- * rush hosts other than a launch star and the Tamakoro (_934) are not checked; no follow matrix */
+ * AreaPolygon (arg3 not 0; a DynamicCollisionObj): the two triangles of one face of the box, 10 wider and farther out
+ * unless he is Teresa Mario (setSurface), as a collision part for every sphere and segment query (kcl_query_ /
+ * kcl_line: Hit.inst -1, sub ICE_STEPS + the area). It starts on face 0 (+X) and moves to the face hitCheck finds
+ * him nearest (its bit in arg3: setSurfaceAndSync); invalid with the area and while _58 holds. Its KCL is built as
+ * DynamicCollisionObj::createCollision / updateTriangle / updateCollisionHeader do: one prism a triangle (its first
+ * vertex, the face and three edge normals, its height), thickness 40, one octree leaf listing prisms 2 and 1.
+ * ponytail: MarioAccess::addVelocityFromArea's _EA4 and the rush hosts other than a launch star and the Tamakoro
+ * (_934) are not checked; no follow matrix; the prisms' attribute (their index, of no attribute table) is 0, a
+ * plain face; the header's block shift is 30, not 33 less the extents' leading zeros (one leaf either way) */
 static short *col_areas; /* the rows; bit 15: _58 */
-static int ncol_areas;
+static int ncol_areas, col_surface; /* (hitCheck's surface: 0 +X, 1 -X, 2 +Y, 3 -Y, 4 +Z, 5 -Z; -1 none) */
+typedef struct { unsigned kcl[59]; V3 c; float r; signed char surface, has, on, teresa; } ColPoly;
+static ColPoly *cpolys;
+static const unsigned char *cpoly_at(int i, V3 *c, float *r)
+{
+    const ColPoly *p = &cpolys[i];
+    if (!p->on) return NULL;
+    if (c) { *c = p->c; *r = p->r; }
+    return (const unsigned char *)p->kcl;
+}
+static void cpoly_set(ColPoly *p, const Row *r, int surface) /* AreaPolygon::setSurface, syncCollision */
+{
+    static const signed char q[6][4][3] = {{{1, -1, -1}, {1, 1, -1}, {1, 1, 1}, {1, -1, 1}}, {{-1, -1, 1}, {-1, 1, 1}, {-1, 1, -1}, {-1, -1, -1}},
+                                           {{-1, 1, -1}, {-1, 1, 1}, {1, 1, 1}, {1, 1, -1}}, {{-1, -1, 1}, {-1, -1, -1}, {1, -1, -1}, {1, -1, 1}},
+                                           {{-1, -1, 1}, {1, -1, 1}, {1, 1, 1}, {-1, 1, 1}}, {{-1, 1, -1}, {1, 1, -1}, {1, -1, -1}, {-1, -1, -1}}};
+    struct { unsigned pos, nrm, prism, octree; float thickness, min[3]; int mask[3], shift, xshift, xyshift; } *h = (void *)p->kcl;
+    struct { float height; unsigned short pos, nrm, edge[3], attr; } *pr = (void *)((unsigned char *)p->kcl + 176);
+    float *pos = (float *)((unsigned char *)p->kcl + 56), *nrm = (float *)((unsigned char *)p->kcl + 80);
+    V3 ax, az, v[4], lo, hi;
+    row_axes(r, &ax, &az);
+    V3 ay = vcross(az, ax), c = row_pos(r);
+    float s[3] = {500.0f * r->scale[0], 500.0f * r->scale[1], 500.0f * r->scale[2]};
+    p->surface = (signed char)surface; p->teresa = player_mode == PM_TERESA;
+    if (!p->teresa) for (int k = 0; k < 3; k++) s[k] += s[k] < 0.0f ? -10.0f : 10.0f; /* (isPlayerElementModeTeresa: not) */
+    for (int i = 0; i < 4; i++) {
+        v[i] = vadd(c, vadd(vadd(vmul(ax, q[surface][i][0] * s[0]), vmul(ay, q[surface][i][1] * s[1])), vmul(az, q[surface][i][2] * s[2])));
+        if (i == 0) lo = hi = v[0];
+        lo = v3(fminf(lo.x, v[i].x), fminf(lo.y, v[i].y), fminf(lo.z, v[i].z));
+        hi = v3(fmaxf(hi.x, v[i].x), fmaxf(hi.y, v[i].y), fmaxf(hi.z, v[i].z));
+    }
+    memset(p->kcl, 0, sizeof p->kcl);
+    h->pos = 56; h->nrm = 80; h->prism = 176; h->octree = 224; h->thickness = 40.0f;
+    h->min[0] = lo.x; h->min[1] = lo.y; h->min[2] = lo.z;
+    float ext[3] = {hi.x - lo.x, hi.y - lo.y, hi.z - lo.z};
+    for (int k = 0; k < 3; k++) { /* updateCollisionHeader: the mask over its extent's bits */
+        unsigned val = (unsigned)(int)ext[k], bits = 0;
+        if (!val) val = 1;
+        while (val >> bits) bits++;
+        h->mask[k] = (int)~((bits >= 32 ? 0u : 1u << bits) - 1u);
+    }
+    h->shift = 30; h->xshift = -1; h->xyshift = -1;
+    for (int i = 0; i < 2; i++) { /* updateTriangle: (0, 1, 2), (0, 2, 3) */
+        V3 v1 = v[0], v2 = v[i + 1], v3_ = v[i + 2];
+        V3 a = vsub(v3_, v1), save = a, b = vsub(v2, v1), cc = vsub(v3_, v2);
+        a = vnorm(a); b = vnorm(b); cc = vnorm(cc);
+        V3 n = vnorm(vcross(b, a));
+        V3 e[4] = {n, vnorm(vcross(vmul(a, -1.0f), n)), vnorm(vcross(b, n)), vnorm(vcross(cc, n))};
+        pos[3 * i] = v1.x; pos[3 * i + 1] = v1.y; pos[3 * i + 2] = v1.z;
+        for (int k = 0; k < 4; k++) { nrm[3 * (4 * i + k)] = e[k].x; nrm[3 * (4 * i + k) + 1] = e[k].y; nrm[3 * (4 * i + k) + 2] = e[k].z; }
+        pr[i + 1].height = vlen(vtangent(save, cc)); /* vecKillElement(SaveForLater, c) */
+        pr[i + 1].pos = (unsigned short)i; pr[i + 1].nrm = (unsigned short)(4 * i);
+        for (int k = 0; k < 3; k++) pr[i + 1].edge[k] = (unsigned short)(4 * i + 1 + k);
+    }
+    *(int *)((unsigned char *)p->kcl + 224) = (int)0x80000004u; /* the leaf: its list 4 on */
+    ((unsigned short *)((unsigned char *)p->kcl + 228))[1] = 2;
+    ((unsigned short *)((unsigned char *)p->kcl + 228))[2] = 1;
+    p->c = vmul(vadd(vadd(v[0], v[1]), vadd(v[2], v[3])), 0.25f);
+    p->r = vlen(vsub(v[0], p->c)) + 40.0f;
+}
 static void col_areas_init(const Scene *s)
 {
     int t = scene_type(s, "CollisionArea");
@@ -50967,6 +51089,30 @@ static void col_areas_init(const Scene *s)
     col_areas = ncol_areas ? mem_alloc(MEM_SCENE, ncol_areas * sizeof *col_areas) : NULL;
     ncol_areas = 0;
     for (u32 i = 0; t >= 0 && i < s->nobjs && i < 0x8000; i++) if ((int)s->objs[i].type == t) col_areas[ncol_areas++] = (short)i;
+    ncpolys = 0;
+    cpolys = ncol_areas ? mem_alloc(MEM_SCENE, ncol_areas * sizeof *cpolys) : NULL;
+    for (int i = 0; i < ncol_areas; i++) { /* CollisionArea::init: no AreaPolygon with arg3 0; setSurface(0) */
+        const Row *r = &s->objs[col_areas[i]];
+        memset(&cpolys[i], 0, sizeof cpolys[i]);
+        if (r->arg[3] == 0) continue;
+        cpolys[i].has = 1;
+        cpoly_set(&cpolys[i], r, 0);
+#ifdef PUT_TEST /* the KCL just built asked as the engine asks it: a sphere of 60 whose centre is 30 before the face's
+                 * middle (a hit 30 deep), a segment from 100 before it to 100 behind (half way) */
+        if (!ncpolys++) {
+            V3 ax, az;
+            row_axes(r, &ax, &az);
+            V3 c = cpolys[i].c, a = vadd(c, vmul(ax, 30.0f)), b = vadd(c, vmul(ax, 100.0f)), d = vmul(ax, -200.0f);
+            float fc[3] = {a.x, a.y, a.z}, fo[3] = {b.x, b.y, b.z}, fd[3] = {d.x, d.y, d.z}, frac = 0.0f;
+            KclHit h[4];
+            int got = kcl_check_sphere((const unsigned char *)cpolys[i].kcl, fc, 60.0f, h, 4);
+            int pr = kcl_check_arrow((const unsigned char *)cpolys[i].kcl, fo, fd, &frac);
+            printf("collision area: polygon self check row %d: sphere hits %d (prism %d flag %d depth %d), segment prism %d at %d / 100" "\n",
+                   (int)col_areas[i], got, got ? h[0].prism : 0, got ? h[0].flag : 0, got ? (int)h[0].dist : 0, pr, (int)(frac * 100.0f));
+        }
+#endif
+    }
+    ncpolys = ncol_areas;
 }
 static int col_area_hit(const Row *r, V3 p, float radius, V3 *pt, V3 *nrm, int *count, float *depth) /* hitCheck */
 {
@@ -50977,6 +51123,7 @@ static int col_area_hit(const Row *r, V3 p, float radius, V3 *pt, V3 *nrm, int *
     float l[3] = {vdot(rel, ax), vdot(rel, ay), vdot(rel, az)};
     V3 axis[3] = {ax, ay, az};
     int out[3], n = 0;
+    col_surface = -1;
     for (int k = 0; k < 3; k++) if (fabsf(l[k]) >= size[k] + radius) return 0;
     for (int k = 0; k < 3; k++) n += out[k] = fabsf(l[k]) >= size[k];
     *count = n; /* _3C */
@@ -51001,6 +51148,7 @@ static int col_area_hit(const Row *r, V3 p, float radius, V3 *pt, V3 *nrm, int *
         float sgn = l[k] < 0.0f ? -1.0f : 1.0f; /* a face (n 1): its normal; an edge (n 2): the two faces' sum */
         nv = vadd(nv, vmul(axis[k], sgn));
         l[k] = sgn * size[k];
+        if (n == 1) col_surface = 2 * k + (sgn < 0.0f);
     }
     *pt = vadd(vadd(vadd(vmul(ax, l[0]), vmul(ay, l[1])), vmul(az, l[2])), c);
     *nrm = vnorm(nv);
@@ -51009,16 +51157,37 @@ static int col_area_hit(const Row *r, V3 p, float radius, V3 *pt, V3 *nrm, int *
 static void update_collision_areas(void)
 {
     int through = player_mode == PM_TERESA && mario->t418; /* MR::isPlayerTeresaDisappear */
+#ifdef PUT_TEST
+    { /* Mario on or against an AreaPolygon (a ground or wall part that is no instance's, its sub from ICE_STEPS on) */
+        static int t;
+        if (t++ % 60 == 0 && ncol_areas)
+        {
+            printf("collision area: mario at %d %d %d grounded %d (part %d sub %d) wall %d, polygon hits %d" "\n", (int)mario->pos.x,
+                   (int)mario->pos.y, (int)mario->pos.z, mario->grounded, ground_inst, ground_sub, mario->wall, cpoly_hits);
+            cpoly_hits = 0;
+        }
+    }
+#endif
     for (int i = 0; i < ncol_areas; i++) {
         int row = col_areas[i] & 0x7FFF;
         const Row *r = &sc->objs[row];
+        ColPoly *cp = &cpolys[i];
+        cp->on = 0;
         if (!row_shown(row)) continue;
         if (r->arg[1] == -1 && through) { col_areas[i] |= (short)0x8000; continue; }
         int s58 = (col_areas[i] & 0x8000) != 0, count = 0;
         float radius = r->arg[2] > 0 ? (float)r->arg[2] : player_mode == PM_TERESA ? 100.0f : 60.0f, depth = 0.0f; /* getPlayerHitRadius */
         if (s58) radius += 5.0f;
         V3 pt, n, push;
-        if (!col_area_hit(r, mw.c, radius, &pt, &n, &count, &depth)) { col_areas[i] &= 0x7FFF; continue; }
+        if (!col_area_hit(r, mw.c, radius, &pt, &n, &count, &depth)) { col_areas[i] &= 0x7FFF; cp->on = cp->has; continue; }
+        cp->on = cp->has && !s58;
+        if (cp->has && col_surface >= 0 && (r->arg[3] & (1 << col_surface)) &&
+            (cp->surface != col_surface || cp->teresa != (player_mode == PM_TERESA))) {
+            cpoly_set(cp, r, col_surface); /* setSurfaceAndSync */
+#ifdef PUT_TEST
+            printf("collision area: row %d polygon on face %d" "\n", row, col_surface);
+#endif
+        }
         if (s58 || r->arg[0] != -1) continue;
         if (count == 0) push = vmul(n, radius + depth);
         else {

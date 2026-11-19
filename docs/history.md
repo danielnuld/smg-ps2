@@ -11,6 +11,26 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- CollisionArea's AreaPolygon (feat/717-area-polygon, #717, 2026-11-19, agent areas2): the 118 CollisionAreas with
+  arg3 not 0 put a DynamicCollisionObj of two triangles on one face of their box (#713 had the push alone). `cpoly_set`
+  (AreaPolygon::setSurface, DynamicCollisionObj::createCollision / updateTriangle / updateCollisionHeader): the
+  face's quad, 10 wider and farther out unless he is Teresa Mario, as a 236-byte KCL in world space: a prism a
+  triangle (its first vertex, the face normal and the three edge normals, its height), thickness 40, one octree
+  leaf listing prisms 2 and 1. It starts on face 0 (+X); update_collision_areas moves it to the face hitCheck finds
+  Mario nearest when arg3 has its bit (setSurfaceAndSync), and turns it off with the area and while a vanished
+  Teresa Mario passes (_58). The parts that are no instance's (Hit.inst -1) are now of two kinds by their sub:
+  IceStep's (under ICE_STEPS) and the areas' polygons (ICE_STEPS + the area): `xpart_kcl` gives their KCL to every
+  Tri made from a hit, tri_part their matrix (identity), kcl_query_ and kcl_line ask them (`cpoly_at`) after the
+  instances: Mario's binder, the walkers, the camera's lines and the shadows meet them as any face. ColPoly: 256
+  bytes an area from the scene arena. ponytail: the prisms' attribute (their index, of no table) is 0, a plain
+  face; the header's block shift is 30 (one leaf either way). Tests: plain with `-DPUT_TEST=... -DPUT_FILE` and
+  CollisionArea in out/put.txt (Mario put 30 before the +X face of the first shown area with a polygon there;
+  the first KCL built is asked as the engine asks: "polygon self check row N: sphere hits 2 (prism 2 flag 1 depth
+  30), segment prism 1 at 49 / 100"): EggStarGalaxy/2, a plate of the gravity room: one push of 20, then he rests
+  against it, "polygon hits 180" a second; HellProminenceGalaxy/1: 81 hits before he falls (three scene restarts
+  without trouble). XF=-DGROOM_TEST=1 (EggStarGalaxy/2) walks the corner bridge as before (`ok` from f 1220, the
+  same places); the route test (EggStarGalaxy/1, the overlay's CollisionArea rows) gets its star at f 4281.
+  Memory: _end +4736 B (memcheck against the tree before it). No repack of its own (the rows are #713's).
 - Coin::exeMove for the popped coins, CoinGroup's appear (feat/646-coin-move, #646, 2026-11-19): game.c update_pops
   rewritten after Coin.cpp: the nerve first, with the binder's faces of the last frame (a DamageFire ground past the
   cannot time 30: LavaFall, SE_OJ_FALL_IN_MAGMA_S, kill; a death area: kill; calcRebouond: roof and wall 0.6 / 0.5, the
