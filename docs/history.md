@@ -11,6 +11,13 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- The domes' room, part of #650 (feat/650-astro-dome, 2026-11-19, agent audit-a; **not run in PCSX2**): AstroDome.cpp
+  (game.c update_astro_dome, from dm_msg): the placed AstroDome (its row named after its dome's model) disappears at
+  SelectStart (collision off at once, hidden after the Disappear BRK's 59 frames) and appears again at SelectEnd (a
+  rebind: shown, collision on); the BRK's fade is not drawn. AstroDomeGalaxySelector's SW_A: on at init, off at the
+  select's start, on at its end (adome_selector_sw). AstroDomeBlueStar's BindTraction plays
+  SE_OJ_LV_MAGIC_PNT_G_PULL / POINT. Open in #650: AstroMapObj's Revival / Open nerves, the blue star's Appear nerve,
+  clips and ribbon, MiniatureGalaxy's effects and plates.
 - RainCloud (feat/692-raincloud, #692, 2026-11-18): 69 placed (OceanRingZone layers C / D, ReverseForestHomeZone),
   generic rail parts before. update_rainclouds after RainCloud.cpp: Wait / Appear / Disappear / End / SoftTouch /
   HardTouch (Mario falls through a cloud for 60 frames unless he is a bee; OnBee under a bee; Disappear at its rail's
