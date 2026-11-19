@@ -11,6 +11,19 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- CrystalCage / BreakableCage, part of #648 (fix/648-cages, 2026-11-19, agent audit-a; **not run in PCSX2**): CrystalCage:
+  arg0 is a bool (mIsBreakObjVisible: only unset leaves the stump; the port tested == 1), an explosion breaks an S / M
+  cage in Wait (receiveMsgEnemyAttack; explosion_breaks, its body 130 x scale). BreakableCage.cpp: BreakableCage /
+  Rotate / L break like BreakableTrash did (break_inst: SE_OJ_IRON_CAGE_BREAK, the BreakableCageBreak model's Break
+  clip once their packs carry it, stopScene 16 with a power star inside (arg7 7), else 6 within 1500, SW_B put off);
+  BreakableFixation (CAGE_FIX, 2 placed, had no code): an explosion breaks it (SE_OJ_BREAK_FIXATION_BREAK, its Break
+  effect, the dead switch); BreakableCageRotate turns arg0 x 0.01 degrees a frame about its Y (break_boxes); a
+  Breakable kind whose SW_B is on is no longer broken by it (they write SW_B; SimpleBreakableObj's rule stays for
+  the others). Left in #648: the item drawn inside a cage (DummyDisplayModel by arg7), SW_DEAD's delays, the 破壊
+  camera demo, the binder of arg2, and what breaks a BreakableCage (still Mario's spin: Petari wants the thrown shell
+  or an enemy attack, #649's shell does not reach map objects yet). **Release: slice_all.py for the galaxies with a
+  BreakableCage / Rotate / L (slice.py: BreakableCageBreak with them) or a BreakableFixation (jpa.py NAMED): covered
+  by the full repack.**
 - GCaptureTarget's own nerves (feat/647-gcapture-target, #647, 2026-11-19, agent audit-a): game.c update_gcap_targets
   after GCaptureTarget.cpp: Wait (the Wait clip's rate, mStarAnimSpeed, down 0.05 a frame to 0; no effect), Pointable
   with Mario within arg1 / 2500 (the TouchAble burst, TargetLight kept, the rate up to 0.5), HitPointer while GCapture
