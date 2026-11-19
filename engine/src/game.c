@@ -5413,7 +5413,7 @@ typedef struct {
 } ClassInfo;
 
 /* #143's placed classes ported since the audit (update_gaps) */
-enum { GAP_NONE, GAP_SHOCKWAVE, GAP_CAPSULE, GAP_DRIFT, GAP_SHELLCOIN, GAP_SHELLCHIP, GAP_ELEVATOR, GAP_UFOKINOKO, GAP_TRIROCK };
+enum { GAP_NONE, GAP_SHOCKWAVE, GAP_CAPSULE, GAP_DRIFT, GAP_SHELLCOIN, GAP_SHELLCHIP, GAP_ELEVATOR, GAP_UFOKINOKO, GAP_TRIROCK, GAP_HIPMOVE, GAP_HIPDEMO };
 static void gap_place(Inst *in);
 static int st_rail_go(const Inst *in), st_floater_rail(const Inst *in); /* statics.inc */
 static void st_chain_rebind(const Scene *s), st_wt_rebind(const Scene *s);
@@ -5423,7 +5423,8 @@ static int gap_class(const char *name)
     return !strcmp(name, "ShockWaveGenerator") ? GAP_SHOCKWAVE : !strcmp(name, "CapsuleCage") ? GAP_CAPSULE :
            !strcmp(name, "DriftWood") ? GAP_DRIFT : !strcmp(name, "ShellfishCoin") ? GAP_SHELLCOIN :
            !strcmp(name, "ShellfishYellowChip") ? GAP_SHELLCHIP : !strcmp(name, "BattleShipElevator") ? GAP_ELEVATOR : !strcmp(name, "UFOKinoko") ? GAP_UFOKINOKO :
-           !strcmp(name, "SandUpDownTriRock") ? GAP_TRIROCK : GAP_NONE;
+           !strcmp(name, "SandUpDownTriRock") ? GAP_TRIROCK : !strcmp(name, "LavaObstacleRockShell") ? GAP_HIPMOVE :
+           !strcmp(name, "LavaObstacleRockHomeA") || !strcmp(name, "ForestObstacleWoodA") ? GAP_HIPDEMO : GAP_NONE;
 }
 /* ponytail (unmarked until the 2026-11-02 audit): placed classes of the early galaxies with no behaviour here
  * (drawn static, or not at all), each a whole Petari class (GhostPlayer: its section, update_ghost);
@@ -37149,7 +37150,7 @@ unsigned game_test_moves(unsigned frame)
 
 /* ---- #143's placed classes (gap_class): their nerve, step and state in GapSt by row (row_turn / row_step are the rotors' and railers') ---- */
 /* their own state by row (kept across rebinds: game_rebind_ calls gap_place) */
-typedef struct { int row, i, n, st; float f; V3 v, p; } GapSt; /* n its nerve (0 not set up), st its step */
+typedef struct { int row, i, n, st; float f; V3 v, p, u; } GapSt; /* n its nerve (0 not set up), st its step */
 static GapSt gst[64];
 static int ngst;
 static GapSt *gap_st(int row)
@@ -37754,8 +37755,41 @@ static void update_coinboxes(void)
         }
     }
 }
+static void update_hipmove(Inst *in, int i, int st);
+static void hm_joint(const Inst *in, int j, float m[16]);
 static void update_gaps(void)
 {
+#ifdef HIPMOVE_TEST /* XF=-DHIPMOVE_TEST=k (plain): Mario held 500 over the k-th HipDropMoveObj row's Switch joint from frame
+                     * 400 (its zone streams in), a hip drop from there at 900; its state every 30 frames to 1500; then the next
+                     * row the same, every 1300 frames */
+    if (game_frame >= 400) {
+        int nth = 0, tf = (game_frame - 400) % 1300 + 400, want = HIPMOVE_TEST + (game_frame - 400) / 1300;
+        for (u32 j = 0; j < sc->nobjs; j++) {
+            int gc = gap_class(sc->types + 32 * sc->objs[j].type);
+            if ((gc != GAP_HIPMOVE && gc != GAP_HIPDEMO) || nth++ != want || tf > 1500) continue;
+            const Inst *in = row_inst((int)j);
+            V3 p = row_pos(&sc->objs[j]);
+            float m[16];
+            if (in) { hm_joint(in, in->anim && in->anim->skin ? in->anim->skin->njoints - 1 : 0, m); p = v3(m[12], m[13], m[14]); }
+            if (tf <= 900) {
+                test_nolost = 1;
+                mario->up = up_at(p, mario->up); mario->pos = vadd(p, vmul(mario->up, 500.0f));
+                mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
+            }
+            if (tf == 900) {
+                mario->hip = HIP_START; mario->hip_t = 0; mario->jumping = 1; mario->zero_gr = MC.mHipDropZeroGrTime;
+                if (mario_anim) mario_play("hipdropstart", 1.0f, 0);
+            }
+            if (tf % 30 == 0 && in) {
+                hm_joint(in, 1, m);
+                printf("hipmove test f %d: %s row %d nerve %d step %d anim %d frame %d Move at %d %d %d, Mario %d %d %d ground %d SW_A %d demo %d\n",
+                       game_frame, sc->types + 32 * sc->objs[j].type, (int)j, gap_st((int)j)->n, gap_st((int)j)->st, in->anim != NULL,
+                       in->anim ? (int)in->anim->frame : -1, (int)m[12], (int)m[13], (int)m[14], (int)mario->pos.x, (int)mario->pos.y,
+                       (int)mario->pos.z, mario_ground == (int)(in - insts), sc->objs[j].sw[SW_A] >= 0 ? sw_on(&sc->objs[j], SW_A) : -1, dx.on);
+            } else if (tf % 30 == 0) printf("hipmove test f %d: row %d has no instance\n", game_frame, (int)j);
+        }
+    }
+#endif
     update_coinboxes();
     for (int i = 0; i < ninsts; i++) /* a "#Static" collision part follows its owner (UFOBase's MoveLimit: setMtx) */
         if (insts[i].kparent >= 0 && insts[i].kmove < 0) memcpy(insts[i].m, insts[insts[i].kparent].m, 64);
@@ -37780,6 +37814,7 @@ static void update_gaps(void)
         else if (in->gap == GAP_UFOKINOKO) update_ufokinoko(in, st);
         else if (in->gap == GAP_SHELLCOIN || in->gap == GAP_SHELLCHIP) update_shellfish(in, st);
         else if (in->gap == GAP_TRIROCK) update_trirock(in, st);
+        else if (in->gap == GAP_HIPMOVE || in->gap == GAP_HIPDEMO) update_hipmove(in, i, st);
         else if (in->gap == GAP_CAPSULE && update_capsule(in, st)) return;
     }
 }
@@ -38383,6 +38418,84 @@ static void stage_moving(Inst *in) /* tryStageEffectMoving: the moving SE, rumbl
     if (k < 0) return;
     if (stage_se[k].mv) in->lv[0] = se_level(stage_se[k].mv, &in->m[12], in->lv[0]);
     if (stage_se[k].pad[1] >= 0) pad_rumble(stage_se[k].pad[1]);
+}
+/* HipDropMoveObj.cpp after Petari (LavaObstacleRockShell; HipDropDemoMoveObj: LavaObstacleRockHomeA,
+ * ForestObstacleWoodA): Wait until Mario's hip drop lands on its collision (on the Move joint) within its body sensor
+ * (225 at the Switch joint, each model's last), then Move: its Move clip, the StageEffect start SE, rumblePadStart, the
+ * moving shake, its registered demo; the moving SE (up to the stop steps where the table has them), the stop SE and
+ * the riddle chime at that step; at the clip's end its SW_A on, rumblePadStop, the shake stopped, the stop SE where
+ * the table has no steps: Done. HipDropDemoMoveObj: Mario in his Wait clip, held on the Move joint while the demo runs
+ * (moveStart / moving: setPlayerBaseMtx). GapSt v / p / u: his place, front and up in the Move joint's frame.
+ * ponytail: no Move BRK (LavaObstacleRockShell's cracks: BRK at run time) */
+enum { HM_WAIT = 1, HM_MOVE, HM_DONE };
+static int obj_start(const Inst *in, const char *clip);
+static void hm_joint(const Inst *in, int j, float m[16]) /* getJointMtx */
+{
+    if (in->anim && in->anim->skin && j < in->anim->skin->njoints) mat_mul(m, in->m, in->anim->world[j]);
+    else memcpy(m, in->m, 64);
+}
+static void hm_pad(const Inst *in, int i, int which) /* rumblePadStart (0) / rumblePadStop (2): isDistanceValidShake */
+{
+    int k = in->stage - 1, c = stage_cam_of(sc->types + 32 * sc->objs[in->row].type);
+    if (k < 0 || c < 0 || stage_se[k].pad[which] < 0) return;
+    float d = vlen(vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14])));
+    if (stage_cam[c].dist == -1.0f ? mario_ground == i : d > 0.0f && d < stage_cam[c].dist) pad_rumble(stage_se[k].pad[which]);
+}
+static void update_hipmove(Inst *in, int i, int st)
+{
+    GapSt *g = gap_st(in->row);
+    const Row *r = &sc->objs[in->row];
+    int k = in->stage - 1, cam = stage_cam_of(sc->types + 32 * r->type);
+    float mv[16];
+    if (!g->n) { gap_nrv(in, HM_WAIT); return; }
+    if (g->n == HM_WAIT) { /* receiveMsgPlayerAttack: isMsgPlayerHipDropFloor */
+        if (in->anim && in->anim->speed != 0.0f) { obj_start(in, "Move"); in->anim->speed = 0.0f; in->anim->frame = 0.0f; } /* no clip in Wait: still at Move's first frame */
+        if (!hip_hit || hip_inst != i) return;
+        hm_joint(in, in->anim && in->anim->skin ? in->anim->skin->njoints - 1 : 0, mv); /* Switch */
+        if (225.0f < vlen(vsub(mario->pos, v3(mv[12], mv[13], mv[14])))) return;
+        gap_nrv(in, HM_MOVE);
+        printf("hip drop move %d: Move\n", in->row);
+        return;
+    }
+    if (g->n != HM_MOVE) return;
+    hm_joint(in, 1, mv); /* Move */
+    V3 jx = vnorm(v3(mv[0], mv[1], mv[2])), jy = vnorm(v3(mv[4], mv[5], mv[6])), jz = vnorm(v3(mv[8], mv[9], mv[10]));
+    V3 jp = v3(mv[12], mv[13], mv[14]);
+    if (st == 0) {
+        obj_start(in, "Move");
+        if (k >= 0 && stage_se[k].st) se_start(stage_se[k].st, &in->m[12]); /* getStartSe */
+        hm_pad(in, i, 0);
+        if (cam >= 0 && stage_cam[cam].in > 0.0f) camera_shake_infinity(in, stage_cam[cam].in, stage_cam[cam].sp); /* shakeCameraMoving */
+        for (int d = 0, found = 0; d < ndemos && !found; d++) /* tryStartDemoRegistered */
+            for (int j = 0; j < demos[d].h->ngroup && !found; j++)
+                if (demos[d].group[j] == in->row) { found = 1; dx_push(d, 0); printf("hip drop move %d: demo %d\n", in->row, d); }
+        if (in->gap == GAP_HIPDEMO) { /* moveStart: mMtx = the Move joint's inverse x his base matrix */
+            V3 d = vsub(mario->pos, jp);
+            mario_play("wait", 1.0f, 1);
+            g->v = v3(vdot(d, jx), vdot(d, jy), vdot(d, jz));
+            g->p = v3(vdot(mario->face, jx), vdot(mario->face, jy), vdot(mario->face, jz));
+            g->u = v3(vdot(mario->up, jx), vdot(mario->up, jy), vdot(mario->up, jz));
+        }
+    }
+    int steps = k >= 0 ? stage_se[k].steps : -1; /* getStopSeSteps */
+    if (k >= 0 && stage_se[k].mv && (steps < 0 || st < steps)) in->lv[0] = se_level(stage_se[k].mv, &in->m[12], in->lv[0]);
+    if (steps >= 0 && st == steps) {
+        if (stage_se[k].ed) se_start(stage_se[k].ed, &in->m[12]);
+        if (stage_se[k].type == 2) se_start(SE_SY_READ_RIDDLE_S, NULL); /* isRiddleSeTypeStop */
+    }
+    if (in->gap == GAP_HIPDEMO && dx.on) { /* moving: isDemoActive */
+        mario->pos = vadd(jp, vadd(vadd(vmul(jx, g->v.x), vmul(jy, g->v.y)), vmul(jz, g->v.z)));
+        mario->up = vnorm(vadd(vadd(vmul(jx, g->u.x), vmul(jy, g->u.y)), vmul(jz, g->u.z)));
+        mario->face = vnorm(vadd(vadd(vmul(jx, g->p.x), vmul(jy, g->p.y)), vmul(jz, g->p.z)));
+    }
+    if (st > 0 && (!in->anim || (in->anim->done && !in->anim->loop))) { /* isEndMove: isBckStopped */
+        if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
+        hm_pad(in, i, 2);
+        if (cam >= 0 && stage_cam[cam].in > 0.0f) camera_shake_stop(in); /* stopShakingCameraMoving */
+        if (steps < 0 && k >= 0 && stage_se[k].ed) se_start(stage_se[k].ed, &in->m[12]);
+        gap_nrv(in, HM_DONE);
+        printf("hip drop move %d: Done at step %d\n", in->row, st);
+    }
 }
 static void update_railers(void)
 {
