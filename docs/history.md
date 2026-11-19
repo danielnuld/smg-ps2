@@ -196,6 +196,16 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   first and last step of a swing the negative way) plays the StageEffect start SE from MapObjActor::control, on a
   name with the TYPE flag of #734 (none in an older pack). State: RotAcc, a table of the scene's rows from the
   arena. Test: `XF=-DROTACC_TEST` (their switches on at frame 600, angle and speed logged).
+- StarPiece's ToTarget (feat/736-starpiece-totarget, #736, 2026-11-19): a piece the pointer is on within 15000 of
+  Mario was counted at once. Now goToPlayer: PICK_FLY (shown, not taken by touch) and a PieceFly slot (32, from the
+  arena): SE_OJ_STAR_PIECE_FLY (_W in water), _98 0.02 + 0.01 and _9C + 0.03 a frame, _8C turned towards his centre
+  by _98 of the angle, its velocity _8C x (_9C x 85 + 1) plus Mario's along it, StarPieceGetBlur; touchPlayer within
+  160 (the count, StarPieceGet, the rumble), ToPlayerEnd (to his centre over 10 frames). jpa.py: StarPieceGetBlur
+  named for StarPiece. Test: `XF=-DPIECEFLY_TEST` (the nearest piece sent every 240 frames). ponytail: no
+  StarPieceTouchLight / GetAble, no spin or shrink of the model, isResetChasingStarPiece; SpinDrained (Mario's
+  tryTornadoPull / tryCoinPull: ACTMES_ITEM_PULL while swimming or in his mode 7) is not ported. **Release:
+  resident.bin + resident_luigi.bin** (jpa.py NAMED StarPiece: StarPieceGetBlur) **+ sound.py --pack** every galaxy
+  (SE_OJ_STAR_PIECE_FLY / _W are new in game.c).
 - RainCloud (feat/692-raincloud, #692, 2026-11-18): 69 placed (OceanRingZone layers C / D, ReverseForestHomeZone),
   generic rail parts before. update_rainclouds after RainCloud.cpp: Wait / Appear / Disappear / End / SoftTouch /
   HardTouch (Mario falls through a cloud for 60 frames unless he is a bee; OnBee under a bee; Disappear at its rail's
