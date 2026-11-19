@@ -11926,6 +11926,21 @@ static V3 orock_mouth(const Inst *in, int k) /* FixedPosition "Mouth" (joint 10)
     return vadd(orocks[k].pos, vmul(orocks[k].up, 180.0f));
 }
 
+/* OtaRock's body (300 at 180 up): how 0 a star piece (receiveMsgPlayerAttack: isMsgStarPieceReflect, reflected), 1 a
+ * thrown shell (isMsgJetTurtleAttack: Down), 2 an enemy attack (receiveMsgEnemyAttack: any, Down). 1 taken */
+static int orock_hit(V3 p, float rad, int how)
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->orock || row_dead[in->row]) continue;
+        int k = orock_of(in->row);
+        if (k < 0 || orocks[k].nrv == OR_DOWN || orocks[k].nrv == OR_DEAD) continue; /* (Down: invalidateHitSensors) */
+        if (vlen(vsub(p, vadd(orocks[k].pos, vmul(orocks[k].up, 180.0f)))) > 300.0f + rad) continue;
+        if (how) orock_set(k, OR_DOWN);
+        return 1;
+    }
+    return 0;
+}
 static void update_orocks(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -11946,7 +11961,7 @@ static void update_orocks(void)
             if (vlen(fr) > 0.5f) o->f = fr;
             basis_matrix(in->m, o->pos, o->up, o->f, 0);
             for (int j = 0; j < 12; j++) if (j % 4 != 3) in->m[j] *= r->scale[0];
-            if (vlen(vsub(c, body)) < 300.0f + 100.0f) mario_attack(ATK_STRONG, body); /* attackSensor */
+            if (vlen(vsub(c, body)) < 300.0f + 100.0f && !mario_attack(ATK_STRONG, body)) mario_push_out(body, 300.0f); /* attackSensor: sendMsgEnemyAttackStrong, else sendMsgPush */
         }
         switch (o->nrv) {
         case OR_WAIT:
@@ -15347,6 +15362,8 @@ static int mg_hitall(Kuribo *k);
 static void bh_chain(Kuribo *k);
 static int jf_knock(Kuribo *k, V3 from);
 static int pk_blow(Kuribo *k, V3 from);
+static int bg_hitall(Kuribo *k, V3 from);
+static int sh_blow(Kuribo *k, V3 from);
 static int kan_fire(Kuribo *k, V3 from);
 static void walker_inhale(Kuribo *e);
 static void fireball_hit_walkers(int b)
@@ -15381,8 +15398,11 @@ static void fireball_hit_walkers(int b)
         if (e->kind == WALK_GESSO) { if (!ge_hitall(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* a HitAll: knockOut */
         if (e->kind == WALK_JELLYFISH) { if (!jf_knock(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* a HitAll: knockOut */
         if (e->kind == WALK_PUKUPUKU) { if (!pk_blow(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* a HitAll: BlownOff */
+        if (e->kind == WALK_BEGOSPIKE || e->kind == WALK_BEGOSPRING || e->kind == WALK_BEGOBABY) { if (!bg_hitall(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* a HitAll on its body: Blow */
+        if (e->kind == WALK_SAMBOHEAD) { if (!sh_blow(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* a HitAll: HitBlow */
         if (e->kind == WALK_KANINA) { if (!kan_fire(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* isMsgFireBallAttack: receiveFireBall */
-        if (e->kind == WALK_MOGU || e->kind == WALK_TERESAW || e->kind == WALK_METBO || e->kind == WALK_SNAKEHEAD || e->kind == WALK_BOMBHEI || e->kind == WALK_STRSPIDER) continue; /* (Mogu, TeresaWater, Metbo, Snakehead, BombHei, StringSpider: neither isMsgFireBallAttack nor isMsgPlayerHitAll) */
+        if (e->kind == WALK_MOGU || e->kind == WALK_TERESAW || e->kind == WALK_METBO || e->kind == WALK_SNAKEHEAD || e->kind == WALK_BOMBHEI || e->kind == WALK_STRSPIDER ||
+            e->kind == WALK_JELEC || e->kind == WALK_BEGOLAUNCH || e->kind == WALK_BOMBTERESA) continue; /* (JellyfishElectric, BombTeresa: no fire ball nor HitAll; BegomanLauncher: no sensor) */ /* (Mogu, TeresaWater, Metbo, Snakehead, BombHei, StringSpider: neither isMsgFireBallAttack nor isMsgPlayerHitAll) */
         if (e->kind == WALK_KURIBO || e->kind == WALK_KMINI || e->kind == WALK_TAKOHEI) { /* isMsgFireBallAttack, a HitAll: requestBlowDown (KuriboMini: a coin), TakoHei's requestPunch */
             if (walker_blow(e, fireballs[b].pos) <= 0) continue;
             if (e->kind == WALK_KMINI) e->item = 1;
@@ -15703,6 +15723,7 @@ static void update_jets(void)
             if (!gone && st_jet_hit(p)) gone = 1; /* WaterfallCaveCover: isMsgJetTurtleAttack (statics.inc) */
             if (!gone && kiraira_shot(p, 60.0f, 1)) gone = 1; /* Kiraira: isMsgJetTurtleAttack (force-detonated) */
             if (!gone && rb_shot(p, 60.0f, 1)) gone = 1; /* RingBeamer: isMsgJetTurtleAttack taken (nothing happens to it) */
+            if (!gone && orock_hit(p, 60.0f, 1)) gone = 1; /* OtaRock: isMsgJetTurtleAttack: Down */
             hhp_blow(p, 60.0f); /* HammerHeadPackun: isMsgJetTurtleAttack */
             tbox_hit(p, 60.0f); /* TreasureBoxCracked: isMsgJetTurtleAttack */
             for (int k = 0; k < nkuribo; k++) { /* ACTMES_JET_TURTLE_ATTACK */
@@ -15719,7 +15740,7 @@ static void update_jets(void)
                 else if (e->kind == WALK_GESSO) { if (e->nrv == GE_PUNCHDOWN) took = 0; else ge_knock(e, p); } /* isMsgPlayerHitAll: knockOut */
                 else if (e->kind == WALK_POIHANA) { if (!poihana_shock(e)) took = 0; else scene_stop = 3; } /* tryShock, stopSceneForDefaultHit(3) */
                 else if (e->kind == WALK_SNAKEHEAD) { if (e->phase || e->nrv == SN_TURTLEDOWN) took = 0; else w_nrv(e, SN_TURTLEDOWN); } /* TurtleDown */
-                else if (e->kind == WALK_STINKBUG || e->kind == WALK_TERESA || e->kind == WALK_MERAMERA || e->kind == WALK_MKOOPA || e->kind == WALK_MERAKING || e->kind == WALK_TERESAW || e->kind == WALK_METBO || e->kind == WALK_BOMBHEI || e->kind == WALK_STRSPIDER) took = 0; /* (TeresaWater, Metbo, BombHei, StringSpider neither) */ /* StinkBugSmall, Teresa, Meramera, MechanicKoopaMini, IceMerameraKing: no isMsgJetTurtleAttack */
+                else if (e->kind == WALK_STINKBUG || e->kind == WALK_TERESA || e->kind == WALK_MERAMERA || e->kind == WALK_MKOOPA || e->kind == WALK_MERAKING || e->kind == WALK_TERESAW || e->kind == WALK_METBO || e->kind == WALK_BOMBHEI || e->kind == WALK_STRSPIDER || e->kind == WALK_BOMBTERESA) took = 0; /* (TeresaWater, Metbo, BombHei, StringSpider neither) */ /* StinkBugSmall, Teresa, Meramera, MechanicKoopaMini, IceMerameraKing: no isMsgJetTurtleAttack */
                 else if (e->kind == WALK_KARON) took = kr_jet(e); /* isMsgJetTurtleAttack: Broken */
                 else if (e->kind == WALK_KARIKARI) took = kari_hitall(e, p); /* a HitAll: tryBlowOut */
                 else if (e->kind == WALK_TAKOBO) took = tk_punch(e, p, 1); /* a HitAll: HitPunch */
@@ -15729,6 +15750,8 @@ static void update_jets(void)
                 else if (e->kind == WALK_MOGU) took = mg_hitall(e); /* isMsgJetTurtleAttack: tryPunchHitted */
                 else if (e->kind == WALK_JELLYFISH) took = jf_knock(e, p); /* a HitAll: knockOut */
                 else if (e->kind == WALK_PUKUPUKU) took = pk_blow(e, p); /* a HitAll: BlownOff */
+                else if (e->kind == WALK_BEGOSPIKE || e->kind == WALK_BEGOSPRING || e->kind == WALK_BEGOBABY) took = bg_hitall(e, p); /* a HitAll on its body: Blow */
+                else if (e->kind == WALK_SAMBOHEAD) took = sh_blow(e, p); /* a HitAll: HitBlow */
                 else if (e->kind == WALK_KANINA) took = kan_fire(e, p); /* isMsgJetTurtleAttack: receiveFireBall */
                 else if (e->kind == WALK_SPIDER) took = js_blow(e, p); /* a HitAll: HitBlow */
                 else if (e->kind == WALK_KURIBO || e->kind == WALK_KMINI || e->kind == WALK_TAKOHEI) { /* isMsgJetTurtleAttack, a HitAll: requestBlowDown (KuriboMini: a coin), TakoHei's requestPunch */
@@ -28924,6 +28947,12 @@ static void petari_escape_dir(Kuribo *k) /* calcEscapeDirection, meander, avoidP
         }
     }
 }
+static void pt_fx(Kuribo *k, const char *name, const void *key) /* emitEffect on a Petari (key: kept while called) */
+{
+    float m[16];
+    basis_matrix(m, k->pos, vmul(k->grav, -1.0f), k->front, 0);
+    fx_named("Petari", name, m, NULL, key);
+}
 static void petari_update(Kuribo *k)
 {
     const Row *r = &sc->objs[k->row];
@@ -28955,17 +28984,19 @@ static void petari_update(Kuribo *k)
         if (st == 0) k->vel = v3(0, 0, 0);
         petari_move(k, k->ttarget, 0.0f, 1.3f, 0.92f, 3.0f);
         if (st == 60) {
-            if (k->phase) { k->phase = 0; w_act(k, "Wait"); }
+            if (k->phase) { k->phase = 0; pt_fx(k, "LeaveAppearanceSmoke", NULL); w_act(k, "Wait"); } /* showModel */
             else { w_act(k, "Wait"); k->act_interp = 30; }
             w_se(k, SE_EM_PETARI_WAIT_APPEAR);
         }
         if (dm > 700.0f || dm < 500.0f) { /* tryShiftApproach / tryShiftEscape; shown: hides */
-            if (!k->phase) w_se(k, SE_EM_PETARI_WAIT_HIDE);
+            if (!k->phase) { pt_fx(k, "LeaveAppearanceSmoke", NULL); w_se(k, SE_EM_PETARI_WAIT_HIDE); }
             w_nrv(k, dm > 700.0f ? PT_APPROACH : PT_ESCAPE);
         }
         break;
     case PT_APPROACH: {
+        if (st == 0 && !k->phase) pt_fx(k, "StartSmoke", NULL); /* hideModel, StartSmoke */
         if (st == 0) k->phase = 1;
+        pt_fx(k, "WalkSmoke", &k->lvt[0]); /* emitted at its first step, deleted at Approach's end: what shows the hidden one */
         V3 d = vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), k->tcenter);
         k->ttarget = vlen(d) > 1e-3f ? vnorm(d) : k->front; /* calcApproachDirection */
         petari_move(k, k->ttarget, 0.5f, 1.3f, 0.92f, 3.0f);
@@ -28974,7 +29005,9 @@ static void petari_update(Kuribo *k)
         break;
     }
     case PT_ESCAPE: case PT_LAND: {
+        if (st == 0 && k->nrv == PT_ESCAPE && !k->phase) pt_fx(k, "StartSmoke", NULL); /* hideModel, StartSmoke */
         if (st == 0) { if (k->nrv == PT_ESCAPE) k->phase = 1; k->sstep = 0; }
+        if (k->nrv == PT_ESCAPE) pt_fx(k, "RunSmoke", &k->lvt[1]); /* emitted at its first step, deleted at Escape's end */
         petari_escape_dir(k);
         float dc = vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), k->tcenter)) * 0.01f, b = 4.0f / (dc * dc);
         b = b > 1 ? 1 : b;
@@ -29120,6 +29153,7 @@ static int explosion_breaks_inst(int i); /* sendMsgEnemyAttackExplosionToBindedS
 static void walker_explosion(V3 from)
 {
     explosion_breaks(from, 250.0f);
+    orock_hit(from, 250.0f, 2); /* OtaRock: receiveMsgEnemyAttack (any): Down */
     for (int i = 0; i < nkuribo; i++) {
         Kuribo *e = &kuribo[i];
         if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_KCHIEF || vlen(vsub(e->pos, from)) > 250.0f) continue; /* (KuriboChief: no isMsgExplosionAttack) */
@@ -31224,6 +31258,13 @@ static float sh_turn(Kuribo *k) /* calcVecToPlayerH, turnVecToVecRadian(_98, 0.0
     js_turn(k, 0.05f);
     return left > 0 ? left : 0.0f;
 }
+static int sh_blow(Kuribo *k, V3 from) /* isMsgPlayerHitAll (a shell, a fire ball): mSpinCtrl->start, HitBlow */
+{
+    if (sh_out(k)) return 0;
+    spin_hit_start(k, from, 40.0f, 20.0f); k->item = 1;
+    w_nrv(k, SH_HITBLOW);
+    return 1;
+}
 static void sh_update(Kuribo *k)
 {
     const Row *r = &sc->objs[k->row];
@@ -32467,6 +32508,16 @@ static void baby_kill_item(Kuribo *k) /* killWithGenItem: 3 star pieces (a star 
 }
 static int bg_blown(const Kuribo *k) { return k->nrv == BG_BLOW; }
 static int bg_down(const Kuribo *k) { return k->nrv == BG_BLOW || k->nrv == BG_ELECTRICDEATH || k->nrv == BG_BROKENPIECE || k->nrv == BG_INWATER || k->nrv == BG_LAUNCH; }
+/* receiveMsgPlayerAttack's isMsgPlayerHitAll on its body from a shell, a fire ball, rainbow Mario: the spin's Blow
+ * (Spike / Spring sBlowVel 40, sBlowVerticalVel 10; Baby calcBlowReaction 35 / 15, a coin) */
+static int bg_hitall(Kuribo *k, V3 from)
+{
+    if (bg_down(k) || k->nrv == BG_HIDE) return 0;
+    if (k->nrv == BG_NOCALCWAIT) k->bind_off = 0; /* finishNoCalcWait */
+    if (k->kind == WALK_BEGOBABY) { k->item = 1; bg_blow(k, from, 35.0f, 15.0f); }
+    else bg_blow(k, from, 40.0f, 10.0f);
+    return 1;
+}
 /* BegomanSpringHead::getHopEndBckFrameMax. ponytail: the head is drawn still (no HopStart / HopWait / HopEnd / HopJump
  * clips nor its Green / OnAndOff BRKs on it: one pose per walker; its nerves are kept, bg_head_*), the body's HopEnd
  * length stands for the head's */
@@ -32605,7 +32656,13 @@ static void begospike_update(Kuribo *k)
     case BG_PURSUE:
         bg_rotate(k, 0.5f, 0.5f);
         w_se_lv(k, SE_EM_LV_BEGOMAN_PURSUE);
-        if (st == 0) w_se(k, baby ? SE_EM_BABYBEGO_PURSUE_START : SE_EM_BEGOMAN_PURSUE_START); /* AttackBlur, HandBlur1-3 */
+        if (st == 0) w_se(k, baby ? SE_EM_BABYBEGO_PURSUE_START : SE_EM_BEGOMAN_PURSUE_START);
+        if (!baby) { /* exePursue: AttackBlur, kept until Pursue ends (tearDownPursue). ponytail: the Spike's HandBlur1-3 (on its hand joints) */
+            float fm[16];
+            const char *cls = spring ? "BegomanSpring" : "BegomanSpike";
+            basis_matrix(fm, k->pos, k->qy, k->qz, 0);
+            fx_named(cls, "AttackBlur", fm, NULL, &k->lvt[0]);
+        }
         if (st == 10) w_act(k, "Attack"); /* hPursueAnimFrame */
         if (st >= 10) k->lv2[0] = se_level(baby ? SE_EM_LV_BABYBEGO_DASH : SE_EM_LV_BEGOMAN_DASH, &k->pos.x, k->lv2[0]); /* getSoundBaby / Normal */
         if (st == 18) k->vel = vmul(k->front, 15.0f); /* hPursueDashFrame, hPursueDashVelocity */
@@ -32832,6 +32889,12 @@ static void begospike_update(Kuribo *k)
     }
     float dep;
     if (k->nrv != BG_INWATER && k->nrv != BG_BROKENPIECE && in_water(k->pos, k->qy, &dep)) { w_nrv(k, BG_INWATER); bg_fx(k, "WaterColumn", k->pos); }
+    if (k->on_ground && !k->bind_off && (k->gattr & 0x3F) == 10) { /* control: isBindedGroundDamageFire: killed (Baby: killWithGenItem), the Fall effect */
+        V3 at = k->pos;
+        if (baby) baby_kill_item(k); else bg_kill(k);
+        bg_fx(k, "Fall", at);
+        return;
+    }
     if (in_death(k->pos)) { if (baby) baby_kill(k); else bg_kill(k); return; }
     if (k->nrv == BG_BLOW && !k->on_ground) { /* preventSwingby(0.7; Baby 1.0) */
         float mag = vlen(vsub(k->grav, k->bvel)) * 0.5f;
@@ -35997,7 +36060,7 @@ static void update_invincible(void)
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     for (int k = 0; k < nkuribo; k++) {
         Kuribo *e = &kuribo[k];
-        if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY || e->kind == WALK_SPIDER || e->kind == WALK_STINKBUG || e->kind == WALK_UNIZO || e->kind == WALK_TERESAW || e->kind == WALK_SNAKEHEAD || e->kind == WALK_BOMBHEI || e->kind == WALK_STRSPIDER || e->kind == WALK_BEGOSPIKE || /* (Unizo: no isMsgInvincibleAttack) */ e->kind == WALK_BEGOSPRING || e->kind == WALK_KCHIEF || e->kind == WALK_BBEGO || e->kind == WALK_MERAKING || e->kind == WALK_TERESA ||
+        if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY || e->kind == WALK_SPIDER || e->kind == WALK_STINKBUG || e->kind == WALK_UNIZO || e->kind == WALK_TERESAW || e->kind == WALK_SNAKEHEAD || e->kind == WALK_BOMBHEI || e->kind == WALK_STRSPIDER || /* (Unizo: no isMsgInvincibleAttack) */ e->kind == WALK_KCHIEF || e->kind == WALK_BBEGO || e->kind == WALK_MERAKING || e->kind == WALK_TERESA ||
             vlen(vsub(c, vadd(e->pos, vmul(e->up, 60.0f)))) > 60.0f + HIT_BODY_R) continue;
         V3 es = vadd(e->pos, vmul(e->up, 60.0f));
         if (e->kind == WALK_PETARI) { if (petari_solid(e)) { m_invincible_hit(es); petari_blow(e, mario->pos, PT_KICKOUT); } continue; }
@@ -36013,6 +36076,8 @@ static void update_invincible(void)
         if (e->kind == WALK_GESSO) { if (ge_hitall(e, mario->pos)) m_invincible_hit(es); continue; } /* a HitAll: knockOut */
         if (e->kind == WALK_JELLYFISH) { if (jf_knock(e, mario->pos)) m_invincible_hit(es); continue; } /* a HitAll: knockOut */
         if (e->kind == WALK_PUKUPUKU) { if (pk_blow(e, mario->pos)) m_invincible_hit(es); continue; } /* a HitAll: BlownOff */
+        if (e->kind == WALK_BEGOSPIKE || e->kind == WALK_BEGOSPRING || e->kind == WALK_BEGOBABY) { if (bg_hitall(e, mario->pos)) m_invincible_hit(es); continue; } /* a HitAll on its body: Blow */
+        if (e->kind == WALK_SAMBOHEAD) continue; /* (its own update takes the rainbow touch: HitBlow) */
         if (e->kind == WALK_MOGU) { if (mg_hitall(e)) m_invincible_hit(es); continue; } /* isMsgInvincibleAttack: tryPunchHitted */
         int took = walker_blow(e, mario->pos);
         if (took > 0 && e->kind == WALK_KMINI) e->item = 1; /* KuriboMini: isMsgInvincibleAttack, setTypeCoin(1) */
@@ -47076,6 +47141,7 @@ static void update_shots(void)
         if (!hit && st_shot(s->pos)) hit = 2;          /* BallBeamer: isMsgStarPieceReflect (statics.inc) */
         if (!hit && tmk_shot(s->pos)) hit = 2; /* Tamakoro: isMsgStarPieceReflect */
         if (!hit && fbub_shot(s->pos)) hit = 1; /* FireBubble: isMsgStarPieceAttack */
+        if (!hit && orock_hit(s->pos, 30.0f, 0)) hit = 2; /* OtaRock: isMsgStarPieceReflect */
         if (!hit && sbm_shot(s->pos)) hit = 2; /* SearchBeamer: isMsgStarPieceReflect */
         if (!hit && rb_shot(s->pos, 30.0f, 0)) hit = 2; /* RingBeamer / JumpBeamer / JumpGuarder: isMsgStarPieceReflect */
         if (!hit && sbp_shot(s->pos)) hit = 2; /* StinkBugParent: isMsgStarPieceReflect on its body */
