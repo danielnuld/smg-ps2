@@ -48468,6 +48468,9 @@ static void update_sound_emitters(void)
             snd_em[k].h = se_level(sphere_se[a0], &q.x, snd_em[k].h);
         } else if (a0 == 0 && row_shown(snd_em[k].row) && area_inside(r, mario->pos) && !(mario->jumping && m_rising(mario)))
             snd_em[k].h = se_level(SE_PM_LV_LONG_FALL, &mario->pos.x, snd_em[k].h); /* PlayerSeArea::movement: startLevelSoundPlayer */
+#ifdef PUT_TEST
+        { static u32 was[48]; if (!was[k] && snd_em[k].h) printf("sound emitter: row %d kind %d arg0 %d, handle %u" "\n", snd_em[k].row, snd_em[k].kind, a0, (unsigned)snd_em[k].h); was[k] = snd_em[k].h; }
+#endif
     }
 }
 
@@ -48495,7 +48498,7 @@ static void update_quake(void)
         break;
     }
 #ifdef PUT_TEST
-    if (next >= 0) printf("quake: nerve %d -> %d at step %d" "\n", nrv, next, step);
+    if (next >= 0) printf("quake: nerve %d -> %d at step %d, SE handle %u" "\n", nrv, next, step, (unsigned)lv);
 #endif
     if (next >= 0) { nrv = next; step = 0; } else step++;
 }
