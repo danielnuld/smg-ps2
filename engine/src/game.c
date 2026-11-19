@@ -50274,6 +50274,55 @@ static void put_test(void)
     }
 }
 #endif
+#ifdef EA5_TEST
+/* plain XF="-DEA5_TEST -DSE_LOG", host:put.txt (one ELF, a line a run): "fire <WALK_ kind>": Mario 200 off the first
+ * live walker of that kind, a fire ball dropped on it every 150 frames; "piece <Class> <up>": Mario 500 off that
+ * class's first instance (StinkBugParent / OtaRock: its body), a star piece put <up> over it every 150 frames;
+ * "at <Class> <up>": Mario put <up> over its first row and left there (the placed FireBubble) */
+static void ea5_test(void)
+{
+    static char what[8], cls[40];
+    static int t, arg, read;
+    if (!game_test_free()) return;
+    if (!read) {
+        FILE *f = fopen("host:put.txt", "rb");
+        read = 1;
+        if (f) { if (fscanf(f, "%7s %39s %d", what, cls, &arg) < 2) what[0] = 0; fclose(f); }
+        printf("ea5 test: %s %s %d%c", what, cls, arg, 10);
+    }
+    if (++t < 120 || !what[0]) return;
+    test_nolost = 1; game_test_unclip();
+    if (!strcmp(what, "fire")) {
+        int kind = atoi(cls);
+        if (t == 120) set_player_mode(PM_FIRE, 1);
+        if (t % 150 == 120) game_test_enemy(kind, 0, 3);
+        for (int i = 0; i < nkuribo; i++) {
+            Kuribo *e = &kuribo[i];
+            if (e->kind != kind || e->state == KURIBO_DEAD) continue;
+            if (t % 150 == 0) { fireballs[0].pos = vadd(e->pos, vmul(e->up, 40.0f)); fireballs[0].vel = v3(0, 0, 0); fireballs[0].t = 1; fireballs[0].wall = 0; }
+            if (t % 15 == 0) printf("ea5 test f %d: kind %d row %d nrv %d step %d, %d alive, ball %d%c", t, kind, e->row, e->nrv, e->step, game_kind_alive(kind), fireballs[0].t, 10);
+            return;
+        }
+        if (t % 60 == 0) printf("ea5 test f %d: no live walker of kind %d%c", t, kind, 10);
+        return;
+    }
+    int ty = scene_type(sc, cls), row = -1;
+    for (u32 i = 0; ty >= 0 && i < sc->nobjs && row < 0; i++) if ((int)sc->objs[i].type == ty && row_shown((int)i)) row = (int)i;
+    if (row < 0) { if (t % 60 == 0) printf("ea5 test f %d: no shown %s%c", t, cls, 10); return; }
+    V3 p = row_pos(&sc->objs[row]), up = up_at(p, mario->up);
+    if (!strcmp(what, "at")) {
+        if (t == 120) { mario->up = up; mario->pos = vadd(p, vmul(up, (float)arg)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+        if (t % 30 == 0) printf("ea5 test f %d: %s row %d, mario %.0f off, life %d%c", t, cls, row, vlen(vsub(mario->pos, p)), life, 10);
+        return;
+    }
+    for (int i = 0; i < ninsts; i++) if (insts[i].row == row) { p = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]); up = vnorm(v3(insts[i].m[4], insts[i].m[5], insts[i].m[6])); break; }
+    if (!strcmp(cls, "StinkBugParent") && sbp.row >= 0) { p = sbp.pos; up = sbp.up; }
+    if (!strcmp(cls, "OtaRock") && orock_of(row) >= 0) { p = orocks[orock_of(row)].pos; up = orocks[orock_of(row)].up; }
+    if (t % 150 == 120) { V3 side = vnorm(vtangent(v3(0.3f, 0.2f, 0.9f), up)); mario->up = up; mario->pos = vadd(vadd(p, vmul(side, 500.0f)), vmul(up, 100.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+    if (t % 150 == 0) { shots[0].pos = vadd(p, vmul(up, (float)arg)); shots[0].vel = v3(0, 0, 0); shots[0].t = 1; shots[0].col = 0; }
+    if (t % 15 == 0) printf("ea5 test f %d: %s row %d, piece %d, sbp nrv %d, ota rock nrv %d%c", t, cls, row, shots[0].t, sbp.nrv, orock_of(row) >= 0 ? orocks[orock_of(row)].nrv : -1, 10);
+}
+#endif
 int game_test_overlook(int put) /* tests: put Mario at the first AstroOverlookArea's place (-1 none); its HUD off flag */
 {
     int t = scene_type(sc, "AstroOverlookAreaCylinder");
@@ -60167,6 +60216,9 @@ void game_update(void)
     LQ(2, update_halos());
 #ifdef PUT_TEST
     put_test();
+#endif
+#ifdef EA5_TEST
+    ea5_test();
 #endif
     update_airs(); /* registerDemoSimpleCastAll: they move in demos too */
     ca_update();
