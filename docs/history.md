@@ -11,6 +11,20 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- GCaptureTarget's own nerves (feat/647-gcapture-target, #647, 2026-11-19, agent audit-a): game.c update_gcap_targets
+  after GCaptureTarget.cpp: Wait (the Wait clip's rate, mStarAnimSpeed, down 0.05 a frame to 0; no effect), Pointable
+  with Mario within arg1 / 2500 (the TouchAble burst, TargetLight kept, the rate up to 0.5), HitPointer while GCapture
+  holds its request (TargetLight + Touch, SE_OJ_LV_MAGIC_PNT_G_POINT, the rate up to 1), Active (React, TargetLight +
+  Active), releasedTarget back to the Wait clip. GCapture's request (gcap_req: mTarget, asked with A not held, dropped
+  30 frames after the last pointing) is what A's trigger captures. SW_B kills a target. appear() (gcap_appear: its
+  SW_APPEAR at its first shown frame, or its demo's appear action): SE_SY_GCAPTURE_APPEAR, hidden, the 出現 demo and its
+  actor camera when it has one, step 30 shown with the Appear clip and SE_OJ_GCAPTURE_APPEAR, past 150 Wait. GCapture:
+  no release in Hold while its binder touches an InvisibleWallGCapture (ACTMES_IS_NO_BREAK_G_CAPTURE: gcap_nobreak);
+  off an AnmModelBindMove (TeresaRacePartsB) 25 along the collision's normal (tryAddVelocityReflectJumpCollision), and
+  that object starts its Move (isOnStartAnmTrigger) and sets its SW_B. Left, marked ponytail: the Switch BRK's far /
+  near colours (one baked model), the target's rail, the group's movement request. Test: plain with
+  `XF="-DPUT_TEST=GCaptureTarget -DSE_LOG"` (EggStarGalaxy/1: frame 300 the targets' appear switches put on, "gcap
+  test: ...", "gcap target row n: nerve k"). No repack.
 - Mario's ponytail marks, batch 1 (feat/742-mario-marks-1, #742, 2026-11-19): damageFloorCheck / damageWallCheck as
   MarioDamage.cpp:243 / 301 (m_damage_floor / m_damage_wall): the ground's fire and needle codes only when
   checkCurrentFloorCodeSevere holds, DamageNormal off the ground's normal (it was his up), PullBack (16) doRecovery,
