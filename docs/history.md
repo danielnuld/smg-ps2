@@ -11,6 +11,14 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- UI audit, second pass (fix/ui-audit-pass2, #767, 2026-11-19): every SE / BGM, animation and message name the
+  remaining Screen classes spell, checked against the port (docs/ui-audit.md: "ok by names"; ScenarioSelectStar, the
+  save sequence and PowerStarList's nerves read line by line). Missing and added: InformationObserver's Type_LifeUp
+  and Type_OneUp (game.c io_*: the information window after the first life-up mushroom's demo and at the first 1-up
+  mushroom, their flags; Luigi's life-up text), FileSelectItem's SE_SY_LV_FILE_SEL_MORPHBLUR (the first 40 frames
+  of its change nerves); the placed 1-up mushroom now goes through request_one_up (the 1UP board: #685 had only the
+  run-time ones). The rest the check found is Wii-only (the manual, the Mii windows, NAND errors, the capture) or
+  layout effects. Test: `item` (X pressed every 150 frames: log `information: InformationObserverOneUp`).
 - Mario's ponytail marks, batch 3 (feat/750-mario-marks-3, #750, 2026-11-19): doLanding (MarioJump.cpp:2485 / 2605 /
   2626): no quick landing out of 水上ダメージ中, 中ダメージ着地 for it in the default case, ショート着地 on ground over 8
   degrees (isBlendWaitGround); checkRetain's !isAnimationRun(nullptr) in a jump (MarioMove.cpp:942); isEnableStickWall

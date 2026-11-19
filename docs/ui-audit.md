@@ -58,7 +58,8 @@ Started 2026-11-18. Rows are in the order seen most. The fixes under #640, #641,
 | IconAButton | menu.c iab_* | ok (Open / Wait / Term, openWithoutMessage, the follow pane) |
 | BackButton | menu.c (ss.back, fsl.back, gm.back, pb.back) | ok (SE_SY_BUTTON_CURSOR_ON on the pointer, SE_SY_GALAXY_DECIDE_CANCEL once) |
 | GalaxySelectBackButton | menu.c dmu_back_* | ok by names |
-| ScenarioSelectLayout | menu.c ss_* | ok on its eleven nerves, their constants (cDecideFrame 40, the End at 60, the white fade at 180 / 30, 210, the comet warning 15 / 180, the cancel's 90) and sounds (SE_SY_DECIDE_1, SE_DM_LV_SENARIO_SEL_FLY, SE_SY_COMET_WARNING_DISP / WARNING at step % 80 == 25, BGM_SENARIO_SEL_2). Not re-read: ScenarioSelectStar (sst_*), the pane placement, the selected star's effects |
+| ScenarioSelectLayout | menu.c ss_* | ok on its eleven nerves, their constants (cDecideFrame 40, the End at 60, the white fade at 180 / 30, 210, the comet warning 15 / 180, the cancel's 90) and sounds (SE_SY_DECIDE_1, SE_DM_LV_SENARIO_SEL_FLY, SE_SY_COMET_WARNING_DISP / WARNING at step % 80 == 25, BGM_SENARIO_SEL_2). Not re-read: the pane placement, the selected star's effects |
+| ScenarioSelectStar | menu.c sst_* | ok (its seven nerves; the appear delay 60 + 15 a star, the bob 15 over 180 frames, the scales 0.9 / 1.5 with the reaction curve over 20, EndPointing 10, Selected 40, SelectedMove 60 then the spin up to 20 by 180, NotSelected's 10 a star; SE_OJ_SCEN_SEL_STAR_APPEAR, SE_SY_CURSOR_1, SE_DM_SENARIO_SEL_ACCEL). Left out: the Light / ClearStarLight / Select effects, the star's colour (its BTP frame: a green or red star shows yellow) |
 | GalaxySelectInfo, GalaxyConfirmLayout, GalaxyNamePlate, GalaxyInfoLayoutSetter | menu.c dmu_* | ok by names. GalaxyNamePlate's lower variant (GalaxyNamePlateU, PicBeakU: the map's dome icons) is not used: the port has no dome name plates |
 | GalaxyMapController | menu.c gm_update | ok on its nerves' constants (sDisplayKeepFrame 30, sMapFadeinoutFrame 12, the Tico comet's 60 / 60 white fade) and sounds (SE_SY_GALAMAP_PAGE_CHANGE with CH_PITCH_UP / DOWN, the three SE_SY_LV_GALAMAP_BLINK_*, SE_DM_TICOCOMET_MORPH_WIPE_OUT). The domes have no map (map.bin is the Observatory's): issue #663 |
 | GalaxyMap, its icons, GalaxyMapTitle, GalaxyMapSelectButton | menu.c gm_* | ok by names |
@@ -86,7 +87,7 @@ Started 2026-11-18. Rows are in the order seen most. The fixes under #640, #641,
 | GameStageClearSequence | game.c (the star get demo) | ok by names |
 | GameSequenceProgress | sequence.c seq_galaxy_move, main.c scene_switch | fixed #640: the garden to the Gateway's SE_SY_TICO_WAKE_PLAYER and its 120 frames before the scene (mMinFrame 300, the SE at 180: the load is not concurrent here, so the voice plays once the next scene's sounds are in); PlayerMissLeft. Rest ported, not re-read |
 | StorySequenceExecutor, GalaxyCometScheduler, FindingLuigiEventScheduler, LuigiLeftSupplier | sequence.c, gamedata.c | ok by names (StorySequenceExecutor); the schedulers not re-read |
-| SaveDataHandleSequence (+ NANDErrorSequence) | menu.c sv_* | ok by names. NAND_03 / 05 / 06 / 08 (the Wii's system memory errors): Wii-only |
+| SaveDataHandleSequence (+ NANDErrorSequence) | menu.c sv_* | ok on the save's nerves (the confirm with SE_SY_SAVE_CONFIRM_INFO, System_Save01 blocking, SE_SY_LV_SAVING past 20 frames, done past 120, SE_SY_SAVE_SUCCESS / FAILURE), the rest ok by names. NAND_03 / 05 / 06 / 08 (the Wii's system memory errors): Wii-only |
 | ScenePlayingResult | game.c | fixed #658: the star pieces' 1-up (STAR_PIECE_STEP_NUM 50, getLast1upStarPieceNum) |
 
 ## Screen effects (not layouts)
