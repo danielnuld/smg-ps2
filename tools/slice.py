@@ -350,7 +350,7 @@ TEX_ONLY = ("Flag", "FlagKoopaA", "FlagKoopaB", "FlagRaceA", "FlagKoopaCastle", 
             "TrampleStar",  # TrampleStar::init: TrampleStar.arc's TrampleStar.bti (game.c trample_star.inc)
             "SwingRope")  # SwingRopeGroup: SwingRope.arc's SwingRope.bti (game.c swing_rope.inc)
 DUMMY_TEX = ("MapDummy",)  # AstroMapBoard: GalaxyMapController::capture's picture (TEXT pad0 1: render_target_capture)
-LOGIC = ("SoundEmitterCube", "SoundEmitterSphere", "QuakeEffectAreaCube", "PlayerSeCube", "PlayerSeSphere", "PlayerSeCylinder", "MercatorCube", "MirrorAreaCube", "SnowFloor", "SnowplowSwitch", "FallOutFieldDraw", "ClipFieldSwitch", "RaceRail", "NPCSupportRail", "BallRail", "SphereRailDash", "FluffWind", "Fountain", "SpringJetWater", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "TimerSwitch", "SkeletalFishBossRail", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "KoopaSwitchKeeper", "KoopaPowerUpSwitch", "KoopaViewSwitchKeeper", "KoopaRestarterVs3", "BossKameckMoveRail", "TripodBossBaseJointPosition", "TripodBossStepPoint", "TripodBossStepStartArea", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
+LOGIC = ("SoundEmitter", "SoundEmitterCube", "SoundEmitterSphere", "QuakeEffectAreaCube", "PlayerSeCube", "PlayerSeSphere", "PlayerSeCylinder", "MercatorCube", "MirrorAreaCube", "SnowFloor", "SnowplowSwitch", "FallOutFieldDraw", "ClipFieldSwitch", "RaceRail", "NPCSupportRail", "BallRail", "SphereRailDash", "FluffWind", "Fountain", "SpringJetWater", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "TimerSwitch", "SkeletalFishBossRail", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "KoopaSwitchKeeper", "KoopaPowerUpSwitch", "KoopaViewSwitchKeeper", "KoopaRestarterVs3", "BossKameckMoveRail", "TripodBossBaseJointPosition", "TripodBossStepPoint", "TripodBossStepStartArea", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "ForbidTriangleJumpCube", "HeavySteeringCube", "DashChargeCylinder", "ForbidJumpCube",  # Mario::updateCubeCode
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "CameraRepulsiveCylinder", "CameraRepulsiveSphere", "DeathCube", "DeathSphere",
          "DeathCylinder", "AreaMoveSphere", "RestartCube", "StarPieceSpot", "WaterCube", "WaterSphere", "WaterCylinder",
@@ -490,7 +490,7 @@ def scene(fs, galaxy, scenario):
                     zones.append(dict(name=z["name"], pos=z["pos"], rot=z["rot"]))
         zid = zone_id.get(s, 0)
         for layer in act[s]:
-            for f in ("objinfo", "planetobjinfo", "areaobjinfo"):
+            for f in ("objinfo", "planetobjinfo", "areaobjinfo", "soundinfo"):  # soundinfo: the SoundEmitter rows (LOGIC)
                 for r in rows(files.get(f"{root}/jmp/placement/{layer}/{f}", b"")):
                     objs.append(dict(r, zone=zid, planet=f == "planetobjinfo"))
             for r in rows(files.get(f"{root}/jmp/childobj/{layer}/childobjinfo", b"")):
