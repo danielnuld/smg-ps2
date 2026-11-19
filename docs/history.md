@@ -40,6 +40,15 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   invalidateHitSensors, EarthenPipe.cpp:225: tried and taken out, the Gateway's first pipe has SW_A 1008 and the pipe
   test could no longer enter it: port it with whatever turns that switch on). **Release: slice_all.py resident.bin + resident_luigi.bin + every EarthenPipe galaxy** (jpa.py NAMED
   EarthenPipe) **and sound.py --pack** for them (the two magma / water level SEs).
+- Gateway's RunawayRabbit (feat/gw-rabbit-blow, #607, 2026-11-18): its hop sound (exeRunaway: startJumpSound each
+  time its Run BCK passes frame 3 while WalkerStateRunaway runs: SE_SM_RABBIT_JUMP, SE_SM_RABBIT_JUMP_WATER in water;
+  the port's rabbits ran silent) and the star piece on it (receiveMsgPlayerAttack, update_shots' gw_shot: Body 70 at
+  Spine while it runs away; setVelocitySeparateHV 20 / 20 away from the piece, SE_SM_RABBIT_STAR_PIECE_HIT /
+  SE_SV_RABBIT_STAR_PIECE_HIT, RR_BLOW: WalkerStateBlowDamage's Blow (Damage, 0.99 friction, gravity 1, turned 15
+  degrees a frame against its velocity; on the ground past step 5 DamageLand) and BlowLand (30 frames), then Runaway;
+  caughtable all along). Left: isMsgLockOnStarPieceShoot (the shot is not drawn to it), the blow from other actors,
+  isBindedGroundBrake's water sound (the walkers keep no floor code). Test: `gateway` with XF=-DGW_SHOT_TEST (a
+  piece at each rabbit 20 frames into its run). Seen in PCSX2 (HeavensDoorGalaxy/1): each rabbit blown by the piece, back to Runaway, still caught, the chase ends; the hop seen once a rabbit (the test catches it at once). HeavensDoorGalaxy's sound pack lacks SE_SM_RABBIT_STAR_PIECE_HIT / SE_SV_RABBIT_STAR_PIECE_HIT (se?): sound.py --pack HeavensDoorGalaxy.
 - OceanFloaterLandParts (feat/509-ocean-floater, #509, 2026-11-18): OceanFloaterTypeU was a still model. statics.inc
   st_floater_u after OceanFloaterLandParts.cpp: Wait on its rail, Move from its demo's action (the rail mover runs
   only then: st_floater_rail in update_railers), SE_OJ_HUGE_FLOATER_MOVE_ST / LV / ED and RiseBubble, Done at the

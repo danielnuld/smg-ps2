@@ -44479,6 +44479,7 @@ static void shoot_piece(void)
 }
 
 static int butler_shot(V3 p);
+static int gw_shot(V3 p);
 static int npc_shot(V3 p);
 static int npc_nsens;
 static int km_guard(Kuribo *k, V3 shot_vel);
@@ -44576,6 +44577,7 @@ static void update_shots(void)
         if (!hit && jstand_star(s->pos)) hit = 1; /* JumpStand: isMsgStarPieceAttack */
         if (!hit && hhp_reflects(s->pos, 30.0f)) hit = 2; /* HammerHeadPackun: isMsgStarPieceReflect */
         if (!hit && butler_shot(s->pos)) hit = 1;
+        if (!hit && gw_shot(s->pos)) hit = 1; /* RunawayRabbit: isMsgStarPieceAttack */
         if (!hit) hit = npc_shot(s->pos); /* NPCActor::receiveMsgPlayerAttack: isMsgStarPieceReflect (Tico: isMsgStarPieceAttack) */
         if (!hit && hana_shot(s->pos)) hit = 1;
         if (!hit && dd_shot(s->pos)) hit = 1;          /* Dodoryu, its hill */
@@ -50785,13 +50787,13 @@ static void pro_draw(void)
  * message) fades white into 高楼出現 (the tower: Rosetta's SW_A raises HeavensDoorAppearStepA, her SW_B, the halo,
  * the Lumas at TicoDemoPos2 / 3). Near Rosetta the spin demo (スピンゲット: her talks, the baby Luma, the light dome).
  * ponytail: no SpotMarkLight, foot prints, effects (smoke, the dome's light), BGM states, rumble; the rabbits' star
- * piece / blow damage not ported
+ * piece lock-on and blow damage from other actors not ported (gw_shot: the star piece's BlowDamage)
  */
 enum { GP_MEET, GP_META, GP_RAPPEAR, GP_MARIO, GP_RTALK, GP_RESCAPE, GP_CFADEOUT, GP_CFADEIN, GP_CTALK, GP_CRUN, GP_CSTART,
        GP_TOWER, GP_TOWERAFTER, GP_TFADEOUT, GP_TFADEIN, GP_SPIN1, GP_SPINT1, GP_SPIN2, GP_SPINT2, GP_SPIN3, GP_SPINT3, GP_SPIN4,
        GP_SPIN5, GP_SPINT4, GP_SPIN6, GP_SPIN7, GP_SPIN8, GP_N };
 enum { DR_DEAD, DR_APPEAR, DR_DEMO, DR_TALK0, DR_TALK1, DR_WAIT, DR_GUIDE, DR_GOAL, DR_RUNAWAY, DR_CHANGE };     /* DemoRabbit */
-enum { RR_NOACTIVE, RR_HIDE, RR_APPEAR, RR_RUNAWAY, RR_TRYCAUGHT, RR_CAUGHT, RR_CAUGHTTALK, RR_CAUGHTEND, RR_STOP }; /* RunawayRabbit */
+enum { RR_NOACTIVE, RR_HIDE, RR_APPEAR, RR_RUNAWAY, RR_TRYCAUGHT, RR_CAUGHT, RR_CAUGHTTALK, RR_CAUGHTEND, RR_STOP, RR_BLOW }; /* RunawayRabbit */
 enum { RS_WAIT, RS_RUNAWAY, RS_WALLJUMP };                                                                    /* WalkerStateRunaway */
 enum { RT_DEAD, RT_GUIDE0, RT_GUIDE1, RT_WAIT, RT_APPEAR, RT_TALK, RT_WHITEOUT, RT_WHITEIN };                 /* RunawayTico */
 enum { RO_DEAD, RO_WAIT, RO_FADE, RO_DEMO };                                                                  /* RosettaDemoHeavensDoor1 */
@@ -50806,6 +50808,7 @@ typedef struct {
     int talk;          /* its talker (-1 none) */
     const char *act;   /* the action last started (gw_ract) */
     const char *want;  /* its action, started once its instance's anim is made (a rebind after showModel) */
+    float bck;         /* its BCK frame a step ago (checkPassBckFrame) */
     V3 mpos; V3 mup, mfront; /* Mario's pose blended to it (exeCaught) */
 } GwRabbit;
 static struct {
@@ -51087,7 +51090,7 @@ static void dr_update(GwRabbit *r)
 
 /* RunawayRabbit with WalkerStateRunaway (its param: Run / FollowMe / Jump, 1100 runaway, 1300 wait, the turn 10 to 3
  * over 30, the player's line 25 ahead, the wall jump 8 / 15) */
-static int rr_runnaway(const GwRabbit *r) { return r->k.nrv == RR_NOACTIVE || r->k.nrv == RR_HIDE || r->k.nrv == RR_RUNAWAY; }
+static int rr_runnaway(const GwRabbit *r) { return r->k.nrv == RR_NOACTIVE || r->k.nrv == RR_HIDE || r->k.nrv == RR_RUNAWAY || r->k.nrv == RR_BLOW; }
 static void rr_state(GwRabbit *r)
 {
     int st = ++r->k.sstep;
@@ -51176,7 +51179,18 @@ static void rr_update(GwRabbit *r, int i)
         break;
     case RR_RUNAWAY: {
         rr_state(r);
-        if (r->k.snrv != RS_RUNAWAY) break;
+#ifdef GW_SHOT_TEST /* XF=-DGW_SHOT_TEST (gateway): a star piece at each runaway rabbit 20 frames into its run */
+        if (st == 20) { shots[0].pos = vadd(r->k.pos, vadd(vmul(r->k.qy, 50.0f), vmul(r->k.front, 200.0f))); shots[0].vel = vmul(r->k.front, -40.0f); shots[0].t = 1; shots[0].col = 0; }
+#endif
+        { /* checkPassBckFrame(3) while the state runs: startJumpSound (RunawayRabbit.cpp:240; isBindedGroundWater as
+           * below. ponytail: no isBindedGroundBrake, the walkers' binder keeps no floor code) */
+            Inst *in = gw_inst(r->k.row);
+            float f = in && in->anim ? in->anim->frame : -1.0f, dep;
+            int pass = r->bck < 3.0f && f >= 3.0f;
+            r->bck = f;
+            if (r->k.snrv != RS_RUNAWAY) break;
+            if (pass) w_se(&r->k, in_water(r->k.pos, r->k.qy, &dep) ? SE_SM_RABBIT_JUMP_WATER : SE_SM_RABBIT_JUMP);
+        }
         float speed = 0.6f; /* sNoPressureAccel */
         if (vlen(vtangent(vsub(mario->pos, r->k.pos), r->k.grav)) < 400.0f) { /* sPressureRange */
             if (r->pressure < 2000) r->pressure++;
@@ -51229,9 +51243,40 @@ static void rr_update(GwRabbit *r, int i)
     case RR_STOP:
         if (st == 0) { row_demo_hide[r->k.row] = 255; sw_changed = 1; return; } /* kill */
         return;
+    case RR_BLOW: /* exeBlowDamage: WalkerStateBlowDamage (sAirFric 0.99, sAirGravityAccel 1, sDamageTurnLimit 15,
+                   * sDamageLandTime 30; k.snrv 0 Blow, 1 BlowLand), then Runaway; caughtable all along (isRunnaway) */
+        if (r->k.snrv == 0) {
+            if (st == 0) gw_ract(r, "Damage");
+            r->k.vel = vmul(r->k.vel, 0.99f);
+            gw_grav_vel(r, 1.0f);
+            turn_on_plane(&r->k.front, vmul(r->k.vel, -1.0f), r->k.grav, cosf(15.0f * 0.0174533f));
+            if (st > 5 && r->k.on_ground) { gw_ract(r, "DamageLand"); r->k.vel = v3(0, 0, 0); w_snrv(&r->k, 1); }
+        } else if (++r->k.sstep > 30) { w_nrv(&r->k, RR_RUNAWAY); w_snrv(&r->k, RS_WAIT); }
+        if (r->k.nrv == RR_BLOW && r->notc == 0 && mario_touch(vadd(r->k.pos, vmul(r->k.qy, 50.0f)), 30.0f) && gw.catching < 0 && !dx_busy()) gw_caught(r);
+        break;
     }
     gw_move(r);
     if (gw.catching == i) { mario->pos = r->mpos; mario->up = r->mup; mario->face = vnorm(vtangent(r->mfront, r->mup)); } /* setPlayerBaseMtx */
+}
+/* RunawayRabbit::receiveMsgPlayerAttack: a star piece (isMsgStarPieceAttack) on its Body (70 at Spine) while it runs
+ * away (isEnableBlow): setVelocitySeparateHV away from the piece (sStarPieceHitAccelH / V 20), limitedStarPieceHitSound
+ * (update_shots), its two sounds, BlowDamage. ponytail: no isMsgLockOnStarPieceShoot (the shot is not drawn to it), no
+ * isMsgToEnemyAttackBlow / receiveMsgPush from other actors */
+static int gw_shot(V3 p)
+{
+    if (!gw.on) return 0;
+    for (int i = 0; i < gw.nrr; i++) {
+        GwRabbit *r = &gw.rr[i];
+        V3 spine = vadd(r->k.pos, vmul(r->k.qy, 50.0f));
+        if (r->k.nrv != RR_RUNAWAY || vlen(vsub(p, spine)) > 70.0f + 30.0f) continue;
+        V3 side = vtangent(vsub(spine, p), r->k.grav);
+        r->k.vel = vadd(vmul(vlen(side) > 1e-6f ? vnorm(side) : v3(0, 0, 0), 20.0f), vmul(r->k.grav, -20.0f));
+        w_se(&r->k, SE_SM_RABBIT_STAR_PIECE_HIT); w_se(&r->k, SE_SV_RABBIT_STAR_PIECE_HIT);
+        w_nrv(&r->k, RR_BLOW); w_snrv(&r->k, 0);
+        printf("runaway rabbit row %d: star piece, BlowDamage\n", r->k.row);
+        return 1;
+    }
+    return 0;
 }
 static void gw_caught(GwRabbit *r) /* attackSensor: RunawayRabbitCollect::noticeCaughtRabbit, then 捕まり */
 {
@@ -51640,10 +51685,10 @@ int game_test_gateway(unsigned frame)
             int ri = -1;
             for (int i = 0; i < gw.nrr && ri < 0; i++) {
                 GwRabbit *r = &gw.rr[i];
-                if (!r->active || r->k.nrv == RR_STOP || r->k.nrv >= RR_TRYCAUGHT) continue;
+                if (!r->active || r->k.nrv == RR_STOP || (r->k.nrv >= RR_TRYCAUGHT && r->k.nrv != RR_BLOW)) continue;
                 ri = i;
                 int id = sc->objs[r->k.row].sw[SW_APPEAR];
-                if (r->k.nrv == RR_APPEAR || r->k.nrv == RR_RUNAWAY) { to = r->k.pos; why = "rabbit"; break; }
+                if (r->k.nrv == RR_APPEAR || r->k.nrv == RR_RUNAWAY || r->k.nrv == RR_BLOW) { to = r->k.pos; why = "rabbit"; break; }
                 for (u32 o = 0; o < sc->nobjs; o++)
                     if (!strcmp(sc->types + 32 * sc->objs[o].type, "SwitchCube") && sc->objs[o].sw[SW_A] == id) { to = row_pos(&sc->objs[o]); why = "bush"; }
                 for (int k = 0; k < npipes; k++)
