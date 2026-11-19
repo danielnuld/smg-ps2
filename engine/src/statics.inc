@@ -1101,6 +1101,11 @@ static int st_chain(Inst *in, StSt *g) /* 1: rebound */
     m[13] += 200.0f * step;
     fx_named("LargeChain", "Break", m, NULL, g); /* LargeChainParts::kill */
     se_start(SE_OJ_LARGE_CHAIN_BREAK, &m[12]);
+    if (step == 0 || step == n - 1) { /* exeBreak: the lower fixed point goes with part 0, else the upper one (200 over the last part) with the last: each its own kill */
+        if (step) m[13] += 200.0f;
+        fx_named("LargeChain", "Break", m, NULL, NULL);
+        se_start(SE_OJ_LARGE_CHAIN_BREAK, &m[12]);
+    }
     g->on = step + 1;
     printf("large chain %d: part %d broken%c", in->row, step, 10);
     if (step >= n - 1) { g->n = 2; row_kill(in->row); }
