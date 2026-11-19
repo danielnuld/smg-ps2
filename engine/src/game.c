@@ -1225,12 +1225,12 @@ static int wb_hold(Player *m), tz_hold(Player *m);
 static void tz_place(Inst *in), update_trapezes(void), draw_trapeze_ropes(void);
 static int ntzs, tz_ride = -1; /* the Trapeze Mario holds, -1 none */
 static int swr_hold(Player *m); static float swr_reach(void); static V3 swr_body(void); static void swr_update(void), swr_draw(void), swr_reset(void); /* swing_rope.inc */
-static int nonis, nfprs; static void oni_place(Inst *in), update_onimasu(void), update_lavarocks(void), update_fpressures(void), fpr_joints(Inst *in);
+static int nonis, nfprs; static void oni_alloc(void), oni_place(Inst *in), update_onimasu(void), update_lavarocks(void), update_fpressures(void), fpr_joints(Inst *in);
 static int nspms; static void update_spmothers(void);
 static void update_leakpipes(void), leak_joints(Inst *in), st_bell_joints(Inst *in), update_snowmen(void), snow_joints(Inst *in);
 static int nkss; static void update_stairs(void), ks_place(Inst *in);
 static int nebs; static const Model *m_ebeam; static int eb_patrol(int row); static void update_eyebeamers(void), eb_place(Inst *in), draw_eyebeams(void);
-static int nmhills; static const Model *m_mhole, *m_mhill[3];
+static int nmhills; static const Model *m_mhole, *m_mhill[3]; static void mhill_alloc(void);
 static void sbm_place(Inst *in), sbm_joints(Inst *in);
 static int pole_try(Player *m), pole_hold(Player *m);
 static int pole_ride = -1; /* the Pole Mario holds (poles), -1 none */
@@ -1264,7 +1264,7 @@ static struct { V3 pos, vel; int t, wall, step, b90, ground, roof; V3 gn, rn; fl
 static Anim *fb_anim[MAX_FIREBALLS]; /* their Roll (startBck at exeThrow's first step) */
 static const Model *m_marioball, *m_bubble;
 #define MAX_NOTES 512 /* NoteFairy notes (update_notes) */
-static struct { V3 pos; float coord; short row, alive, t; } notes[MAX_NOTES]; /* alive: 0 out, 1 shown, 2 taken, 3 flying up (t) */
+static struct { V3 pos; float coord; short row, alive, t; } *notes; /* [MAX_NOTES] with a NoteFairy placed (notes_spawn) */ /* alive: 0 out, 1 shown, 2 taken, 3 flying up (t) */
 static int nnotes;
 static int note_force_row = -1; /* test builds: the fairy taken as switched on */
 #define MAX_WPLANTS 1024 /* WaterPlant (place_waterplants, draw_waterplants) */
@@ -1678,7 +1678,7 @@ static void lpt_init(void), lpt_update(void); /* LavaProminenceTriple (lava_prom
 static void update_banekiti(void); /* banekiti.inc */
 static int glr_hold(Player *m); static void glr_update(void), glr_init(void); /* GravityLightRoad (gravity_light_road.inc) */
 static int wrd_hold(Player *m); static void wrd_update(void), draw_water_road(void), wrd_init(void), wrd_cast_hook(int type); /* WaterRoad (water_road.inc) */
-static void or_init(void), or_update(void), draw_oceanrings(void); static int or_in_water(V3 p, V3 up, float *depth), or_row(V3 p); /* OceanRing (ocean_ring.inc) */
+static void or_alloc(void), or_init(void), or_update(void), draw_oceanrings(void); static int or_in_water(V3 p, V3 up, float *depth), or_row(V3 p); /* OceanRing (ocean_ring.inc) */
 static int rm_ctrl_off(void), pg_jet_hit(V3 p); static void rm_note_star(void); static const char *rm_bck(void); /* offPlayerControl; its startBckPlayer clip on Mario */
 static void gh_reset(void);
 static int gh_ctrl_off(void), gh_puppet(void); /* GhostPlayer: offPlayerControl; its clips on Mario (startBckPlayerJ) */
@@ -2150,7 +2150,7 @@ static int ndls; static void update_dlands(void), dl_place(Inst *in);
 static int insts_cap; static const Model *m_trainbody; static void update_trains(void), update_volcanoflows(void); static int tr_cars(const Row *r);
 static void update_kfires(void), kfires_reset(void), update_doors(void), door_place(Inst *in); static int door_solid(const Inst *in);
 static int nsss, ss_ride = -1; static const Model *m_sstrap; static void ss_reset(void); static void update_storms(void), ss_place(Inst *in), draw_storm_traps(void); static int ss_hold(Player *m);
-static const Model *m_fish[6], *m_gull; static int nggs; static void update_gulls(void), draw_gulls(void);
+static const Model *m_fish[6], *m_gull; static int nggs; static void update_gulls(void), draw_gulls(void), gg_alloc(void);
 static int nfgs; static void update_fishes(void), draw_fishes(void), fg_alloc(void);
 
 /* Sphere against every placed KCL: the sphere goes to the instance's object space (KCL data is in model space),
@@ -3505,6 +3505,10 @@ void game_init(const Scene *s, const unsigned char *blob)
     printf("game: %d static instances, coins %d, purple %d, star pieces %d, kuribo %d, start (%d %d %d)\n", ninsts,
            ncoins, npurple, npieces, nkuribo, (int)start_pos.x, (int)start_pos.y, (int)start_pos.z);
     os_init();
+    gg_alloc();
+    oni_alloc();
+    mhill_alloc();
+    or_alloc();
     or_init();
     wrd_init();
     glr_init();
@@ -31330,7 +31334,8 @@ static void draw_mogu_extras(void) /* its hole (MoguHole) and its stone (MoguSto
  * 2P pointer stop, the counter-spin a push */
 #define MAX_MOGUCCHI 16
 #define MHILL_N 20
-static struct { int k, n, next, appear, cc, prev[3]; V3 reserve; V3 pos[MHILL_N], up[MHILL_N], f[MHILL_N]; int model[MHILL_N], age[MHILL_N], alive[MHILL_N]; } mhills[MAX_MOGUCCHI];
+static struct { int k, n, next, appear, cc, prev[3]; V3 reserve; V3 pos[MHILL_N], up[MHILL_N], f[MHILL_N]; int model[MHILL_N], age[MHILL_N], alive[MHILL_N]; } *mhills; /* (game_init: mhill_alloc) */
+static void mhill_alloc(void) { mhills = count_type("Mogucchi", 0) ? mem_alloc(MEM_OBJECTS, MAX_MOGUCCHI * sizeof *mhills) : NULL; }
 enum { MC_STROLL, MC_APPEARDOWN, MC_DOWN, MC_DIVE, MC_SCATTER, MC_DIE };
 static int mhill_of(int k)
 {
@@ -41928,7 +41933,12 @@ static void draw_trapeze_ropes(void)
 #define MAX_ONIMASU 32
 #define ONI_PTS 32
 enum { ON_WAITSW, ON_WAIT, ON_WAITSTAMP, ON_JUMP, ON_STAMP };
-static struct { int row, nrv, step, init, cur, np; V3 pos, vel, bc, nrm[ONI_PTS]; Quat c8, d8, e8, p110, p120; } onis[MAX_ONIMASU];
+static struct { int row, nrv, step, init, cur, np; V3 pos, vel, bc, nrm[ONI_PTS]; Quat c8, d8, e8, p110, p120; } *onis; /* (game_init: oni_alloc) */
+static void oni_alloc(void) /* one a placed Onimasu / OnimasuPivot row, at most MAX_ONIMASU */
+{
+    int n = count_type("Onimasu", 0) + count_type("OnimasuPivot", 0);
+    onis = n ? mem_alloc(MEM_OBJECTS, (u32)(n < MAX_ONIMASU ? n : MAX_ONIMASU) * sizeof *onis) : NULL;
+}
 static int oni_of(int row)
 {
     for (int i = 0; i < nonis; i++) if (onis[i].row == row) return i;
@@ -43043,7 +43053,8 @@ static struct {
     V3 pos[GG_BIRDS], vel[GG_BIRDS], up[GG_BIRDS], front[GG_BIRDS], bup[GG_BIRDS], side[GG_BIRDS];
     int pt[GG_BIRDS], rev[GG_BIRDS], tupd[GG_BIRDS], nrv[GG_BIRDS], step[GG_BIRDS], hover[GG_BIRDS], glide[GG_BIRDS], lift[GG_BIRDS], chirp[GG_BIRDS];
     float bank[GG_BIRDS];
-} ggs[MAX_GGROUPS];
+} *ggs; /* (game_init: gg_alloc) */
+static void gg_alloc(void) { ggs = row_table("SeaGullGroup", MAX_GGROUPS, sizeof *ggs); }
 static int gg_next(int k, int b) /* updatePosInfo */
 {
     typeof(&ggs[0]) g = &ggs[k];
@@ -46992,7 +47003,8 @@ static void notes_spawn(void) /* at game_init: every fairy's notes, hidden */
     nnotes = 0;
     nf.row = note_star_row = -1; nf.demo = 0;
     int t = scene_type(sc, "NoteFairy");
-    for (u32 i = 0; t >= 0 && i < sc->nobjs; i++) {
+    notes = count_type("NoteFairy", 0) ? mem_alloc(MEM_OBJECTS, MAX_NOTES * sizeof *notes) : NULL;
+    for (u32 i = 0; notes && i < sc->nobjs; i++) {
         const Row *r = &sc->objs[i];
         const unsigned char *e;
         if (r->type != t || !note_rail(r, &e)) continue;
