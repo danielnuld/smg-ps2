@@ -2132,6 +2132,9 @@ int main(void)
 #ifdef SINK_TEST /* XF=-DSINK_TEST=<floor code 17 / 18 / 25 / 31>: Mario put on a Sink floor (#565) */
         { extern void game_test_sink_input(int, int); game_test_sink_input((int)frame, SINK_TEST); }
 #endif
+#ifdef STEP_TEST /* XF=-DSTEP_TEST=<k>: Mario walks at the k-th step found (MarioStep) */
+        { extern void game_test_step_input(int); game_test_step_input((int)frame); }
+#endif
 #ifdef SIDESTEP_TEST
         { extern void game_test_sidestep_input(int); game_test_sidestep_input((int)frame); } /* Mario leans on a wall and side steps */
 #endif

@@ -20188,6 +20188,7 @@ static void m_wall_jump_hit(Player *m)
  * ahead (over 0.707 on his front) and under his centre, _4DC a face ahead of mFlatAngle or more he could stand on
  * (mSlipAngle) more than 30 off his ground (diffAngleAbs gives radians: as decompiled this never holds).
  * ponytail: _380, mDrawStates._F / _17, checkStrikePointToMap, Teresa's thick ball, ThroughWall and _400 are not kept */
+static V3 m_front_tri_n; /* mFrontWallTriangle's normal, kept when no front wall is met (Mario::checkStep reads it bare) */
 static void m_check_all_wall(Player *m)
 {
     float r = swimming ? 90.0f : 80.0f;
@@ -20222,6 +20223,7 @@ static void m_check_all_wall(Player *m)
         V3 d = vsub(w->pos, c);
         d = vlen(d) > 1e-6f ? vnorm(d) : v3(0, 0, 0);
         mw.front = (Tri){w->inst, w->sub, w->prism, w->inst < 0 ? kcl_icestep : insts[w->inst].kcl};
+        m_front_tri_n = tri_n(&mw.front);
         mw.p4E8 = w->pos;
         if (vdot(d, w->n) < (m->walling ? -0.9f : -0.999f)) mw.w8 = 1;
         else mw.w32 = 1;
@@ -20854,11 +20856,10 @@ static void m_blend_step(void)
  * walk speed, 0.5 at least). A jumps out of it. Before that, with a floor face ahead (_4D8, no front wall faced):
  * within 20 across and nearly square to his front it is the step (its place _50C); else, under 60 degrees of his
  * front on its normal, his velocity is turned about his side by that much. No step onto a press part or one that
- * moved (unless it is his ground's). ponytail: startStep's _4C8 test (the face he is pressed by), MarioStatus_Climb
+ * moved (unless it is his ground's). ponytail: _4C8 only as calcDistToCeil leaves it, MarioStatus_Climb
  * and MarioActor::_3E5 not kept */
 static struct { int on; float t, walk; } stp; /* _14, _18 */
 static float m_dist_to_ceil(Player *m);
-static V3 m_front_wall_norm(void);
 static int sw_anim_busy(void);
 static void m_start_step(Player *m, V3 at) /* startStep, MarioStep::start */
 {
@@ -20873,6 +20874,7 @@ static void m_start_step(Player *m, V3 at) /* startStep, MarioStep::start */
     float ceil_d = m_dist_to_ceil(m); /* calcDistToCeil(false) from there */
     m->pos = old;
     if (ceil_d < 200.0f) return;
+    if (press_at(m_730)) return; /* _4C8 a press object's (calcDistToCeil's face when he met no ceiling this frame) */
     if (mw.f4D8) { /* _4D8: no press object's, no part that moved but his ground's */
         if (press_at(mw.t4D8.inst)) return;
         if (tri_moved(&mw.t4D8) && mw.t4D8.inst != mario_ground) return;
@@ -20939,7 +20941,8 @@ static void m_check_step(Player *m) /* checkStep */
         return;
     }
     if (!mw.f15 || !mw.f39) return;                     /* _15, _39 */
-    if (!(vdot(m_pad, m_front_wall_norm()) < -0.5f)) return; /* getWorldPadDir . mFrontWallTriangle's normal */
+    if (!(vdot(m_pad, m_front_tri_n) < -0.5f)) return; /* getWorldPadDir . mFrontWallTriangle's normal: the triangle as
+                                                         * checkAllWall last left it, faced (_8) or only met (a step's riser: _8 is off) */
     if (vdot(vsub(mw.p4A4, m->pos), m->up) < MC.mWalkStepHeight) m_start_step(m, mw.p4A4);
 }
 static void m_try_jump(Player *m);
@@ -22788,6 +22791,60 @@ void game_test_sink_input(int frame, int code)
                m_floor_severe(m, code), m->hip, ground_attr & 0x3F, tri_attr(&mw.shadow) & 0x3F,
                vdot(vsub(mw.shadow_pos, mw.ground_pos), vmul(m->up, -1.0f)), mw.s2);
 }
+#ifdef STEP_TEST
+/* Test builds (XF=-DSTEP_TEST=<k>, 1 the first): from Mario's first free frame every 30 frames the collision is
+ * searched for a step: an upright face with a level floor on it 10 to 48 over the level floor before it, 150 of
+ * room before it and 70 on it; he is put 150 before the k-th and walks at it and on, 300 frames (MarioStep: "step:"
+ * from m_start_step) */
+void game_test_step_input(int frame)
+{
+    static int free_at = -1, at = -1;
+    static V3 goal, wn, low;
+    Player *m = mario;
+    if (free_at < 0) { if (demo_on || !m->grounded || m->launch >= 0 || starter >= 0) return; free_at = frame; }
+    frame -= free_at;
+    if (at < 0) {
+        if (frame < 10 || frame % 30) return;
+        int n = 0, cnt[4] = {0};
+        for (int i = 0; i < ninsts && at < 0; i++) {
+            if (!insts[i].kcl) continue;
+            const unsigned *h = (const unsigned *)insts[i].kcl;
+            int np = (int)((h[3] - h[2]) / 16);
+            for (int p = 1; p < np && at < 0; p++) {
+                Tri t = {i, 0, p, insts[i].kcl};
+                V3 fn = tri_n(&t), c = vmul(vadd(vadd(tri_pos(&t, 0), tri_pos(&t, 1)), tri_pos(&t, 2)), 1.0f / 3.0f), up = up_at(c, m->up);
+                V3 top, bot, st, far, dn = vmul(up, -300.0f);
+                Tri tt, tb;
+                if (fabsf(vdot(fn, up)) > 0.1f) continue;
+                cnt[0]++;
+                c = vadd(c, vmul(up, 120.0f));
+                if (!map_poly(vsub(c, vmul(fn, 25.0f)), dn, &top, &tt) || vdot(tri_n(&tt), up) < 0.9f) continue;
+                cnt[1]++;
+                if (!map_poly(vadd(c, vmul(fn, 60.0f)), dn, &bot, &tb) || vdot(tri_n(&tb), up) < 0.9f) continue;
+                cnt[2]++;
+                float hgt = vdot(vsub(top, bot), up);
+                if (hgt < 10.0f || hgt > 48.0f) continue;
+                cnt[3]++;
+                if (!map_poly(vadd(c, vmul(fn, 150.0f)), dn, &st, NULL) || fabsf(vdot(vsub(st, bot), up)) > 5.0f) continue;
+                if (!map_poly(vsub(c, vmul(fn, 70.0f)), dn, &far, NULL) || fabsf(vdot(vsub(far, top), up)) > 5.0f) continue;
+                if (++n < STEP_TEST) continue;
+                at = frame; test_nolost = 1; goal = vsub(far, vmul(fn, 300.0f)); wn = fn; low = bot;
+                m->pos = vadd(st, vmul(up, 20.0f)); m->hvel = v3(0, 0, 0); m->vup = 0; m_front(m, vmul(fn, -1.0f));
+                printf("step test: row %d, a step of %.0f, put at %.0f %.0f %.0f\n", insts[i].row, hgt, m->pos.x, m->pos.y, m->pos.z);
+            }
+        }
+        if (at < 0 && frame % 300 == 0) printf("step test f %d: %d steps found, none taken (%d upright faces, %d with a floor on them, %d and one before, %d of 10 to 48)\n", frame, n, cnt[0], cnt[1], cnt[2], cnt[3]);
+        return;
+    }
+    int t = frame - at;
+    if (t > 300) { pad_force_stick = 0; return; }
+    test_walk_to(goal, 0.0f);
+    if (t % 2 == 0)
+        printf("step f %d: on %d t %.1f grounded %d w8 %d w32 %d f15 %d f39 %d f4D8 %d up %.1f wall %.0f a4 %.0f walk %.2f clip %s\n", t, stp.on, stp.t, m->grounded,
+               mw.w8, mw.w32, mw.f15, mw.f39, mw.f4D8, vdot(vsub(m->pos, low), m->up), vdot(vsub(m->pos, low), wn), vdot(vsub(mw.p4A4, m->pos), m->up), m->walk,
+               mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-");
+}
+#endif
 /* Test builds (MARIO2D_TEST): from Mario's first free frame, if he is in no 2D area he is held in the first
  * PlaneModeCube's first floor under its top (TeresaMario2DGalaxy, KoopaBattleVs galaxies); then the stick right 120 frames, left 120, up
  * 60 (no move in 2D), right with A at 360; his distance off the plane (along _6A0) logged */
