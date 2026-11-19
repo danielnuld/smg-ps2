@@ -93,6 +93,7 @@ SKINNED_OBJ += ("DeadLeaves", "DesertMovingLandSmall")  # DeadLeaves.cpp: Spin (
 SKINNED_OBJ += ("PrizeRing",)  # PrizeRing.cpp: Start / Loop / End, its Number BVA (game.c syati.inc)
 SKINNED_OBJ += ("JumpGuarder", "JumpGuarderHead")  # JumpGuarder (game.c update_rbeamers: rbeamer 3) and its head
 SKINNED_OBJ += ("SubmarineVolcanoBigColumnBreak",)  # SubmarineVolcanoBigColumn: its break model's Break (statics.inc)
+SKINNED_OBJ += ("LavaObstacleRockShell", "LavaObstacleRockHomeA", "ForestObstacleWoodA")  # HipDropMoveObj / HipDropDemoMoveObj: Move, the collision on the Move joint (game.c update_hipmoves)
 SKINNED_OBJ += ("DinoPackunVs2", "DinoPackunEggShellBreakVs2")  # DinoPackun (getVsCount 2): DinoPackun2's clips, its shell break model's Break (game.c dino)
 SKINNED_OBJ += ("MarblePlanetCore", "MarblePlanetElectron")  # MarblePlanet: its core's BCK frame by the electrons left, the electrons' own clip (statics.inc st_mp_*)
 SKINNED_OBJ += ("TicoFatGoodsStarPiece",)  # TicoFat: NPCData TicoFatItem goods on StarPieceL / StarPieceR (TicoFatGoodsStarPiece / ..Far clips)
