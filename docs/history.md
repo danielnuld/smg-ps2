@@ -23,7 +23,12 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   placement to it (selftest: KoopaVs3 -> Koopa, DinoPackunVs2 -> DinoPackun, Tripod2Boss -> TripodBoss, BossKameck2
   -> BossKameck). tools/sndgaps.py: SE_OJ_TSPIDER_COCOON_BOUND is never played (TombSpiderActionCocoon plays it for
   a sender that is no ATYPE_SPRING_ATTACKER; SlingShooter's attack sensor, that type, is the only sender);
-  docs/sound-gaps.md regenerated.
+  docs/sound-gaps.md regenerated (727 placement names with sound calls, 1482 SE names, 99 not in the port; none of a
+  class under src/Game/Boss; new rows outside the bosses: Coin / PurpleCoin). With the rule every boss scenario of
+  out/packs keeps all the SE names of its boss's files. PCSX2: KoopaBattleVs3Galaxy/1 with its sound.bin packed by
+  this rule into an overlay (XF="-DKP_TEST -DSE_LOG -DPACKS_OVERLAY=wt-seboss"): no `se?` line left in the fight up
+  to Lv3 (31 ids before), `se+ 00040174` / `se+ 000501fe` for the stairs' meteors. Its price: 639 SEs for 493 in the
+  same SPU budget, caps x 0.40 (4379 Hz) for x 0.49. **Release: sound.py --pack** every galaxy (the full repack).
 - Enemy audit against Petari, first batch (feat/676-enemy-audit-1, #676 / PR #688, 2026-11-18): the enemies read class by class
   against vendor/Petari/src/Game/Enemy (the table: `docs/class-audit-enemy.md`, one row a class with what was fixed and
   what is left). The cause shared by most: `fireball_hit_walkers`, the thrown shell's loop and `walker_blow`'s callers
