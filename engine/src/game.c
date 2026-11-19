@@ -1206,7 +1206,8 @@ static struct { V3 pos, up, dir; float h; short row, type; } wplants[MAX_WPLANTS
 static int nwplants;
 typedef struct { int row; V3 pos, front, up, fpos; int freeze, ftime; float rotz; } Killer; /* HomingKiller: its bullet
                                                      * (update_killers): mUp, mFreezePos, mFreezeTime, mRotation.z */
-typedef struct { int first, n; const float *pts; u32 np; float len, step, speed; } Flow; /* StarPieceFlow (update_flows) */
+typedef struct { int first, n; const float *pts; u32 np; float len, step, speed, last; } Flow; /* StarPieceFlow (update_flows);
+                                                     * last: a closed rail's last part (back to its start), 0 an open one */
 #define MAX_FLOWS 64
 static Flow flows[MAX_FLOWS];
 static int nflows;
@@ -1952,8 +1953,8 @@ static int star_group(Pickup *out, const Row *r, const unsigned char *blob)
 }
 
 /* StarPieceFlow (StarPieceGroup.cpp, Flow): arg1 pieces (default 1) spread along its rail like placementPieceOnRail,
- * all moving on at arg0 a frame (default 10), round again from the start at the end (exeFlow: repeat). Without out:
- * the count. ponytail: a closed rail's last segment (back to the start) is not ridden */
+ * all moving on at arg0 a frame (default 10), round again from the start at the end (exeFlow: repeat), a closed rail
+ * (every placed flow's) through its last part back to the start. Without out: the count */
 static int star_flow(Pickup *out, int first, const Row *r, const unsigned char *blob)
 {
     int n = r->arg[1] > 0 ? r->arg[1] : 1;
@@ -1970,9 +1971,11 @@ static int star_flow(Pickup *out, int first, const Row *r, const unsigned char *
     f->len = 0;
     for (u32 i = 0; i + 1 < np; i++)
         f->len += vlen(v3(pts[3 * i + 3] - pts[3 * i], pts[3 * i + 4] - pts[3 * i + 1], pts[3 * i + 5] - pts[3 * i + 2]));
+    f->last = closed ? vlen(v3(pts[0] - pts[3 * np - 3], pts[1] - pts[3 * np - 2], pts[2] - pts[3 * np - 1])) : 0.0f;
+    f->len += f->last; /* getRailTotalLength */
     f->step = n == 1 ? 0 : f->len / (closed ? n : n - 1.0f);
     f->speed = r->arg[0] > 0 ? (float)r->arg[0] : 10.0f;
-    place_on_rail(out, pts, np, 0, n);
+    place_on_rail(out, pts, np, closed, n);
     return n;
 }
 
@@ -4127,8 +4130,13 @@ static void update_flows(void)
         for (int k = 0; k < f->n; k++) {
             Pickup *p = &pieces[f->first + k];
             if (p->alive != PICK_ON) continue;
-            float c = fmodf(f->step * k + f->speed * game_frame, f->len);
+            float c = fmodf(f->step * k + f->speed * game_frame, f->len), over = c - (f->len - f->last);
             p->pos = rail_at(f->pts, f->np, c);
+            if (f->last > 0.0f && over > 0.0f) { /* on the closed rail's last part */
+                const float *a = f->pts + 3 * (f->np - 1);
+                float t = over / f->last;
+                p->pos = v3(a[0] + (f->pts[0] - a[0]) * t, a[1] + (f->pts[1] - a[1]) * t, a[2] + (f->pts[2] - a[2]) * t);
+            }
         }
     }
 }
@@ -36099,7 +36107,11 @@ static void spider_coin_mtx(const Row *r, float m[16], float *cocoon) /* its coi
     up = vnorm(vcross(z, x));
     spider_coin_web((u32)(r - sc->objs), &p, &up);
     V3 side = vnorm(vcross(up, v3(0, 0, 1))), front = vnorm(vcross(side, up));
-    if (!cocoon) { basis_matrix(m, vadd(p, vmul(up, -50.0f)), up, front, 0); return; } /* sModelOffset */
+    if (!cocoon) { /* sModelOffset; its Y turn (mRotation.y: exeTouch / exeTouchAndApart) */
+        float a = row_angle[r - sc->objs] * 0.0174533f;
+        basis_matrix(m, vadd(p, vmul(up, -50.0f)), up, vadd(vmul(side, sinf(a)), vmul(front, cosf(a))), 0);
+        return;
+    }
     basis_matrix(m, vadd(vadd(p, vmul(up, -20.0f)), vmul(front, 20.0f)), up, front, 0); /* sCocoonOffsetY / Z */
     for (int j = 0; j < 12; j++) m[j] *= *cocoon;
 }
@@ -36297,9 +36309,21 @@ static int explosion_breaks_inst(int i)
     return 1;
 }
 
-/* SpiderCoin: the pointer on it (150 at 80 up) with its A frees the coin. ponytail: no rub (tryRub), no Touch spin */
+/* SpiderCoin.cpp after Petari: Wait until the pointer is on it (150 at 80 up: tryStarPointerCheck); Touch: it turns
+ * sRotateSpeedY 30 a frame; A frees the coin; a rub does (tryRub: the pointer on it faster than sPointerSpeedMin 5,
+ * its velocity against the one kept under sPointerSpeedDotToKill -20); the pointer off it: TouchAndApart, the turn
+ * eased out over sStepToucnAndApart 30 frames, the pointer back on it past sStepToTouch2nd 5 frees it, else Wait.
+ * row_turn the nerve (0 Wait, 1 Touch, 2 TouchAndApart), row_step its step, row_angle its turn; spc_rub the pointer's
+ * velocity kept (mPad0Velocity). (The second pointer is the Wii's.) */
+static struct { int row; float vx, vy; } spc_rub[32];
+static int nspc_rub;
+static const Scene *spc_sc;
 static void spider_coins(void)
 {
+    static float px, py;
+    float vx = cur_x - px, vy = cur_y - py; /* getStarPointerScreenVelocity */
+    px = cur_x; py = cur_y;
+    if (spc_sc != sc) { spc_sc = sc; nspc_rub = 0; }
     int ty = scene_type(sc, "SpiderCoin");
     for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++) {
         const Row *r = &sc->objs[i];
@@ -36308,8 +36332,26 @@ static void spider_coins(void)
         row_axes(r, &x, &z);
         V3 up = vnorm(vcross(z, x));
         spider_coin_web(i, &p, &up); /* exeWait: mPosition its point */
-        if (!pointer_a() || !cursor_sees(vadd(p, vmul(up, 80.0f)), 40.0f)) continue; /* initStarPointerTarget 150 at 80 up */
-        spider_coin_free(i);
+        int see = cursor_sees(vadd(p, vmul(up, 80.0f)), 40.0f), st = row_step[i], k = 0; /* initStarPointerTarget 150 at 80 up */
+        while (k < nspc_rub && spc_rub[k].row != (int)i) k++;
+        if (k == nspc_rub && nspc_rub < 32) { spc_rub[k].row = (int)i; nspc_rub++; }
+        if (k == nspc_rub) k = 31; /* (more than 32 a scene: the last one's shared) */
+        if (row_step[i] < 0xFFFF) row_step[i]++;
+        if (row_turn[i] == 0) { /* exeWait */
+            row_angle[i] = 0.0f;
+            if (see) { row_turn[i] = 1; row_step[i] = 0; spc_rub[k].vx = spc_rub[k].vy = 0.0f; }
+        } else if (row_turn[i] == 1) { /* exeTouch */
+            row_angle[i] = fmodf(row_angle[i] + 30.0f, 360.0f);
+            if (pointer_a()) { spider_coin_free(i); continue; }
+            if (see && sqrtf(vx * vx + vy * vy) >= 5.0f) { /* tryRub */
+                if (vx * spc_rub[k].vx + vy * spc_rub[k].vy < -20.0f) { spider_coin_free(i); continue; }
+                spc_rub[k].vx = vx; spc_rub[k].vy = vy;
+            } else if (!see) { row_turn[i] = 2; row_step[i] = 0; }
+        } else { /* exeTouchAndApart */
+            row_angle[i] = fmodf(row_angle[i] + sinf((30 - st) / 30.0f * 1.5707963f) * 30.0f, 360.0f); /* getEaseOutValue */
+            if (st > 5 && see) { spider_coin_free(i); continue; }
+            if (st == 30) { row_turn[i] = 0; row_step[i] = 0; }
+        }
     }
 }
 static void spider_coin_free(u32 i) /* SpiderCoin::kill */
@@ -36506,8 +36548,9 @@ static void break_boxes(void)
         if (!in->breaks || in->breaks >= 3) continue;
         V3 p = v3(in->m[12], in->m[13], in->m[14]);
         if (hip_hit ? i != hip_inst : in->breaks == 2 || vlen(vsub(c, p)) > in->reach + 120.0f) continue;
-        if (!strcmp(sc->types + 32 * sc->objs[in->row].type, "PunchBox") && (hip_hit || mario_ground == i)) continue; /* receiveMsgPlayerAttack:
-            * a hip drop only with _8C (never set), HitAll not while he is on its body */
+        if (!strcmp(sc->types + 32 * sc->objs[in->row].type, "PunchBox") && !hip_hit && mario_ground == i) continue; /* receiveMsgPlayerAttack:
+            * HitAll not while he is on its body; a hip drop with _8C, set by his ACTMES_FLOOR_TOUCH on it
+            * (MarioActor::attackOrPushPolygons) as WoodBox's mFloorTouchTimer: the hip drop that lands on it */
         unsigned short *hit = &row_step[in->row]; /* CrystalCageL: 0x8000 hit once, low bits frames until the next */
         if (strcmp(sc->types + 32 * sc->objs[in->row].type, "CrystalCageL") == 0 && !(*hit & 0x8000)) {
             *hit = 0x8000 | (SPIN_TIME + 20);
@@ -36519,6 +36562,14 @@ static void break_boxes(void)
             continue;
         }
         if (*hit & 0x7FFF) continue;
+        { /* SimpleBreakableObj::receiveMsgPlayerAttack: nothing while its SW_A is off; IcicleRock and the SandUpDown
+           * walls (mBreakFlags 2) at a spin only, TeresaMansionHoleCover (4) at a hip drop only */
+            const char *bn = sc->types + 32 * sc->objs[in->row].type;
+            const Row *br = &sc->objs[in->row];
+            int spin_only = !strcmp(bn, "IcicleRock") || !strncmp(bn, "SandUpDownTowerBreakableWall", 28);
+            if ((spin_only || !strcmp(bn, "TeresaMansionHoleCover")) && br->sw[SW_A] >= 0 && !sw_on(br, SW_A)) continue;
+            if (spin_only && hip_hit) continue;
+        }
         break_inst(in, 1);
         game_rebind();
         return;
