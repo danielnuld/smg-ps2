@@ -1931,11 +1931,11 @@ int main(void)
                  * with -DASC_HOW=<n> game_test_enemy's way n each frame of 300-420 instead; walkers unclipped */
         if (frame == 120) game_test_unclip();
         static int asc_shots; /* held until the first shot goes (the flight in and the welcome first: -2) */
-        if (frame >= 120 && !asc_shots) game_test_enemy(ASC_KIND, 0, 9);
+        if (frame >= 120 && frame < 760 && asc_shots < 2) game_test_enemy(ASC_KIND, 0, 9);
 #ifdef ASC_HOW
-        if (frame >= 300 && frame < 420 && game_test_enemy(ASC_KIND, 0, ASC_HOW) >= 0 && frame % 30 == 0) printf("asc test f %u: way %d\n", frame, ASC_HOW);
+        if (frame >= 760 && frame < 880 && game_test_enemy(ASC_KIND, 0, ASC_HOW) >= 0 && frame % 30 == 0) printf("asc test f %u: way %d\n", frame, ASC_HOW);
 #else
-        if (frame >= 300 && frame % 60 == 0 && asc_shots < 2) { int r = game_test_shoot(ASC_KIND); if (r >= 0) asc_shots++; printf("asc test f %u: shot at row %d\n", frame, r); }
+        if (frame >= 300 && frame % 120 == 0 && asc_shots < 2) { int r = game_test_shoot(ASC_KIND); if (r >= 0) asc_shots++; printf("asc test f %u: shot at row %d\n", frame, r); }
 #endif
 #endif
 #ifdef TSPOT_TEST

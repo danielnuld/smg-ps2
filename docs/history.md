@@ -11,6 +11,12 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- AnimScaleController on the walkers (feat/521-walker-asc, #521, 2026-11-18): Takobo, Jellyfish, JellyfishElectric,
+  Mogu, Petari, KoteBug and Unizo squash and stretch as Petari's mScaleController does (game.c wa_start / wa_update
+  over asc_core: startHitReaction, startAnim with startAndAddScaleVelocityY). Test XF="-DASC_KIND=<walker kind>
+  -DASC_HOW=<game_test_enemy's way>": PCSX2, EggStarGalaxy/1, Mario beside a Takobo (kind 6, way 2): it attacks,
+  "hit reaction", scale y 1.055, 1.136, 1.013, 0.911, 0.959, 1.046, stopped at step 91, three times. A star piece
+  stuns a Takobo (no scale reaction: as Petari). The other six kinds were not run.
 - Hidden stars' scenario number (fix/508-placed-scenario-no, #508, 2026-11-18): game_scenario_no /
   game_stage_scenario are GameSystemSceneController::getCurrentScenarioNo, the number
   ScenarioSelectScene::trySetCurrentScenarioNo placed (gamedata.c gd_placed_hidden_star_scenario,

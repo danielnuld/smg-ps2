@@ -27111,9 +27111,6 @@ static void takobo_update(Kuribo *k, V3 to, float d)
     V3 c = vsub(k->pos, vmul(k->grav, 70.0f * s)), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     if (k->nrv == TN_PRESS || k->nrv == TN_HITPUNCH) return;
     int msg = mario_offence(k, c, 70.0f * s, k->grav);
-#ifdef ASC_KIND
-    if (vlen(vsub(mc, c)) < 300.0f) printf("takobo row %d: nrv %d d %.0f hurt %d hip %d up %.1f\n", k->row, k->nrv, vlen(vsub(mc, c)), mario->hurt_timer, mario->hip, vdot(vsub(mario->pos, c), k->qy));
-#endif
     if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) {
         w_nrv(k, TN_PRESS);
         w_se(k, SE_EM_TAKOBO_STOMPED); /* tryPress */
