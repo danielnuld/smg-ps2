@@ -27,6 +27,7 @@ typedef struct { char stage[32]; int star, prev_stars, after_stars, coins, prev_
 void seq_set_result(const SeqResult *r);
 int seq_take_result(SeqResult *r);
 int seq_take_save_prompt(void);  /* after a stage clear the next scene asks to save (tryStartSave) */
+int seq_after_clear(void);       /* the same, not taken (game_init, before menu_init) */
 void seq_set_open_wipe(int frames, unsigned rgb);
 void seq_set_select_after(const char *galaxy);  /* the next scene opens this galaxy's scenario select (FinalBattle's end) */
 int seq_take_select_after(char *galaxy, int n);

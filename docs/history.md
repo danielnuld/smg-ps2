@@ -11,6 +11,32 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- UI and flow audit, first pass (feat/ui-audit-miss-left, #640 #641 #658 #659, 2026-11-18): Petari's Screen/ classes
+  against menu.c / game.c, the table in `docs/ui-audit.md` (ok / fixed / issue / Wii-only / not re-read yet). Fixed:
+  PlayerMissLeft (menu.c pms_*: after a miss's wipe the PlayerLeft layout's CenterPlayerLeft over the black screen,
+  the lives + 1, at Wait's step 15 the lives with the rumbler and SE_SY_PLAYER_LEFT_DEC, End past 90; not in a
+  comet's scenario; game.c miss_event_update asks the stage again once it is dead); GameSequenceProgress's
+  SE_SY_TICO_WAKE_PLAYER from the garden to the Gateway (main.c scene_switch: after the load, then 120 frames);
+  OneUpBoard (menu.c oub_*: "OneUp" over Mario, game.c request_one_up = MR::requestOneUp with SE_SY_1UP: the 50
+  coins' 1-up was silent) and ScenePlayingResult::incStarPiece's 1-up every 50 star pieces; StageResultInformer's
+  ShowGalaxyComplete (System_Result009, BGM_GALAXY_COMPLETE: gamedata.c gd_just_complete_galaxy) and
+  ShowGetPictureBook (System_Result005 / 008: gd_just_book), its IconAButton and the information window's, the Coin
+  pane; game_init keeps the scene start's game data holder over a stage clear (seq_after_clear: the star is set at
+  its touch here, so the Observatory's snapshot held it and no "just" check of the result window or the map's
+  discover mode could fire); MarioLauncherLayout's Sight (menu.c sgt_*); CounterLayoutController::isPlayerMoving
+  (the spring / the Boo / swimming) and isWaitToDisappearCounter; PauseMenu's lower button SE_SY_PAUSE_OFF and its
+  failed save. tools/lyt.py COMMON gets PlayerLeft, InformationWindow (it was the ending's only: the result's
+  information windows never showed in the Observatory), OneUp, Sight: menus.bin 1031 -> 1067 KB in every scene.
+  Test modes: `miss` (log `miss left: 4 -> 3`), `result` (XF=-DRESULT_COMPLETE: the galaxy's other stars first,
+  log `result: information System_Result009`). **Repack: lyt.py** (menus.bin; the engine runs on the old one, the
+  new layouts then stay off). Not ported, issues: CometRetryButton #660, GalaxyCometScreenFilter #661,
+  BombTimerLayout / NoteCounter / SuddenDeathMeter #662, the map in the domes #663, SysInfoWindow's A button #679.
+  Seen in PCSX2 (menus.bin from an overlay): `miss` (the wipe, Mario's icon x 3 on the black screen, `miss left:
+  4 -> 3`, the stage again, then the game over to the title), `result` with RESULT_COMPLETE (BGM_ASTRO_RETURN,
+  BGM_GALAXY_COMPLETE + System_Result009, BGM_HIGH_SCORE, the star pieces, System_Result001 with its A button in
+  the dome, System_Result007, the save), `route` EggStar 1 (its star). Not run: the 1UP board and the star
+  pieces' 1-up, the Tico's voice (the opening), the Sight (`launcher`), the pause menu's changes.
+  ponytail: the load after PlayerMissLeft and before the Tico's voice is not concurrent; no layout effects.
 - Enemy audit, third batch (feat/708-enemy-audit-3, #708, PR #710, 2026-11-18): Dossun: update_dossuns raised its
   step before the nerve ran, so a nerve's first frame was step 1 and no `*t == 0` block ever ran: no
   SE_OJ_DOSSUN_FALL_SIGN, no SE_OJ_DOSSUN_LAND, no Land effect, no shake; the step now counts from 0 (raised after

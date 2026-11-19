@@ -1668,6 +1668,8 @@ static void m_update_on_water(Player *m), m_update_on_sand(Player *m), m_update_
 static int m_floor_severe(const Player *m, int code), m_floor_sink(const Player *m), m_shadow_sound(void);
 static int m_swing_fx; /* Mario::_10._1: a spin started (MarioEffect::doCubeEffect plays the swing effect) */
 static int got_coins, got_purple, got_pieces;
+static int piece_prev, piece_last1up; /* ScenePlayingResult::incStarPiece: the count a frame ago, getLast1upStarPieceNum */
+static void request_one_up(void) { se_start(SE_SY_1UP, NULL); menu_one_up(1); } /* MR::requestOneUp: sSoundOneUp, OneUpBoard::popup(1) */
 /* CoinRotater (degrees a frame): coins 8, QuestionCoin its in-water matrix 4; StarPiece 15; PowerStar::processWait 3 */
 static float coin_rot, qcoin_rot, piece_rot, star_rot;
 static V3 cam_pos;
@@ -2624,7 +2626,12 @@ void game_init(const Scene *s, const unsigned char *blob)
     cube_bgm_invalid = 0; /* AudSceneMgr::startScene */
     audio_move_volume(1.0f, 0); /* (the BGM's volume as a scene starts: a talk balloon, a star's appear demo or a note
                                  * fairy cut by the scene's change would leave it down) */
-    gd_scene_start(); /* GameDataFunction's scene start holder (the isOnJust checks) */
+    /* GameDataFunction's scene start holder (the isOnJust checks, StageResultSequenceChecker's prev list).
+     * GameSequenceProgress::requestGalaxyMove stores it before a stage clear's star goes into the game data
+     * (updateGameDataAndSequenceAfterStageResultSequence); the star is set at its touch here, so after a clear the
+     * holder stays the cleared stage's start: the result window's new galaxy / complete / picture book checks see
+     * the star as new */
+    if (!seq_after_clear()) gd_scene_start();
     mc_table = &MC_TABLES[gd_player_luigi() ? 1 : 0]; /* MarioActor::init2: mConst->changeTable(1) when isPlayerLuigi */
     fx_init(s);
     talk_init(s);
@@ -14065,7 +14072,7 @@ static void hud_update(void)
                 }
             }
             if (c->nrv == HC_APPEAR && c->ap == AP_SHOW) hud_set(c, HC_WAIT);
-            else if (c->nrv == HC_WAIT && !c->forced && !(k == 3 && c->rumble) && c->disp == c->num && (c->step > 240 || busy)) hud_disappear(c);
+            else if (c->nrv == HC_WAIT && !c->forced && !(k == 3 && c->rumble) && c->disp == c->num && (c->step > 240 || menu_guidance_exists())) hud_disappear(c); /* isWaitToDisappearCounter */
             else if (c->nrv == HC_DISAPPEAR && c->ap == AP_HIDE) hud_set(c, HC_HIDE);
         }
     appearer:
@@ -14076,7 +14083,9 @@ static void hud_update(void)
     }
     if (dome_layout_off) return;
     /* the controller */
-    int moving = !mario->grounded || pad_lx() != 0.0f || pad_ly() != 0.0f || pad_held(0xFFFF) || busy;
+    /* isPlayerMoving: off the ground (but as the spring or the Boo, or swimming), the stick, any button, the system busy */
+    int moving = (player_mode != PM_HOPPER && player_mode != PM_TERESA && !swimming && !mario->grounded) ||
+                 pad_lx() != 0.0f || pad_ly() != 0.0f || pad_held(0xFFFF) || busy;
     int all = 1;
     for (int k = 0; k < 4; k++) all &= hud_hidden_or_wait(&hud[k]);
     if (hudc.nrv == 0 && !all) moving = 1;
@@ -17749,11 +17758,11 @@ static void mario_trample(void)
 }
 /* doTrampleJump on 全滅用クリボー (ChildKuribo): playSoundTrampleCombo(_989) (under 7: SE_SY_TRAMPLE_COMBO, port 11),
  * _989 + 1, at 8 or more a 1-up (requestOneUp, incPlayerLeft), then trampleJump. ponytail: no マリオ連続踏み counter
- * (CollectCounter's layout), no OneUpBoard */
+ * (CollectCounter's layout) */
 static void mario_trample_child(void)
 {
     if (m_combo < 7) { u32 h = se_start(SE_SY_TRAMPLE_COMBO, NULL); if (h) se_port(h, 11, (u16)m_combo); }
-    if (++m_combo >= 8) { lives++; se_start(SE_SY_1UP, NULL); printf("trample combo: 1-up, lives %d\n", lives); }
+    if (++m_combo >= 8) { lives++; request_one_up(); printf("trample combo: 1-up, lives %d\n", lives); }
     mario_trample();
 }
 /* doTrampleJump on an ATYPE_PLAYER_AUTO_JUMP sensor (a spring: JumpBeamer, JumpGuarder, BegomanSpring): _988 0,
@@ -24462,6 +24471,18 @@ static struct { int on, f, phase, pf, wipe_f, over, ghost, sink, abyss, nonstop,
 static int miss_running(void) { return mev.on; }
 static int miss_held(void) { return mev.on && !mev.nonstop; } /* (NonStop: isEnableMoveMario) */
 static int miss_in_abyss(void) { return mev.abyss; }
+/* doWaitAfterWipe: 30 frames after the wipe closed requestChangeStageAfterMiss. GameSequenceProgress::requestGalaxyMove's
+ * PlayerMissLeft (type 5, not a comet's scenario: isCometStar); the scene starts once it is dead (exeGalaxyMove) */
+static void miss_after_wipe(void)
+{
+    if (mev.pf == 30) {
+        char gal[32];
+        const char *sl = strchr(game_stage_name, '/');
+        snprintf(gal, sizeof gal, "%.*s", sl ? (int)(sl - game_stage_name) : 31, game_stage_name);
+        if (!gd_scenario_comet(gal, sl ? atoi(sl + 1) : 1)[0]) menu_miss_left_start(lives);
+    }
+    if (mev.pf++ >= 30 && menu_miss_left_dead()) seq_galaxy_move(SEQ_MISS, NULL, -1, -1, 0);
+}
 static void miss_event_update(void)
 {
     if (!mev.on) return;
@@ -24497,7 +24518,7 @@ static void miss_event_update(void)
             else if (menu_wipe_koopa_closed()) mev.phase = 2;
         }
         if (f == 120) { lives--; gd_add_miss_point(1); printf("miss %d, lives %d" "\n", ++misses, lives); }
-        if (mev.phase == 2 && mev.pf++ == 30) seq_galaxy_move(SEQ_MISS, NULL, -1, -1, 0);
+        if (mev.phase == 2) miss_after_wipe();
     } else {
         if (f == 30) dome_layout_off = 1;
         if (f == 30) bgm_sub("BGM_MISS"); /* sound */
@@ -24507,7 +24528,7 @@ static void miss_event_update(void)
             else if (menu_wipe_koopa_closed()) mev.phase = 2;
         }
         if (f == 120) { lives--; gd_add_miss_point(1); printf("miss %d, lives %d" "\n", ++misses, lives); } /* decLeft: decPlayerLeft */
-        if (mev.phase == 2 && mev.pf++ == 30) seq_galaxy_move(SEQ_MISS, NULL, -1, -1, 0); /* doWaitAfterWipe */
+        if (mev.phase == 2) miss_after_wipe();
     }
     if (next) mev.phase++;
     mev.f++;
@@ -27515,7 +27536,7 @@ static void update_bitems(void)
         if (mario_touch(sc_, 50.0f)) { /* ACTMES_ITEM_GET -> exeCatch */
             pad_rumble(RUMBLE_WEAK);
             if (b->life) { change_item_status(10); fx_named("BenefitItemObj", "GetLifeUp", b->base, NULL, NULL); }
-            else { fx_named("KinokoOneUp", "Get", b->base, NULL, NULL); se_start(SE_SY_1UP, NULL); lives++; }
+            else { fx_named("KinokoOneUp", "Get", b->base, NULL, NULL); request_one_up(); lives++; }
             b->on = 0;
             printf("kinoko %s %d: taken, lives %d\n", b->life ? "life up" : "1-up", i, lives);
         }
@@ -50659,6 +50680,7 @@ static int kast_event(int t, u32 v)
     }
     if (v == 2) { /* PeachLetter1Ups: incPlayerLeft x sMessangerOneUpExNum / sMessangerOneUpNum */
         lives += kast_peach == 2 ? 20 : 5;
+        menu_one_up(kast_peach == 2 ? 20 : 5); /* requestOneUp(sMessangerOneUpExNum / sMessangerOneUpNum) */
         se_start(SE_SY_5UP, NULL);
         printf("messenger: %d lives\n", lives);
         return 1;
@@ -58003,6 +58025,7 @@ void game_update(void)
                 for (int i = 0; i < 4; i++) shortb |= tk_bshort[i].nrv != BL_DEAD; /* isActiveTalkBalloonShort */
                 menu_chip_active(hud_on && !hud_layout_off());
                 menu_chip_update(shortb, sx, sy - sqrtf((vx - sx) * (vx - sx) + (vy - sy) * (vy - sy)));
+                menu_one_up_pos(sx, sy); /* OneUpBoard::calcPos: getPlayerCenterPos on the screen */
             }
         }
         io_update();
@@ -58241,10 +58264,18 @@ void game_update(void)
     if (life > max_life) life = max_life;
     if (got_coins > had && player_mode == PM_BEE)
         for (int q = 0; q < MC.mAirWalkTime / 8; q++) m_inc_air_walk(mario);
-    if (got_coins / 50 > had / 50) lives++; /* every 50 coins a 1-up */
+    if (got_coins / 50 > had / 50) { lives++; request_one_up(); } /* ScenePlayingResult::incCoin: requestOneUpIfNeed (COIN_STEP_NUM 50) */
     if (!opening_on) LQ(68, collect(purple, npurple, 100.0f, 55.0f, &got_purple, FX_PURPLECOIN_COINGET, SE_SY_PURPLE_COIN));
     if (!opening_on) LQ(69, collect(pieces, npieces, 120.0f, 30.0f, &got_pieces, FX_STARPIECE_STARPIECEGET, SE_SY_STAR_PIECE_GET)); /* gotByPlayer */
     LQ(70, update_cursor());
+    /* ScenePlayingResult::incStarPiece (the pieces gained since the last frame, the pointer's too): a 1-up at every
+     * STAR_PIECE_STEP_NUM 50 past the last one's (not in the Observatory: isStageAstroLocation) */
+    if (got_pieces > piece_prev && !on_stage("AstroGalaxy") && !on_stage("AstroDome") && !on_stage("LibraryRoom") &&
+        piece_last1up + 50 <= got_pieces) {
+        if (piece_prev / 50 < got_pieces / 50) { lives++; request_one_up(); printf("star pieces %d: 1-up, lives %d\n", got_pieces, lives); }
+        piece_last1up += 50;
+    }
+    piece_prev = got_pieces;
     coin_rot = fmodf(coin_rot + 8.0f * 0.0174533f, 6.2831853f);
     qcoin_rot = fmodf(qcoin_rot + 4.0f * 0.0174533f, 6.2831853f);
     piece_rot = fmodf(piece_rot + 15.0f * 0.0174533f, 6.2831853f);
