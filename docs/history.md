@@ -22,7 +22,27 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   face's two triangles, 10 out, as a DynamicCollisionObj: a wall for his binder, the camera and the other actors) is
   not ported, the push alone holds him; addVelocityFromArea's _EA4 and rush hosts but a launch star and the Tamakoro
   not checked. None follows an object (Obj_ID -1 in all). The put test takes its class from host:put.txt
-  (-DPUT_FILE: one ELF, a class a run).
+  (-DPUT_FILE: one ELF, a class a run; Mario put PUT_UP along the row's own up).
+  Tests of the four notes (#638, #639, #655, #656; one PR), plain with `XF="-DPACKS_OVERLAY=<overlay> -DPUT_TEST=HazeCube
+  -DPUT_FILE -DPUT_UP=100 -DPUT_NOCAM -DPUT_HOLD"` and the class in out/put.txt: KoopaBattleVs2Galaxy/1
+  DarkMatterCylinder "dark matter 1" (he lives: only the cube kills him) and PlaneCollisionCube "plane col 1";
+  HoneyBeeKingdomGalaxy/1 BeeWallShortDistAreaCube "bee short 1", and there "wall shade: row 114 cyl 1 ... dist 201"
+  (the ExtraWallCheckCylinder's face found, _208 eased to it); PhantomGalaxy/1 GlaringLightAreaCylinder "glaring 1";
+  HellProminenceGalaxy/1 HazeCube "haze: on" at 60 fps, CollisionArea "collision area: row 56 count 0 push 227 349
+  242" then count 1 at its face; EggStarGalaxy/2 CollisionArea (a plate of MysteryGravityRoomZone, 0.01 x 0.5 x 0.5:
+  the rails of its corner bridges) "count 0 push 50 0 0". With the overlay's CollisionArea rows: the route test
+  (EggStarGalaxy/1) still gets its star at f 4281, and XF=-DGROOM_TEST=1 (EggStarGalaxy/2, #557) still walks the
+  corner bridge onto the wall (`groom ... ok`, no push on the way). Not seen: SandClockGalaxy/1's ExtraWallCheckArea
+  (the area found, "no face within 1000" from the place Mario was put: the cubes there are 6000 wide), the shade's
+  fan in a picture (a quarter dark at its centre: not told apart in the still), the haze's wobble (a still), the
+  items got through plane_get, Teresa Mario turned back, SE_OJ_RAY_START, Karon / Metbo in the cylinder (no pad, no
+  such enemy there in the test). Memory: _end +7936 B (memcheck against the same tree without them). Repack:
+  slice_all.py (slice.py LOGIC) for AstroDome, BattleShipGalaxy, CannonFleetGalaxy, EggStarGalaxy, FactoryGalaxy,
+  FloaterOtakingGalaxy, HeavenlyBeachGalaxy, HeavensDoorGalaxy, HellProminenceGalaxy, HoneyBeeExGalaxy,
+  HoneyBeeKingdomGalaxy, IceVolcanoGalaxy, KoopaBattleVs1Galaxy, KoopaBattleVs2Galaxy, KoopaBattleVs3Galaxy,
+  KoopaJrShipLV1Galaxy, OceanFloaterLandGalaxy, OceanPhantomCaveGalaxy, OceanRingGalaxy, PhantomGalaxy,
+  ReverseKingdomGalaxy, SandClockGalaxy, TeresaMario2DGalaxy, TransformationExGalaxy; sound.py --pack for
+  OceanPhantomCaveGalaxy and PhantomGalaxy (SE_OJ_RAY_START once GlaringLightAreaCylinder is in their TYPE).
 - HazeCube's heat haze (feat/638-areas-named-nowhere, #655, 2026-11-18, agent areas2): `haze_update` (HeatHazeDirector::movement,
   Screen/HeatHazeEffect.cpp): with Mario in a HazeCube (9 placed: HellProminenceGalaxy and its zones,
   FloaterOtakingGalaxy, IceVolcanoGalaxy's IceRingB / VolcanoPlanet, KoopaBattleVs3D) the effect appears, its
