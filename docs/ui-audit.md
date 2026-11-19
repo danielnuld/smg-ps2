@@ -25,9 +25,9 @@ Started 2026-11-18. Rows are in the order seen most.
 | OneUpBoard | menu.c oub_* | fixed #658: was missing; with it MR::requestOneUp's SE_SY_1UP on the coins' 1-up and ScenePlayingResult::incStarPiece's 1-up every 50 star pieces. Left out: OneUpGet effect |
 | StarPieceCounter | game.c spc_* | ok (its modes, cHideFrameMin 3 / 20, the base offsets -94 / -120, the fast count down). Left out: the light effects; the Tico eat mode's guidance frame check (no pointer frame on the PS2) |
 | PurpleCoinCounter | game.c pc_* | ok. Left out: PurpleCoinCounterLight effect |
-| MarioMeter / MeterLayout | menu.c hm_* | ported, not re-read |
+| MarioMeter / MeterLayout | menu.c hm_* | ok (its twelve nerves; sAppearTime 120, sWaitStartTime 240, sBreakDelayTime 40 with SE_SY_LIFE_PLATE_DEC, sPowerUpWaitTime 60, sRecoveryCountInterval 5, sMoveToBasePositionTime 25, the alpha 0.3 .. 1.2, Danger's rates 4 / 2). Left out: the Break / Break123 effects |
 | SuddenDeathMeter | - | issue #662 |
-| MarioSubMeter / SubMeterLayout | menu.c subm_* | ported, not re-read |
+| MarioSubMeter / SubMeterLayout | menu.c subm_* | ok on its states (Appear, Wait, Danger under 0x40 with its rate, End after 60 frames full at rest); placed from Mario's centre instead of getPlayerPos: issue #707 |
 | TimeLimitLayout | menu.c tl_* | ok (sTimingTable, the scale 8 frames / 0.5, the count sounds at 600 / 360 / 120, TimeLimit at 600 left). Its Fadeout nerve is left out: the port takes DisplayModeOnNormal as always on (the comet timer's) |
 | NoteCounter | game.c (its count only) | issue #662 |
 | BombTimerLayout | - | issue #662 |
@@ -97,5 +97,5 @@ docs/sound-gaps.md lists no SE of a Screen/ class as missing but the Wii-only on
 layouts, the battery, Manual2P, MiiSelect's scroll, PowerStarList's capture) once this pass is in: what is left to
 check in the rows below is animation names and frames, not nerves gone.
 
-The rows marked "ported, not re-read", in this order: MarioMeter,
+The rows marked "ported, not re-read", in this order:
 ScenarioSelectStar, GalaxyMap and its icons, the file select, the save window, the staff roll.
