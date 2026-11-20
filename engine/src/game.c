@@ -39685,7 +39685,6 @@ static void seesaw_matrix(Inst *in) /* calcAndSetBaseMtx: its rotator's mRotateM
         in->m[4 * j + 3] = 0; in->m[12 + j] = r->pos[j];
     }
     in->m[15] = 1;
-    if (in->seesaw == 5 && in->railer && row_coord) railer_place(in); /* SeesawMoveNut: at its rail's coordinate */
 }
 static float seesaw_angle(V3 up, V3 gup) /* calcRotatedAngle: its up against gravity's, degrees */
 {
@@ -39794,6 +39793,11 @@ static void update_bridges(void)
  * without Mario on it (_CC): in Edge at the rail's end it starts again, and while slower than 0.5 its rotator is
  * forced by -0.02 a frame (forceRotateSeesaw1Axis: mAngularAccel). The generic rail mover does not run it
  * (update_railers). */
+static void seesaw_place(Inst *in) /* its rotator's matrix; SeesawMoveNut: at its rail's coordinate (in->railer is bound here) */
+{
+    seesaw_matrix(in);
+    if (in->seesaw == 5 && in->railer && row_coord) railer_place(in);
+}
 enum { NUT_NONE, NUT_HALFWAY, NUT_EDGE };
 static void nut_rotator(typeof(&seesaws[0]) o, int start) /* MapObjActorUtil::startRotator / endRotator */
 {
@@ -39888,7 +39892,7 @@ static void update_seesaws(void)
             float a = seesaw_angle(up, vmul(g, -1.0f));
             if (in->seesaw != 3 && limit > 0 && limit < a) { /* placed past its limit: turned back over it */
                 o->q = q_norm(q_mul(o->q, q_axis(ax, 1.05f * 0.0174533f * (a - limit))));
-                seesaw_matrix(in);
+                seesaw_place(in);
                 continue;
             }
         }
@@ -39918,7 +39922,7 @@ static void update_seesaws(void)
                 float sp = 0.0001f * stop;
                 o->q = q_lerp(o->q, qb, sp > 1 ? 1 : sp);
             }
-            seesaw_matrix(in);
+            seesaw_place(in);
             if (on) carry(old, in);
             continue;
         }
@@ -39953,7 +39957,7 @@ static void update_seesaws(void)
                     float d = o->vel;
                     if (o->nrv == SS_MOVESTART) d = 0.7f * (st <= 5 ? 1.0f : -1.0f) * seesaw_sign(o->vel); /* its dip under his landing: sGroundOnDownTime */
                     o->q = q_norm(q_mul(q_axis(ax, d * 0.0174533f), o->q));
-                    seesaw_matrix(in);
+                    seesaw_place(in);
                     if (on) carry(old, in);
                 }
             }
@@ -39991,7 +39995,7 @@ static void update_seesaws(void)
         if (limit >= 0) { /* (not bounced back) */
             o->angle += o->vel;
             o->q = q_norm(q_mul(q_axis(ax, o->vel * 0.0174533f), o->q)); /* the turn about its Z, before mRotateMtx */
-            seesaw_matrix(in);
+            seesaw_place(in);
             if (on) carry(old, in);
         }
         if (moving && se && fabsf(o->vel) > se_speed) in->lv[0] = se_level(se, &in->m[12], in->lv[0]);
