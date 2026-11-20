@@ -434,7 +434,7 @@ def map_parts(b, rs):
     n = len(rs)
     seesaws = {"PhantomShipHandle", "LavaHomeSeesaw", "KoopaShipSeesawStep", "IceVolcanoBalanceStepA", "IceVolcanoBalanceStepB",
                "IceMountainSeesawSlipA", "IceMountainSeesawSlipB", "IceMountainSeesawSlipC", "IceMountainSeesawSlipD",
-               "IceMountainSeesawNoSlipA"}  # MapPartsSeesaw1AxisRotator / 2AxisRotator / LavaHomeSeesawRotator hosts
+               "IceMountainSeesawNoSlipA", "SeesawMoveNutB"}  # MapPartsSeesaw1AxisRotator / 2AxisRotator / LavaHomeSeesawRotator hosts
     col = {f: int_or(b, f, n, -1) for f in ("RotateSpeed", "RotateAngle", "RotateAxis", "RotateType", "RotateAccelType",
                                            "MoveConditionType", "RotateStopTime", "SignMotionType")}
     for i, r in enumerate(rs):
