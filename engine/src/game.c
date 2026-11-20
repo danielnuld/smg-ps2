@@ -13581,20 +13581,24 @@ static int ts_test(void)
 /* TalkMessageCtrl::startCamera: CameraNormal startNPCTalkCamera (NPCUtil: between the talker and Mario, its distance
  * x atan2(1, cos 67.5) x max((height + offset y) / distance / 0.75, 1), twice that back, at least 450, height / 6 +
  * offset y up), CameraEvent its "会話" multi-actor camera of the message's camera set */
+static void tk_npc_camera(int k, float scale) /* MR::startNPCTalkCamera(distanceScale) */
+{
+    const Talker *t = &talkers[k];
+    V3 ap = v3(t->m[12], t->m[13], t->m[14]), up = vlen(mario->up) > 1e-6f ? vnorm(mario->up) : v3(0, 1, 0);
+    float dist = vlen(vsub(mario->pos, ap)), h = vdot(vsub(ap, mario->pos), up);
+    float sc_ = dist > 1e-3f ? (h + t->offy) / dist / 0.75f : 1.0f;
+    dist *= atan2f(1.0f, cosf(67.5f * 0.0174533f)) * (sc_ >= 1.0f ? sc_ : 1.0f);
+    float cd = 2.0f * dist * scale;
+    camera_talk_start(ap, up, h / 6.0f + t->offy, cd >= 450.0f ? cd : 450.0f);
+    td.cam_on = 1;
+}
 static void tk_start_camera(int k)
 {
     const Talker *t = &talkers[k];
     if (t->msg < 0) return;
     const TkMsg *mi = &tk_msg[t->msg];
-    if (mi->camtype == 0) {
-        V3 ap = v3(t->m[12], t->m[13], t->m[14]), up = vlen(mario->up) > 1e-6f ? vnorm(mario->up) : v3(0, 1, 0);
-        float dist = vlen(vsub(mario->pos, ap)), h = vdot(vsub(ap, mario->pos), up);
-        float sc_ = dist > 1e-3f ? (h + t->offy) / dist / 0.75f : 1.0f;
-        dist *= atan2f(1.0f, cosf(67.5f * 0.0174533f)) * (sc_ >= 1.0f ? sc_ : 1.0f);
-        float cd = 2.0f * dist;
-        camera_talk_start(ap, up, h / 6.0f + t->offy, cd >= 450.0f ? cd : 450.0f);
-        td.cam_on = 1;
-    } else if (mi->camtype == 1 && mi->cam && t->row >= 0) { /* startMultiActorCameraNoTarget: Mario's */
+    if (mi->camtype == 0) tk_npc_camera(k, 1.0f);
+    else if (mi->camtype == 1 && mi->cam && t->row >= 0) { /* startMultiActorCameraNoTarget: Mario's */
         if (camera_actor_start(sc->types + 32 * sc->objs[t->row].type, "会話", mi->cam, mario->up, mario->face, mario->pos))
             td.cam_on = 2;
     }
@@ -14086,6 +14090,14 @@ static void update_talkers(void)
 {
     if (!tk_nctl) return;
     rosetta_talk();
+#ifdef CARE_TEST /* (its zone sleeps until Mario is in it: he is put before the mission's Caretaker from here) */
+    for (u32 i = 0; game_frame == 300 && i < sc->nobjs; i++)
+        if (!strcmp(sc->types + 32 * sc->objs[i].type, "Caretaker") && care_mission(&sc->objs[i])) {
+            V3 x, z; row_axes(&sc->objs[i], &x, &z);
+            mario->pos = vadd(row_pos(&sc->objs[i]), vadd(vmul(z, 200.0f), vmul(vcross(z, x), 50.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; test_nolost = 1;
+            printf("care test: Mario before row %u%c", i, 10);
+        }
+#endif
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
         int sign = in->talkcls == 1, tico = in->talkcls == 2 || in->talkcls == 7 || in->talkcls == 8 || in->talkcls == 11; /* 7: TicoStarRing, 8: TicoComet, 11: TicoShop (Ticos) */
@@ -50888,17 +50900,29 @@ static void care_update(Inst *in, int k) /* the mission's nerves (update_talkers
     const Row *r = &sc->objs[in->row];
     if (care.at != sc || care.row != in->row) { care.at = sc; care.row = in->row; care.nrv = CT_WAIT; care.step = -1; care.ctrl = 0; }
 #ifdef CARE_TEST /* XF=-DCARE_TEST (plain, a galaxy with a mission Caretaker): Mario put 200 before it at frame 300; at
-                  * 400 the talk is skipped as answered Yes; in Tidy one BreakableTrash of its group is made dead every 30
-                  * frames from its step 120 (with -DCARE_TEST=2 none: the time runs out); a line every 60 frames */
+                  * 400 the talk is skipped as answered Yes (=3: the real talk, A through its pages, the pointer swept
+                  * down over the selector: Yes; =4: swept up: No); in Tidy an explosion at one BreakableTrash of its
+                  * group every 30 frames from its step 120 (=2: none: the time runs out); A through the talk after it;
+                  * a line every 60 frames */
     {
+        static int talked, var = -1; /* (the variant: host:tv.txt's digit when there is one, so one ELF runs them all) */
+        if (var < 0) { FILE *tf = fopen("host:tv.txt", "rb"); int c = tf ? fgetc(tf) : -1; if (tf) fclose(tf); var = c >= '1' && c <= '9' ? c - '0' : CARE_TEST + 0; printf("care test: variant %d%c", var, 10); }
         int t = scene_type(sc, "BreakableTrash"), alive = 0, first = -1;
         for (u32 i = 0; t >= 0 && i < sc->nobjs; i++)
             if ((int)sc->objs[i].type == t && sc->objs[i].group == r->group && sc->objs[i].zone == r->zone && !row_dead[i]) { alive++; if (first < 0) first = (int)i; }
-        if (game_frame == 300) { m_set_trans(vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(in->nf, 200.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; test_nolost = 1; }
-        if (care.nrv == CT_WAIT && game_frame == 400 && pd_try_start(CT_DEMO, in->row)) { mario_play("watch", 1.0f, 1); care_set(CT_PREWIPEOUT); }
-        if (CARE_TEST + 0 != 2 && care.nrv == CT_TIDY && care.step >= 120 && care.step % 30 == 0 && first >= 0) {
-            row_dead[first] = 1; sw_changed = 1;
-            if (sc->objs[first].sw[SW_DEAD] >= 0) sw_set((Row *)&sc->objs[first], SW_DEAD, 1);
+        pad_force = 0;
+        if (care.nrv == CT_PRETALK) talked = 1;
+        if (var < 3) {
+            if (care.nrv == CT_WAIT && game_frame >= 400 && !talked && pd_try_start(CT_DEMO, in->row)) { talked = 1; mario_play("watch", 1.0f, 1); care_set(CT_PREWIPEOUT); }
+        } else if (game_frame > 400 && (care.nrv == CT_PRETALK || (care.nrv == CT_WAIT && !talked))) {
+            cur_x = 160.0f + 80.0f * (float)(game_frame / 100 % 5);
+            cur_y = var == 3 ? 40.0f + 4.0f * (float)(game_frame % 100) : 440.0f - 4.0f * (float)(game_frame % 100);
+            if (game_frame % 8 < 2) pad_force = PAD_CROSS;
+        }
+        if ((care.nrv == CT_PSTTALK || care.nrv == CT_APPEAREDSTAR) && game_frame % 45 < 5) pad_force = PAD_CROSS;
+        if (var != 2 && care.nrv == CT_TIDY && care.step >= 120 && care.step % 30 == 0 && first >= 0) {
+            const Inst *ti = row_inst(first);
+            if (ti) explosion_breaks(v3(ti->m[12], ti->m[13], ti->m[14]), 10.0f); /* (a Bomb's: BreakableCage's break, its dead switch) */
         }
         if (game_frame % 60 == 0)
             printf("care test f %u: row %d nerve %d step %d, timer %d, SW_A %d (%d) SW_B %d (%d), trash %d, group %d, talker %d, star %d%c", game_frame, in->row, care.nrv, care.step,
@@ -50906,10 +50930,10 @@ static void care_update(Inst *in, int k) /* the mission's nerves (update_talkers
     }
 #endif
     int st = ++care.step, sw_a = r->sw[SW_A] >= 0 && sw_on(r, SW_A);
-    menu_bomb_timer_update();
+    if (!pd.name) menu_bomb_timer_update(); /* mBombTimerLayout's movement: none in a demo (only the demo's own actors move) */
     switch (care.nrv) {
     case CT_WAIT:
-        if (talk_near(k)) care_set(CT_PRETALK); /* tryTalkNearPlayerAndStartMoveTalkAction */
+        if (talk_near(k)) { tk_npc_camera(k, 1.3f); care_set(CT_PRETALK); } /* tryTalkNearPlayerAndStartMoveTalkAction, startNPCTalkCamera 1.3 */
         break;
     case CT_PRETALK:
         if (!talk_near_at_end(k)) break;
@@ -50924,6 +50948,7 @@ static void care_update(Inst *in, int k) /* the mission's nerves (update_talkers
         if (menu_wipe_active()) break;
         mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale); /* setRailCoord 0, setDefaultPose */
         care_player_at("バトルシップ・タイムアタック前位置");
+        if (td.cam_on == 1) { camera_talk_end(); td.cam_on = 0; } /* endNPCTalkCamera(false, 0) */
         menu_bomb_timer_appear(); menu_bomb_timer_suspend(1); menu_bomb_timer_limit(care_limit(r) * 60);
         care_set(CT_PREWIPEIN);
         break;
@@ -50975,6 +51000,7 @@ static void care_update(Inst *in, int k) /* the mission's nerves (update_talkers
         drop_damage(); /* tryPlayerKillTakingActor */
         care_player_at("バトルシップ・タイムアタック後位置");
         mario_play("watch", 1.0f, 1);
+        tk_npc_camera(k, 1.3f); /* startNPCTalkCamera(1.3, 1) */
         care_set(CT_PSTWIPEIN);
         break;
     case CT_PSTWIPEIN:
