@@ -208,6 +208,21 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   Checked and not gaps: SpaceMine's Appear SEs (the nerve is never set), Rabbit's HOP / CHANGE SEs (no placed row
   has the rail behaviour, arg1 0), SE_OJ_SMN_VOLC_COL_S_BREAK (SubmarineVolcanoSmallColumn is placed nowhere),
   SE_OJ_PLANT_MARIO_UP_START (only stopped), SE_SY_PLAYER_LEFT_DEC (menu.c plays it).
+- Sound gaps, a batch of map objects, part of #15 (feat/15-sound-gaps-6, 2026-11-19; written without the emulator:
+  **not run in PCSX2** until its PR says so; docs/sound-gaps.md after `tools/sndgaps.py`: 67 names left before it).
+  Each with the piece of its class that was missing: TreasureBoxCracked's gold box (`tbox_open(in, how)`: a thrown
+  shell is refused with Shock, SE_OJ_TERAS_BOX_GOLD_REFUSE and SE_SY_FAILURE_1; the GoldenTurtle, ATYPE_SPECIAL_WEAPON,
+  opens it: it never opened); WarpPod's SE_OJ_WARP_POD_ACTIVE when its delay runs out (a shown one);
+  PunchingKinoko's requestEnemyBlow (another one's swinging head on a waiting one: 25 away,
+  SE_OJ_PNC_KINOKO_HIT_SELF; its Hitted nerve is never set in Petari); PhantomTorch / PhantomBonfire's burn level
+  sounds (SE_OJ_LV_PHANTOM_TOACH_BURN / SE_OJ_LV_BONFIRE_BURN: update_torches played neither);
+  LavaBreakColumn::control (`lbc_control`: the LavaColumn effect and SE_OJ_LAVA_COLUMN_FALL_ED once its foot is
+  under the map); UFOBlueStarCupsule's SE_OJ_LV_UFO_BLUE_STAR_MOVE while its rail mover works;
+  QuestionBoxGalleryObj (statics.inc `st_qbox`, ST_QBOX: QuestionBoxMoveStepA / B / C were still models: OnWait /
+  OffWait by arg0, SW_A: SE_OJ_Q_BOX_LIGHT_ON and On, SW_B: SE_OJ_Q_BOX_LIGHT_OFF and Off; tools/slice.py
+  SKINNED_OBJ for their On / Off clips: **repack** the galaxy with QuestionBoxZone). Not gaps: SE_OJ_SANDSTORM_BIND_END
+  (Petari's ptmf test always plays the S one), SE_OJ_PLANT_MARIO_UP_START (only stopped), SE_OJ_CRYSTAL_CAGE_S_DAMAGE
+  (the two-hit path is the L cage's), SE_OJ_SMN_VOLC_COL_S_BREAK (SubmarineVolcanoSmallColumn is not placed).
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /

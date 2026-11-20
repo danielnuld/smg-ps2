@@ -2150,7 +2150,7 @@ static int npls; static void update_palms(void), pl_place(Inst *in);
 static int nlls; static void update_lotus(void), ll_place(Inst *in);
 #define TRAIN_CARS 8
 #define TRAIN_CARS_ROOM TRAIN_CARS
-static void update_levers(void), update_dswitches(void), update_tboxes(void), tbox_hit(V3 p, float r);
+static void update_levers(void), update_dswitches(void), update_tboxes(void), tbox_hit(V3 p, float r, int how);
 static int anm_kind(const char *n); static void update_anmmodels(void);
 static int nass; static void update_arrows(void), as_place(Inst *in);
 static int nebl; static void update_eballs(void), draw_eballs(void);
@@ -5319,6 +5319,16 @@ static void update_punch(void)
                 int took = walker_blow(e, in->head);
                 if (took < 0) { e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up); pop_coins(e->pos, e->up, 1); }
                 if (took) { hit = 1; hit_at = ec; printf("punching kinoko %d blows walker row %d" "\n", row, e->row); }
+            }
+            for (int j = 0; j < ninsts && !hit; j++) { /* another PunchingKinoko's head in Wait (isEnableBlowed): requestEnemyBlow,
+                                                         * 25 away across its gravity, SE_OJ_PNC_KINOKO_HIT_SELF */
+                Inst *o = &insts[j];
+                if (j == i || !o->punch || !row_shown(o->row) || row_turn[o->row] != 0 || vlen(vsub(in->head, o->head)) > 70.0f + 70.0f) continue;
+                V3 dh = vtangent(vsub(o->head, in->head), up_at(o->head, up));
+                o->hvel = vadd(o->hvel, vmul(vlen(dh) > 1e-3f ? vnorm(dh) : v3(0, 0, 0), 25.0f));
+                se_start(SE_OJ_PNC_KINOKO_HIT_SELF, &o->m0[12]);
+                hit = 1; hit_at = o->head;
+                printf("punching kinoko %d blows kinoko %d" "\n", row, o->row);
             }
             if (!hit && kp_blow(in->head, 70.0f, &hit_at)) { hit = 1; printf("punching kinoko %d blows Koopa" "\n", row); }
         }
@@ -10070,7 +10080,7 @@ static void warp_try(Player *m)
         unsigned short *d = &row_step[in->row];
         float dist = vlen(vsub(m->pos, v3(r->pos[0], r->pos[1], r->pos[2])));
         if (*d) { /* mDelay: held at 1 while Mario stays within 200 */
-            if (*d > 1 || dist >= 200.0f) --*d;
+            if ((*d > 1 || dist >= 200.0f) && --*d == 0 && r->arg[1] != 0) se_start(SE_OJ_WARP_POD_ACTIVE, r->pos); /* movement: Active again (a shown one: mVisibilityState) */
             continue;
         }
         float rad = (r->arg[1] == 0 ? 120.0f : 15.0f) * r->scale[0] + HIT_BODY_R;
@@ -15873,6 +15883,8 @@ static void update_torches(void)
     static const Scene *at;
     if (at != sc) { at = sc; t[0] = scene_type(sc, "PhantomTorch"); t[1] = scene_type(sc, "PhantomBonfire"); }
     if (t[0] < 0 && t[1] < 0) return;
+    static u32 tlv[48]; /* their burn level sounds, in the rows' order (ponytail: the first 48 lit ones) */
+    int nlv = 0;
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     for (u32 i = 0; i < sc->nobjs; i++) {
         const Row *r = &sc->objs[i];
@@ -15898,6 +15910,7 @@ static void update_torches(void)
             continue;
         }
         if (render_visible(r->pos, 500.0f * s)) fx_named(name, name, m, NULL, r); /* emitEffect(mParticle) unless clipped (sphere 500 x scale) */
+        if (nlv < 48) { tlv[nlv] = se_level(r->type == t[1] ? SE_OJ_LV_BONFIRE_BURN : SE_OJ_LV_PHANTOM_TOACH_BURN, r->pos, tlv[nlv]); nlv++; } /* exeWait / exeAttack: its burn by mParticle */
         if (*st == 1 && ++*n >= 30) { *st = 0; *n = 0; } /* Attack: isStep 30 */
         if (r->arg[1] != -1) continue; /* mIsDecorative */
         if (*st == 0 && vlen(vsub(c, body)) < 50.0f * s + HIT_BODY_R && !mario->hurt_timer) { /* attackSensor */
@@ -16275,7 +16288,7 @@ static void update_jets(void)
             if (!gone && kiraira_shot(p, 60.0f, 1)) gone = 1; /* Kiraira: isMsgJetTurtleAttack (force-detonated) */
             if (!gone && cage_jet_hit(p, 60.0f)) gone = 1; /* BreakableCage (its five kinds): isMsgJetTurtleAttack: tryBreak */
             hhp_blow(p, 60.0f); /* HammerHeadPackun: isMsgJetTurtleAttack */
-            tbox_hit(p, 60.0f); /* TreasureBoxCracked: isMsgJetTurtleAttack */
+            tbox_hit(p, 60.0f, jet_gold(in) ? 2 : 1); /* TreasureBoxCracked: isMsgJetTurtleAttack (the golden shell: ATYPE_SPECIAL_WEAPON) */
             for (int k = 0; k < nkuribo; k++) { /* ACTMES_JET_TURTLE_ATTACK */
                 Kuribo *e = &kuribo[k];
                 if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY ||
@@ -30722,7 +30735,7 @@ static void update_bbd_bombs(void)
             }
             float t = st >= 10 ? 1.0f : st / 10.0f, rad = 280.0f * (1.0f - (1.0f - t) * (1.0f - t)); /* calcNerveEaseOutValue(10, 0, 280) */
             if (!mario->hurt_timer && vlen(vsub(mc, b->pos)) < rad + HIT_BODY_R) mario_attack(ATK_EXPLOSION, b->pos); /* sendMsgEnemyAttackExplosion */
-            tbox_hit(b->pos, rad);
+            tbox_hit(b->pos, rad, 0);
             explosion_breaks(b->pos, rad);
             if (st > 20) { bbd_bomb_kill(i); continue; } /* sExplosionTime */
         }
@@ -35034,7 +35047,7 @@ static void bomb_update(Kuribo *k)
             k->timer = -1;
         }
         if (!mario->hurt_timer && vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), c)) < rad + HIT_BODY_R) mario_attack(ATK_EXPLOSION, c);
-        tbox_hit(c, rad); /* isMsgExplosionAttack */
+        tbox_hit(c, rad, 0); /* isMsgExplosionAttack */
         explosion_breaks(c, rad);
         if (st > 8) {
             if (launcher) { w_nrv(k, BH_GONE); return; }
@@ -40772,6 +40785,9 @@ static void update_railers(void)
         else if (se == 'D' || se == 'K') in->lv[0] = se_level(stage_se[in->stage - 1].mv, &in->m[12], in->lv[0]); /* getMovingSe */
         else if (st_ufo_move_se(sc->types + 32 * r->type)) /* UFOBase::control: while its rail mover works (its end SE at isDone) */
             in->lv[0] = se_level(st_ufo_move_se(sc->types + 32 * r->type), &in->m[12], in->lv[0]);
+        else if (!strcmp(sc->types + 32 * r->type, "UFOStrongA")) /* UFOBase::control: while its rail mover works (its end SE at isDone) */
+            in->lv[0] = se_level(SE_OJ_LV_UFO_MOVE, &in->m[12], in->lv[0]);
+        else if (in->gcap == 3) in->lv[1] = se_level(SE_OJ_LV_UFO_BLUE_STAR_MOVE, &in->m[12], in->lv[1]); /* BlueStarCupsulePlanet::updatePose: UFOBlueStarCupsule while its rail mover works */
         float c = row_coord[row], old[16];
         int dir = row_rdir[row], type = stop >= 0 ? stop : 1;
         const unsigned char *pb = pa + 12 * nr; /* nr x {s32 arg1, s32 arg2} */
@@ -44402,12 +44418,32 @@ static int obj_start(const Inst *in, const char *clip) /* tryStartAllAnim: the c
 static int anm_kind(const char *n)
 {
     static const char *const k1[] = {"PhantomShipPropellerBig", "PhantomShipPropellerSmall", "LavaObstacleRockHomeB", "LavaFallDownColumnA", "LavaFallDownColumnB", "HeavenlyBeachUnderRock", "ShutterDoorC", "ShutterDoorD", "ShutterDoorE", "MechaKoopaPartsCaterpillar", "IceVolcanoAppearStepA", "IceVolcanoAppearStepB", "IceVolcanoClimbingWall", "IceUpDownShutterDoorA"};
-    static const char *const k2[] = {"LavaBreakRockA", "HeavenlyBeachTopRock", "LavaBreakColumn"}; /* LavaBreakColumn: ponytail, no LavaColumn effect */
+    static const char *const k2[] = {"LavaBreakRockA", "HeavenlyBeachTopRock", "LavaBreakColumn"}; /* (LavaBreakColumn::control: lbc_control) */
     static const char *const k3[] = {"LavaBreakBridge", "LavaBreakRockB", "LavaBreakRockC", "LavaBreakRockD"};
     for (u32 i = 0; i < sizeof k1 / sizeof *k1; i++) if (!strcmp(n, k1[i])) return 1;
     for (u32 i = 0; i < sizeof k2 / sizeof *k2; i++) if (!strcmp(n, k2[i])) return 2;
     for (u32 i = 0; i < sizeof k3 / sizeof *k3; i++) if (!strcmp(n, k3[i])) return 3;
     return !strcmp(n, "TeresaRacePartsB") ? 4 : !strcmp(n, "TeresaRoomDoor") ? 5 : 0;
+}
+/* LavaBreakColumn::control: until it has fallen, the map under its Move joint (calcMapGround: 5000 down the world's Y)
+ * against the point 1000 down its own Y from the joint: once that point is under the map along its gravity, the
+ * LavaColumn effect there (setEffectHostSRT: mEffectPos) and SE_OJ_LAVA_COLUMN_FALL_ED. GapSt i: mIsPillarFallen */
+static void lbc_control(Inst *in)
+{
+    GapSt *g = gap_st(in->row);
+    if (g->i || in->kmove < 0 || !in->anim) return;
+    float jm[16], m[16];
+    mat_mul(jm, in->m, in->anim->world[in->kmove]);
+    V3 pos = v3(jm[12], jm[13], jm[14]), gnd, up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+    if (!map_poly(pos, v3(0, -5000.0f, 0), &gnd, NULL)) return; /* sEffectPosOffsetY */
+    V3 diff = vsub(gnd, vsub(pos, vmul(up, 1000.0f)));
+    if (vlen(diff) < 1e-6f || vdot(vnorm(diff), vmul(up_at(pos, up), -1.0f)) >= 0.0f) return;
+    mat_identity(m);
+    m[12] = gnd.x; m[13] = gnd.y; m[14] = gnd.z;
+    fx_named("LavaBreakColumn", "LavaColumn", m, NULL, NULL);
+    se_start(SE_OJ_LAVA_COLUMN_FALL_ED, &in->m[12]); /* startSound(this): at the actor, not at mEffectPos (5000 under it: out of hearing) */
+    g->i = 1;
+    printf("lava break column %d: fallen%c", in->row, 10);
 }
 static void update_anmmodels(void)
 {
@@ -44419,6 +44455,7 @@ static void update_anmmodels(void)
         signed char *n = &row_turn[in->row];
         unsigned short *st = &row_step[in->row];
         int k = in->stage - 1, cam = stage_cam_of(sc->types + 32 * r->type);
+        if (in->anmmodel == 2 && !strcmp(sc->types + 32 * r->type, "LavaBreakColumn")) lbc_control(in);
         if (*st < 0xFFFF) ++*st;
         if (*n == 0) {
             /* isOnStartAnmTrigger (AnmModelBindMove: the rush actor, GCapture, binded to its body) */
@@ -44587,23 +44624,27 @@ static int tbox_star_out(int row) /* a TreasureBoxPowerStar past its OpenWait st
 {
     return row_turn[row] && row_step[row] >= 11 && !strcmp(sc->types + 32 * sc->objs[row].type, "TreasureBoxPowerStar");
 }
-static void tbox_open(Inst *in) /* receiveMsgPlayerAttack (isMsgJetTurtleAttack) / receiveMsgEnemyAttack (isMsgExplosionAttack) */
+static void tbox_open(Inst *in, int how) /* receiveMsgPlayerAttack (isMsgJetTurtleAttack; how 1, the golden shell 2) / receiveMsgEnemyAttack (isMsgExplosionAttack; how 0) */
 {
     const Row *r = &sc->objs[in->row];
     if (row_turn[in->row] != 0) return;
-    if (r->arg[2] == 1) { se_start(SE_OJ_TERAS_BOX_GOLD_REFUSE, &in->m[12]); return; }
+    if (r->arg[2] == 1 && how != 2) { /* mOpenCondition 1 (the gold one): only ATYPE_SPECIAL_WEAPON opens it; a shell: Shock, the refusal and SE_SY_FAILURE_1 */
+        if (how == 1) { obj_play(in, "Shock", 0, 0); se_start(SE_SY_FAILURE_1, NULL); }
+        se_start(SE_OJ_TERAS_BOX_GOLD_REFUSE, &in->m[12]);
+        return;
+    }
     float dep;
     row_turn[in->row] = 1; row_step[in->row] = 0;
     obj_play(in, "Open", 0, 0);
     se_start(in_water(v3(in->m[12], in->m[13], in->m[14]), v3(in->m[4], in->m[5], in->m[6]), &dep) ? SE_OJ_TREASURE_BOX_OPEN_W : SE_OJ_TREASURE_BOX_OPEN, &in->m[12]);
 }
-static void tbox_hit(V3 p, float r) /* a jet turtle or an explosion at p */
+static void tbox_hit(V3 p, float r, int how) /* a jet turtle (how 1, golden 2) or an explosion (0) at p */
 {
     FOR_KIND(i, tbox) {
         Inst *in = &insts[i];
         if (!in->tbox || !row_shown(in->row)) continue;
         V3 c = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), 50.0f)); /* body 200 at 50 up */
-        if (vlen(vsub(c, p)) < 200.0f + r) tbox_open(in);
+        if (vlen(vsub(c, p)) < 200.0f + r) tbox_open(in, how);
     }
 }
 #ifdef KINOKO_TEST
@@ -44630,7 +44671,7 @@ int game_test_kinoko(int frame)
             if (kuribo[k].kind == WALK_KANINA && !ka_red(&kuribo[k])) { printf("kinoko test: kanina row %d\n", kuribo[k].row); ka_item(&kuribo[k]); break; }
     if (frame == 800)
         for (int i = 0; i < ninsts; i++)
-            if (insts[i].tbox && strstr(sc->types + 32 * sc->objs[insts[i].row].type, "Kinoko")) { printf("kinoko test: box row %d\n", insts[i].row); tbox_open(&insts[i]); break; }
+            if (insts[i].tbox && strstr(sc->types + 32 * sc->objs[insts[i].row].type, "Kinoko")) { printf("kinoko test: box row %d\n", insts[i].row); tbox_open(&insts[i], 0); break; }
     int n = 0;
     for (int i = 0; i < MAX_BITEMS; i++) {
         if (!bitm[i].on) continue;
@@ -44724,7 +44765,7 @@ static void update_tbox_items(void) /* a chip's or an air bubble's box, opened: 
             int ready, item = in->tbox ? tbox_item(sc->types + 32 * sc->objs[in->row].type) : 0;
             if (!item) continue;
             if (t0 < 0) { t0 = tf; printf("tbox test: box row %d (%s) in at f %d%c", in->row, sc->types + 32 * sc->objs[in->row].type, tf, 10); }
-            if (tf == t0 + 100) tbox_open(in);
+            if (tf == t0 + 100) tbox_open(in, 0);
             if (tf < t0 + 150) { mario->pos = held; mario->hvel = v3(0, 0, 0); mario->vup = 0; }
             else if (tf < t0 + 160 && !row_hold[in->row]) { mario->pos = vsub(tbox_item_pos(in, item, row_step[in->row] - 1, &ready), vmul(mario->up, HIT_BODY_H)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
             if (tf > t0 + 100 && tf < t0 + 150 && tf % 4 == 0) { V3 a = tbox_item_pos(in, item, row_step[in->row] - 1, &ready); printf("tbox test f %d: item %d at %d %d %d ready %d%c", tf - t0, item, (int)a.x, (int)a.y, (int)a.z, ready, 10); }

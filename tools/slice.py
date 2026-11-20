@@ -99,6 +99,7 @@ SKINNED_OBJ += ("PrizeRing",)  # PrizeRing.cpp: Start / Loop / End, its Number B
 SKINNED_OBJ += ("CrystalCageMoving",)  # Wait / CoreWait, its BreakOutside / BreakInside effects (statics.inc st_ccm)
 SKINNED_OBJ += ("SpaceShipStep",)  # Wait / OnMario / Break, its Appear effect (statics.inc st_sstep)
 SKINNED_OBJ += ("MechaKoopaPartsArmRight", "MechaKoopaPartsArmLeft")  # Front / Rear / BreakStart, the right one's Spark / BlackSmoke (statics.inc st_mkarm)
+SKINNED_OBJ += ("QuestionBoxMoveStepA", "QuestionBoxMoveStepB", "QuestionBoxMoveStepC")  # QuestionBoxGalleryObj: its On / Off clips (statics.inc st_qbox)
 SKINNED_OBJ += ("JumpGuarder", "JumpGuarderHead")  # JumpGuarder (game.c update_rbeamers: rbeamer 3) and its head
 SKINNED_OBJ += ("SubmarineVolcanoBigColumnBreak",)  # SubmarineVolcanoBigColumn: its break model's Break (statics.inc)
 SKINNED_OBJ += ("LavaObstacleRockShell", "LavaObstacleRockHomeA", "ForestObstacleWoodA")  # HipDropMoveObj / HipDropDemoMoveObj: Move, the collision on the Move joint (game.c update_hipmoves)
