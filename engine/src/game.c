@@ -920,6 +920,9 @@ static const Model *m_sambohead;
 static int test_cross; /* test builds: X held (Bee Mario) */
 static unsigned char zone_kcl[64]; /* zones with collision bound (game_rebind): walkers wait in the others */
 static unsigned char zone_low[MAX_ZONES]; /* zones streamed in low (game_zone_sets): no collision of their own, only pieces of the base packs */
+#ifdef CARE_TEST
+static int care_test_seen; /* care_update ran: its Caretaker is awake */
+#endif
 static int test_nolost; /* test builds: no miss for falling off (Mario sent to a zone still streaming in) */
 static void notes_spawn(void);
 static int note_rail(const Row *r, const unsigned char **e);
@@ -1617,6 +1620,8 @@ static int obj_play(const Inst *in, const char *clip, int loop, int interp);
 static int lg_cls(const char *name);              /* LuigiNPC 1, LuigiEvent 2 (the LuigiNPC section) */
 static int luigi_took(int row);                    /* his star taken out (TakeOutStar), not just made dead at init */
 static int coach_took(int row);                    /* PenguinCoach: its TakeOutStar over */
+static int care_took(int row), care_mission(const Row *r), care_limit(const Row *r), care_ctrl_off(void), care_puppet(void), care_busy(int row); /* Caretaker's tidy-up mission */
+static int care_event(int k, u32 v), care_branch(int k, u32 v), care_anime(int k, u32 v); static void care_update(Inst *in, int k);
 static int race_took(int row);                     /* TeresaRacer / PenguinRacerLeader: its TakeOutStar over (race.inc) */
 static int pg_branch(int k, u32 v), pg_event(int k, u32 v); /* PenguinCoach / PenguinStudent talk */
 static int kino_took(int row), kino_event(int k, u32 v); /* Kinopio's power star mode: its TakeOutStar over, its eventFunc */
@@ -6176,7 +6181,7 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 || strcmp(name, "KinopioAstro") == 0 ? 3 :
                   strcmp(name, "ButlerMap") == 0 ? 4 : strcmp(name, "Butler") == 0 ? 5 : lg_cls(name) ? 6 : strcmp(name, "TicoStarRing") == 0 ? 7 : strcmp(name, "TicoComet") == 0 ? 8 : strcmp(name, "HoneyBee") == 0 ? 10 : strcmp(name, "TicoShop") == 0 ? 11 :
                   strcmp(name, "Penguin") == 0 || strcmp(name, "PenguinCoach") == 0 || strcmp(name, "PenguinStudent") == 0 ? 12 :
-                  strcmp(name, "PenguinMaster") == 0 ? 13 : 0;
+                  strcmp(name, "PenguinMaster") == 0 ? 13 : strcmp(name, "Caretaker") == 0 ? 14 : 0;
     ci->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 :
                strcmp(name, "DimensionAir") == 0 ? 4 : strcmp(name, "TwilightAir") == 0 || strcmp(name, "DarknessRoomAir") == 0 ||
                strcmp(name, "HomeAir") == 0 || strcmp(name, "SphereAir") == 0 || strcmp(name, "SunsetAir") == 0 ||
@@ -13815,20 +13820,24 @@ static int ts_test(void)
 /* TalkMessageCtrl::startCamera: CameraNormal startNPCTalkCamera (NPCUtil: between the talker and Mario, its distance
  * x atan2(1, cos 67.5) x max((height + offset y) / distance / 0.75, 1), twice that back, at least 450, height / 6 +
  * offset y up), CameraEvent its "会話" multi-actor camera of the message's camera set */
+static void tk_npc_camera(int k, float scale) /* MR::startNPCTalkCamera(distanceScale) */
+{
+    const Talker *t = &talkers[k];
+    V3 ap = v3(t->m[12], t->m[13], t->m[14]), up = vlen(mario->up) > 1e-6f ? vnorm(mario->up) : v3(0, 1, 0);
+    float dist = vlen(vsub(mario->pos, ap)), h = vdot(vsub(ap, mario->pos), up);
+    float sc_ = dist > 1e-3f ? (h + t->offy) / dist / 0.75f : 1.0f;
+    dist *= atan2f(1.0f, cosf(67.5f * 0.0174533f)) * (sc_ >= 1.0f ? sc_ : 1.0f);
+    float cd = 2.0f * dist * scale;
+    camera_talk_start(ap, up, h / 6.0f + t->offy, cd >= 450.0f ? cd : 450.0f);
+    td.cam_on = 1;
+}
 static void tk_start_camera(int k)
 {
     const Talker *t = &talkers[k];
     if (t->msg < 0) return;
     const TkMsg *mi = &tk_msg[t->msg];
-    if (mi->camtype == 0) {
-        V3 ap = v3(t->m[12], t->m[13], t->m[14]), up = vlen(mario->up) > 1e-6f ? vnorm(mario->up) : v3(0, 1, 0);
-        float dist = vlen(vsub(mario->pos, ap)), h = vdot(vsub(ap, mario->pos), up);
-        float sc_ = dist > 1e-3f ? (h + t->offy) / dist / 0.75f : 1.0f;
-        dist *= atan2f(1.0f, cosf(67.5f * 0.0174533f)) * (sc_ >= 1.0f ? sc_ : 1.0f);
-        float cd = 2.0f * dist;
-        camera_talk_start(ap, up, h / 6.0f + t->offy, cd >= 450.0f ? cd : 450.0f);
-        td.cam_on = 1;
-    } else if (mi->camtype == 1 && mi->cam && t->row >= 0) { /* startMultiActorCameraNoTarget: Mario's */
+    if (mi->camtype == 0) tk_npc_camera(k, 1.0f);
+    else if (mi->camtype == 1 && mi->cam && t->row >= 0) { /* startMultiActorCameraNoTarget: Mario's */
         if (camera_actor_start(sc->types + 32 * sc->objs[t->row].type, "会話", mi->cam, mario->up, mario->face, mario->pos))
             td.cam_on = 2;
     }
@@ -14320,6 +14329,20 @@ static void update_talkers(void)
 {
     if (!tk_nctl) return;
     rosetta_talk();
+#ifdef CARE_TEST /* (its zone sleeps until Mario is in it: he is put before the mission's Caretaker from here) */
+    static int care_tt;
+    int care_m = -1, care_p = -1; /* the mission's Caretaker; else the scene's first one: its plain talk, A tapped */
+    for (u32 i = 0; i < sc->nobjs; i++)
+        if (!strcmp(sc->types + 32 * sc->objs[i].type, "Caretaker")) { if (care_mission(&sc->objs[i])) { if (care_m < 0) care_m = (int)i; } else if (care_p < 0 && row_shown((int)i)) care_p = (int)i; }
+    if (!in_opening && mario->launch < 0 && !care_test_seen) care_tt++;
+    if (care_m < 0 && care_p >= 0 && care_tt > 120) pad_force = care_tt % 45 < 5 ? PAD_CROSS : 0;
+    if (!care_test_seen && (care_m >= 0 ? care_tt % 120 == 60 : care_tt == 60) && (care_m >= 0 || care_p >= 0)) {
+        const Row *cr = &sc->objs[care_m >= 0 ? care_m : care_p];
+        V3 x, z; row_axes(cr, &x, &z);
+        mario->pos = vadd(row_pos(cr), vadd(vmul(z, 200.0f), vmul(vcross(z, x), 50.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; test_nolost = 1;
+        printf("care test: Mario before row %d (mission %d)%c", care_m >= 0 ? care_m : care_p, care_m >= 0, 10);
+    }
+#endif
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
         int sign = in->talkcls == 1, tico = in->talkcls == 2 || in->talkcls == 7 || in->talkcls == 8 || in->talkcls == 11; /* 7: TicoStarRing, 8: TicoComet, 11: TicoShop (Ticos) */
@@ -14332,7 +14355,7 @@ static void update_talkers(void)
         int bee_lec = in->talkcls == 10 && (sc->objs[in->row].arg[0] == 8 || sc->objs[in->row].arg[0] == 9); /* FlyLectureA / B: mTalkMtx _160, no offset */
         /* Penguin / PenguinStudent: initTalkCtrl (0, 150, 0); PenguinCoach: caps.mMessageOffset (0, 430, 0) */
         float pg_offy = in->talkcls == 13 ? 430.0f : in->talkcls != 12 ? 0.0f : !strcmp(sc->types + 32 * sc->objs[in->row].type, "PenguinCoach") ? 430.0f : 150.0f; /* PenguinMaster: caps.mMessageOffset (0, 430, 0), setDistanceToTalk 350 */
-        int k = talk_new(lab, in->talkcls == 11 ? -1 : in->row, in->row, pg_offy > 0 ? pg_offy : sign || in->talkcls == 5 || (in->talkcls == 10 && !bee_lec) ? 150.0f : bee_lec ? 0.0f : tico ? 120.0f : 122.0f * 1.2f,
+        int k = talk_new(lab, in->talkcls == 11 ? -1 : in->row, in->row, pg_offy > 0 ? pg_offy : sign || in->talkcls == 5 || in->talkcls == 14 || (in->talkcls == 10 && !bee_lec) ? 150.0f : bee_lec ? 0.0f : tico ? 120.0f : 122.0f * 1.2f,
                          tico || pg_offy == 430.0f ? 350.0f : 240.0f); /* PenguinCoach: setDistanceToTalk 350 */
         if (k < 0) continue;
         Talker *t = &talkers[k];
@@ -14354,6 +14377,10 @@ static void update_talkers(void)
             if (in->talkcls == 5) t->branch = butler_branch;
             if (in->talkcls == 12) { t->branch = pg_branch; t->event = pg_event; } /* PenguinCoach / PenguinStudent::init: registerBranchFunc / EventFunc */
             if (in->talkcls == 6) { t->event = luigi_event; t->branch = luigi_branch; } /* LuigiNPC::init: registerBranchFunc / EventFunc */
+            if (in->talkcls == 14) { /* Caretaker::init: registerBranchFunc / EventFunc; the mission's animeFunc, setMessageArg, setDistanceToTalk */
+                t->event = care_event; t->branch = care_branch;
+                if (care_mission(&sc->objs[in->row])) { t->anime = care_anime; t->arg = care_limit(&sc->objs[in->row]); t->dist = 350.0f; }
+            }
             if (in->talkcls == 3 && !strcmp(sc->types + 32 * sc->objs[in->row].type, "Kinopio")) t->event = kino_event; /* Kinopio::init: registerEventFunc */
             if (in->talkcls == 3 && sc->objs[in->row].arg[1] == 2 && !strcmp(sc->types + 32 * sc->objs[in->row].type, "KinopioAstro")) {
                 t->event = kast_event; /* KinopioAstro::init: the messenger's eventFunc */
@@ -14442,7 +14469,8 @@ static void update_talkers(void)
         } else if (tico && sc->objs[in->row].arg[1] == 3) { /* Tico::exeTalk: at its talk's end Meta (gone) */
             if (talk_near_at_end(k)) row_step[in->row] = 1; /* setNerve(Meta) */
         } else if (in->talkcls == 12 && pcs_talk(k, &insts[i])) { /* the surfing PenguinCoach's nerves (surf.inc) */
-        } else talk_near(k); /* exeWait: tryTalkNearPlayer (Tico / Kinopio: ...AndStartTalkAction) */
+        } else if (in->talkcls == 14 && care_mission(&sc->objs[in->row])) care_update(&insts[i], k); /* the tidy-up mission's nerves */
+        else talk_near(k); /* exeWait: tryTalkNearPlayer (Tico / Kinopio: ...AndStartTalkAction) */
     }
 }
 
@@ -24965,7 +24993,7 @@ static void update_mario_(void)
         if (mario_anim) anim_update(mario_anim);
         return;
     }
-    if (demo_on || gh_ctrl_off() || rm_ctrl_off()) { /* a demo (or offPlayerControl): he waits (startBckPlayer PowerStarGet when it is the star's) */
+    if (demo_on || gh_ctrl_off() || rm_ctrl_off() || care_ctrl_off()) { /* a demo (or offPlayerControl): he waits (startBckPlayer PowerStarGet when it is the star's) */
         m->hvel = v3(0, 0, 0); m->vup = 0;
         if (m->hurt_timer) m->hurt_timer--;
         if (mario_anim) { /* PowerStarGet once (mario_play restarts a one-shot clip, as startBck does) */
@@ -24976,6 +25004,7 @@ static void update_mario_(void)
             else if (pro_puppet() || tsp_puppet() || gh_puppet()) ; /* the prologue's DemoPeachCastleGate (pro_update); GhostPlayer's startBckPlayerJ */
             else if (rm_bck()) { int mode = 0; if (!m_clip_is(rm_bck())) { anim_clip_info(rm_bck(), &mode); mario_play(rm_bck(), 1.0f, mode == 2 || mode == 4); } } /* the race's startBckPlayer */
             else if (bsb_demo() || bk_demo() || tb_demo() || kp_demo() || pol_demo()) { if (!m_clip_is("battlewait")) mario_play("battlewait", 1.0f, 1); } /* BossStinkBug's demos: startBckPlayer BattleWait */
+            else if (care_puppet()) ; /* Caretaker's startBckPlayer Watch */
             else if (!star_demo && !gw_puppet() && !trk_puppet()) mario_play("wait", 1.0f, 1);
             else if (mario_anim->clip_id < 0 || strcmp(sc->clips[mario_anim->clip_id].name, "powerstarget")) mario_play("powerstarget", 1.0f, 0);
             anim_update(mario_anim);
@@ -47878,7 +47907,7 @@ static V3 star_pos(const Inst *in, int *state)
             *state = row_dead[w - 1];
             return vadd(from, v3(0.0f, 100.0f, 0.0f));
         }
-        if ((!row_dead[w - 1] && !st_star_out(w - 1) && !tbox_star_out(w - 1) && !flip_star_out(w - 1) && !coach_took(w - 1) && !kino_took(w - 1) && !trk_star_out(w - 1) && !race_took(w - 1) && !sy_took(w - 1)) || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
+        if ((!row_dead[w - 1] && !st_star_out(w - 1) && !tbox_star_out(w - 1) && !flip_star_out(w - 1) && !coach_took(w - 1) && !care_took(w - 1) && !kino_took(w - 1) && !trk_star_out(w - 1) && !race_took(w - 1) && !sy_took(w - 1)) || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
                                                                                                        * here: no star) */
     } else if (got_coins < 100 && got_purple < 100) { /* ScenePlayingResult: 100 coins, or 100 purple coins */
         *state = 0;
@@ -51748,6 +51777,237 @@ static int coach_takeout(Inst *in) /* 1 while its TakeOutStar runs (exeAnim) */
     if (g->st > 1 && in->anim && in->anim->done) { tos_kill(); g->i = 1; g->n = 0; sw_changed = 1; printf("penguin coach row %d: its star out%c", in->row, 10); }
     return 1;
 }
+/* Caretaker.cpp after Petari: its talk functions and the tidy-up mission of the ones whose arg0 is neither -1 nor 1
+ * (BattleShipGalaxy's and the Dreadnought's garbage stars). Every Caretaker: branchFuncComet (0 .. 6 by the purple
+ * coins had: 0, under 50, 80, 90, 95, 100, 100) and eventFuncComet (0 its TakeOutStar, 1
+ * forceKillPlayerByGroundRace, 2 setMessageArg the purple coins). The mission's: branchFuncStar (0: its SW_A on, all
+ * the trash gone), animeFunc (TalkNormal / TalkAngry / TalkCry), setMessageArg(mTidyTimeLimit: arg1, Luigi's arg2,
+ * seconds; sTidyTimeLimit 1800), setDistanceToTalk 350, its TakeOutStar (TakeOutStarCaretaker, the star model's
+ * too), the group ゴミ管理 (the BreakableTrash rows of its zone and group id). Nerves: Wait (its talk begun: PreTalk)
+ * -> PreTalk (at the talk's end, Yes: the demo ゴミ掃除タイムアタック, Wait, Mario's Watch; else Wait) -> PreWipeOut
+ * (stopStageBGM 90, closeWipeFade; closed: its default pose, Mario at バトルシップ・タイムアタック前位置, the timer out,
+ * suspended, at its limit) -> PreWipeIn (openWipeFade, BGM_MINIGAME_START) -> PreWait (the demo over,
+ * offPlayerControl, SW_B on; past sPreRaceWait 100) -> CountDown (SE_SY_RACE_COUNT_DOWN every 60, MBGM_RACE_01 at
+ * sBgmStartStep 166, at 180 onPlayerControl) -> Tidy (the timer runs, SE_SY_RACE_START; updateCounterSE; Mario bound:
+ * the timer killed, stopStageBGM 60, Runaway; the time up or SW_A on: the demo again, PstWipeOut) -> PstWipeOut (SW_A
+ * on: SE_SY_TOTAL_COMPLETE, stopStageBGM 10, else 60; closeWipeFade; closed: SW_B off, the trash killed (SW_A on) or
+ * out again, Mario at ...後位置, Watch) -> PstWipeIn (the timer killed, openWipeFade, startLastStageBGM; open:
+ * TalkNormal) -> PstWait (sPstRaceWait 50) -> PstTalk (its forced talk's end: the demo over; SW_A on: AppearedStar,
+ * else Wait). Runaway: once Mario is free SW_B off, the trash out again, resetNode, Wait.
+ * care: one a scene. ponytail: the talk camera's own calls (startNPCTalkCamera 1.3 / endNPCTalkCamera: the talk
+ * system's camera as it runs), its rail (setRailCoord 0: its placement), the clipping calls, the emitters' forced
+ * delete; isPlayerInBind is a launch star's flight, the MarioLauncher, a Tamakoro or a warp */
+enum { CT_WAIT, CT_PRETALK, CT_PREWIPEOUT, CT_PREWIPEIN, CT_PREWAIT, CT_COUNTDOWN, CT_TIDY, CT_RUNAWAY, CT_PSTWIPEOUT, CT_PSTWIPEIN,
+       CT_PSTWAIT, CT_PSTTALK, CT_APPEAREDSTAR };
+static struct { const Scene *at; int row, nrv, step, ctrl; } care = {NULL, -1, 0, 0, 0};
+static const char CT_DEMO[] = "ゴミ掃除タイムアタック";
+static int care_mission(const Row *r) { return r->arg[0] != -1 && r->arg[0] != 1; }
+static int care_limit(const Row *r) { int a = gd_player_luigi() ? r->arg[2] : r->arg[1]; return a != -1 ? a : 1800; } /* mTidyTimeLimit */
+static int care_ctrl_off(void) { return care.at == sc && care.ctrl; } /* offPlayerControl */
+static int care_puppet(void) { return care.at == sc && pd.name && !strcmp(pd.name, CT_DEMO); } /* Mario's clip is its startBckPlayer's */
+static int care_busy(int row) { return care.at == sc && care.row == row && care.nrv != CT_WAIT && care.nrv != CT_APPEAREDSTAR; }
+static int care_took(int row) { return !strcmp(sc->types + 32 * sc->objs[row].type, "Caretaker") && gap_st(row)->i; } /* its TakeOutStar over */
+static void care_set(int n) { care.nrv = n; care.step = -1; printf("caretaker row %d: nerve %d%c", care.row, n, 10); }
+static int care_branch(int k, u32 v)
+{
+    int row = talkers[k].row, n = got_purple;
+    if (row >= 0 && care_mission(&sc->objs[row])) return v == 0 && sc->objs[row].sw[SW_A] >= 0 && sw_on(&sc->objs[row], SW_A); /* branchFuncStar */
+    switch (v) { /* branchFuncComet */
+    case 0: return n == 0;
+    case 1: return n >= 1 && n < 50;
+    case 2: return n >= 50 && n < 80;
+    case 3: return n >= 80 && n < 90;
+    case 4: return n >= 90 && n < 95;
+    case 5: return n >= 95 && n < 100;
+    case 6: return n == 100;
+    }
+    return 0;
+}
+static int care_event(int k, u32 v) /* eventFuncComet */
+{
+    int row = talkers[k].row;
+    if (row < 0) return 1;
+    if (v == 0) { /* mTakeOutStar->takeOut() */
+        GapSt *g = gap_st(row);
+        if (g->i || !care_mission(&sc->objs[row])) return 1;
+        if (g->n != 1) { g->n = 1; g->st = 0; printf("caretaker row %d: TakeOutStar%c", row, 10); }
+        return 0;
+    }
+    if (v == 1) { miss_race = 1; miss(); printf("caretaker row %d: forceKillPlayerByGroundRace%c", row, 10); return 1; }
+    if (v == 2) talkers[k].arg = got_purple; /* setMessageArg(getPurpleCoinNum) */
+    return 1;
+}
+static int care_anime(int k, u32 v) /* animeFunc */
+{
+    static const char *const act[3] = {"talknormal", "talkangry", "talkcry"};
+    Inst *in = talkers[k].row >= 0 ? row_inst(talkers[k].row) : NULL;
+    if (in && v < 3) obj_play(in, act[v], 1, 0);
+    return 1;
+}
+static int care_takeout(Inst *in) /* 1 while its TakeOutStar runs (TakeOutStar::exeAnim) */
+{
+    GapSt *g = gap_st(in->row);
+    if (g->n != 1) return 0;
+    if (!g->st++) { obj_play(in, "takeoutstarcaretaker", 0, 0); tos_appear(in->row, "TakeOutStarCaretaker"); }
+    if (g->st > 104) { /* sStarAppearSeStep */
+        V3 c = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(in->nu, 200.0f));
+        in->lv[0] = se_level(in_water(c, in->nu, NULL) ? SE_OJ_LV_POW_STAR_EXIST_W : SE_OJ_LV_POW_STAR_EXIST, &c.x, in->lv[0]);
+    }
+    if (g->st > 1 && (!in->anim || in->anim->done)) { tos_kill(); g->i = 1; g->n = 0; sw_changed = 1; printf("caretaker row %d: its star out%c", in->row, 10); }
+    return 1;
+}
+static void care_group(int row, int kill) /* callKillAllGroupMember / callAppearAllGroupMember: its BreakableTrash */
+{
+    const Row *r = &sc->objs[row];
+    int t = scene_type(sc, "BreakableTrash"), n = 0;
+    for (u32 i = 0; t >= 0 && r->group >= 0 && i < sc->nobjs; i++) {
+        Row *o = (Row *)&sc->objs[i];
+        if ((int)o->type != t || o->group != r->group || o->zone != r->zone) continue;
+        if (kill) row_dead[i] = 1; /* LiveActor::kill */
+        else { row_dead[i] = 0; if (o->sw[SW_DEAD] >= 0) sw_set(o, SW_DEAD, 0); } /* BreakableCage::appear: shown, offSwitchDead */
+        n++;
+    }
+    sw_changed = 1;
+    printf("caretaker row %d: %d trash %s%c", row, n, kill ? "killed" : "out again", 10);
+}
+static void care_player_at(const char *name) /* setPlayerPosOnGroundAndWait */
+{
+    const float *g = scene_gpos(name);
+    float m[16], one[3] = {1, 1, 1};
+    if (!g) { printf("caretaker: no GeneralPos %s%c", name, 10); return; }
+    mat_translate_rot_scale(m, g, g + 3, one);
+    V3 p = v3(m[12], m[13], m[14]), up = vnorm(v3(m[4], m[5], m[6])), hp;
+    if (kcl_line(vadd(p, vmul(up, 100.0f)), vsub(p, vmul(up, 1000.0f)), &hp, NULL, NULL)) p = hp; /* (on the ground) */
+    m_set_trans(p); mario->up = up; mario->face = vnorm(v3(m[8], m[9], m[10]));
+    mario->hvel = v3(0, 0, 0); mario->vup = 0;
+}
+static void care_update(Inst *in, int k) /* the mission's nerves (update_talkers: in place of its tryTalkNearPlayer) */
+{
+    const Row *r = &sc->objs[in->row];
+    if (care.at != sc || care.row != in->row) { care.at = sc; care.row = in->row; care.nrv = CT_WAIT; care.step = -1; care.ctrl = 0; }
+#ifdef CARE_TEST /* XF=-DCARE_TEST (plain, a galaxy with a mission Caretaker): Mario put 200 before it once he is free; 100 steps on
+                  * the talk is skipped as answered Yes (=3: the real talk, A through its pages, the pointer swept
+                  * down over the selector: Yes; =4: swept up: No); in Tidy an explosion at one BreakableTrash of its
+                  * group every 30 frames from its step 120 (=2: none: the time runs out); A through the talk after it;
+                  * a line every 60 frames */
+    {
+        static int talked, var = -1; /* (the variant: host:tv.txt's digit when there is one, so one ELF runs them all) */
+        if (var < 0) { FILE *tf = fopen("host:tv.txt", "rb"); int c = tf ? fgetc(tf) : -1; if (tf) fclose(tf); var = c >= '1' && c <= '9' ? c - '0' : CARE_TEST + 0; printf("care test: variant %d%c", var, 10); }
+        int t = scene_type(sc, "BreakableTrash"), alive = 0, first = -1;
+        for (u32 i = 0; t >= 0 && i < sc->nobjs; i++)
+            if ((int)sc->objs[i].type == t && sc->objs[i].group == r->group && sc->objs[i].zone == r->zone && !row_dead[i]) { alive++; if (first < 0) first = (int)i; }
+        pad_force = 0; care_test_seen = 1;
+        if (care.nrv == CT_PRETALK) talked = 1;
+        if (var < 3) {
+            if (care.nrv == CT_WAIT && care.step >= 100 && !talked && pd_try_start(CT_DEMO, in->row)) { talked = 1; mario_play("watch", 1.0f, 1); care_set(CT_PREWIPEOUT); }
+        } else if (care.step > 100 && (care.nrv == CT_PRETALK || (care.nrv == CT_WAIT && !talked))) {
+            cur_x = 160.0f + 80.0f * (float)(game_frame / 100 % 5);
+            cur_y = var == 3 ? 40.0f + 4.0f * (float)(game_frame % 100) : 440.0f - 4.0f * (float)(game_frame % 100);
+            if (game_frame % 8 < 2) pad_force = PAD_CROSS;
+        }
+        if ((care.nrv == CT_PSTTALK || care.nrv == CT_APPEAREDSTAR) && game_frame % 45 < 5) pad_force = PAD_CROSS;
+        if (var != 2 && care.nrv == CT_TIDY && care.step >= 120 && care.step % 30 == 0 && first >= 0) {
+            const Inst *ti = row_inst(first);
+            if (ti) explosion_breaks(v3(ti->m[12], ti->m[13], ti->m[14]), 10.0f); /* (a Bomb's: BreakableCage's break, its dead switch) */
+        }
+        if (game_frame % 60 == 0)
+            printf("care test f %u: row %d nerve %d step %d, timer %d, SW_A %d (%d) SW_B %d (%d), trash %d, group %d, talker %d, star %d%c", game_frame, in->row, care.nrv, care.step,
+                   menu_bomb_timer_rest(), r->sw[SW_A], r->sw[SW_A] >= 0 && sw_on(r, SW_A), r->sw[SW_B], r->sw[SW_B] >= 0 && sw_on(r, SW_B), alive, r->group, k, gap_st(in->row)->i, 10);
+    }
+#endif
+    int st = ++care.step, sw_a = r->sw[SW_A] >= 0 && sw_on(r, SW_A);
+    if (!pd.name) menu_bomb_timer_update(); /* mBombTimerLayout's movement: none in a demo (only the demo's own actors move) */
+    switch (care.nrv) {
+    case CT_WAIT:
+        if (talk_near(k)) { tk_npc_camera(k, 1.3f); care_set(CT_PRETALK); } /* tryTalkNearPlayerAndStartMoveTalkAction, startNPCTalkCamera 1.3 */
+        break;
+    case CT_PRETALK:
+        if (!talk_near_at_end(k)) break;
+        if (tk_yesno == 1 && pd_try_start(CT_DEMO, in->row)) { /* tryTalkSelectLeft */
+            obj_play(in, "wait", 1, 0);
+            mario_play("watch", 1.0f, 1); /* startBckPlayer */
+            care_set(CT_PREWIPEOUT);
+        } else care_set(CT_WAIT);
+        break;
+    case CT_PREWIPEOUT:
+        if (st == 0) { bgm_stop(90); menu_wipe(1, -1, 0); }
+        if (menu_wipe_active()) break;
+        mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale); /* setRailCoord 0, setDefaultPose */
+        care_player_at("バトルシップ・タイムアタック前位置");
+        if (td.cam_on == 1) { camera_talk_end(); td.cam_on = 0; } /* endNPCTalkCamera(false, 0) */
+        menu_bomb_timer_appear(); menu_bomb_timer_suspend(1); menu_bomb_timer_limit(care_limit(r) * 60);
+        care_set(CT_PREWIPEIN);
+        break;
+    case CT_PREWIPEIN:
+        if (st == 0) { menu_wipe(0, -1, 0); bgm_sub("BGM_MINIGAME_START"); }
+        if (!menu_wipe_active()) care_set(CT_PREWAIT);
+        break;
+    case CT_PREWAIT:
+        if (st == 0) { pd_end(CT_DEMO); care.ctrl = 1; if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 1); }
+        if (st > 100) care_set(CT_COUNTDOWN); /* sPreRaceWait */
+        break;
+    case CT_COUNTDOWN:
+        if (st % 60 == 0) se_start(SE_SY_RACE_COUNT_DOWN, NULL);
+        if (st == 166) bgm_start("MBGM_RACE_01"); /* sBgmStartStep */
+        if (st >= 180) { care.ctrl = 0; care_set(CT_TIDY); }
+        break;
+    case CT_TIDY:
+        if (st == 0) { menu_bomb_timer_suspend(0); se_start(SE_SY_RACE_START, NULL); }
+        if (mario->launch >= 0 || ml_bound() || tmk_riding() || warp.from >= 0) { /* isPlayerInBind */
+            menu_bomb_timer_kill(); bgm_stop(60);
+            care_set(CT_RUNAWAY);
+            break;
+        }
+        if (life > 0) { /* updateCounterSE (not isPlayerDead / isPlayerConfrontDeath) */
+            int rest = menu_bomb_timer_rest();
+            if (rest == 0) se_start(SE_SY_E3_TIMER_TIME_UP, NULL);
+            else if (rest % 60) ;
+            else if (rest <= 120) se_start(SE_SY_E3_TIMER_COUNT_4, NULL);
+            else if (rest <= 360) se_start(SE_SY_E3_TIMER_COUNT_2, NULL);
+            else if (rest <= 600) se_start(SE_SY_E3_TIMER_COUNT_1, NULL); /* mDangerTransFrame */
+        }
+        if ((menu_bomb_timer_up() || sw_a) && pd_try_start(CT_DEMO, in->row)) care_set(CT_PSTWIPEOUT); /* canStartDemo */
+        break;
+    case CT_RUNAWAY:
+        if (mario->launch >= 0 || ml_bound() || tmk_riding() || warp.from >= 0) break;
+        if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 0);
+        care_group(in->row, 0);
+        talk_reset_node(k);
+        care_set(CT_WAIT);
+        break;
+    case CT_PSTWIPEOUT:
+        if (st == 0) {
+            if (sw_a) { se_start(SE_SY_TOTAL_COMPLETE, NULL); bgm_stop(10); } else bgm_stop(60);
+            menu_wipe(1, -1, 0);
+        }
+        if (menu_wipe_active()) break;
+        if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 0);
+        care_group(in->row, sw_a);
+        drop_damage(); /* tryPlayerKillTakingActor */
+        care_player_at("バトルシップ・タイムアタック後位置");
+        mario_play("watch", 1.0f, 1);
+        tk_npc_camera(k, 1.3f); /* startNPCTalkCamera(1.3, 1) */
+        care_set(CT_PSTWIPEIN);
+        break;
+    case CT_PSTWIPEIN:
+        if (st == 0) { menu_bomb_timer_kill(); menu_wipe(0, -1, 0); bgm_return(); }
+        if (menu_wipe_active()) break;
+        obj_play(in, "talknormal", 1, 0);
+        care_set(CT_PSTWAIT);
+        break;
+    case CT_PSTWAIT:
+        if (st >= 50) care_set(CT_PSTTALK); /* sPstRaceWait */
+        break;
+    case CT_PSTTALK:
+        if (!talk_force_at_end(k, 1)) break; /* tryTalkForceWithoutDemoMarioPuppetableAtEnd */
+        pd_end(CT_DEMO);
+        care_set(sw_a ? CT_APPEAREDSTAR : CT_WAIT);
+        break;
+    case CT_APPEAREDSTAR:
+        talk_near(k); /* tryTalkNearPlayerAndStartTalkAction */
+        break;
+    }
+}
 /* Kinopio's Escape nerve and its power star mode (Kinopio.cpp). Escape (:204-222, :418-430): a Kinopio that reads an
  * appear switch, mBehavior (arg2) not 4 and mAppearBehavior (arg4) 0, starts in it when it appears: its Escape action
  * once, SE_SV_KINOPIO_PUHA and SE_SM_NPC_FLY_OUT, then its nerve below. mIsSpawnPowerStarMode (mBehavior 8): StarWait
@@ -51820,6 +52080,7 @@ static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction /
         int student = !strcmp(sc->types + 32 * sc->objs[in->row].type, "PenguinStudent");
         if (student && student_update(in)) continue; /* a pupil's exeSwim */
         if (!strcmp(sc->types + 32 * sc->objs[in->row].type, "PenguinCoach") && coach_takeout(in)) continue; /* its TakeOutStar */
+        if (in->talkcls == 14 && (care_takeout(in) || care_busy(in->row))) continue; /* Caretaker's TakeOutStar, its mission's nerves (their own actions) */
         const NpcTurn *t = &npc_turns[in->npc - 1];
         if (strcmp(t->cls, "HoneyBee") && npc_reaction(in, sc->types + 32 * sc->objs[in->row].type)) continue; /* the Reaction nerve (the bees: update_bees) */
         V3 p = v3(in->m[12], in->m[13], in->m[14]), to = vsub(mario->pos, p);
