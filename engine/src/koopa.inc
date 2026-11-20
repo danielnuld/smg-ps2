@@ -466,6 +466,9 @@ static void kp_fire_stairs_update(void)
                 se_start(SE_OJ_KOOPA_FIRE_EXPLODE, &f->pos.x);
                 pad_rumble(RUMBLE_STRONG); camera_shake(SHAKE_WEAK);
                 f->nrv = 1; f->st = -1; f->mf = 0;
+#ifdef KP_TEST
+                if (i == 0 && f->jr) camera_set_override(0, f->pos, f->pos, up, 45.0f);
+#endif
             } else {
                 if (f->jr) {
                     const typeof(kss[0]) *s = &kss[f->stair];
@@ -475,6 +478,13 @@ static void kp_fire_stairs_update(void)
                     V3 dv = vsub(f->pos, old);
                     if (vlen(dv) > 0.001f) f->front = vnorm(dv); /* isNearZero */
                     f->lv = se_level(SE_BM_LV_KOOPAJR_SHIP_METEOR, &f->pos.x, f->lv);
+#ifdef KP_TEST /* the first one's flight from its side (the camera off the middle of its chord), its place every 20 frames */
+                    if (i == 0) {
+                        V3 ch = vsub(s->ac, f->a0), mid = vadd(f->a0, vmul(ch, 0.5f)), sd = vnorm(vcross(ch, f->ac));
+                        camera_set_override(1, vadd(vadd(mid, vmul(sd, vlen(ch) * 0.9f + 1500.0f)), vmul(f->ac, 700.0f)), vadd(mid, vmul(f->ac, 700.0f)), f->ac, 45.0f);
+                        if (st % 20 == 0) printf("koopa: stairs meteor 0 step %d rate %.2f, %.0f over its chord (%.0f long)%c", st, rate, sinf(3.1415927f * rate) * 1500.0f, vlen(ch), 10);
+                    }
+#endif
                 }
                 f->rotx = fmodf(f->rotx + 15.0f, 360.0f); /* sRotateSpeed */
             }

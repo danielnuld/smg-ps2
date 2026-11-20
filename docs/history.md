@@ -77,6 +77,28 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   head's SEs (the test's listener is over the arm, past the 5000 of a placed sound), ..._ARM_BREAK (the rail's end is
   as far). To check by hand: Mario fell and missed 15 s after the demo in this run (he stood at 爆破デモ後マリオ with
   the test's hold over).
+- The walkers left with the generic fire ball / shell kill (fix/799-generic-hitall, #799, 2026-11-19, agent verify-1):
+  the verification pass of #688 / #693 found `fireball_hit_walkers` and the thrown shell's loop still ending in the
+  generic kill (Kuribo's smoke and a coin) for the kinds no audit batch gave a case. Petari has no default. Now
+  `walker_hitall_rest`: Kabokuri requestHitAttacked (`kabo_break`, shared with its spin / hip drop: its break sound and
+  dead switch were skipped), NokonokoLand receivePunch (walking or rattling: ShellStartPunch), KuriboChief
+  requestBlowDown once it can be kicked, else requestStagger (ponytail: its Punch sensor not told from its body),
+  Kameck requestDown from a fire ball too, BossBegoman Blow unless its head's edge is out; BombTeresa,
+  JellyfishElectric, DharmaSambo and BegomanBabyLauncher answer neither. The generic end stays for the kinds of #775
+  until it is merged (then it is dead code: delete it). The shell's per-walker answers are `jet_hit_walker` now
+  (update_jets calls it; the test too).
+  Test added: plain `XF="-DATK_TEST -DASC_TEST"` (game_test_atk; a galaxy through out/boot.txt): each walker kind of
+  the scene in turn, 600 frames a kind: Mario held 600 before its first, the camera on it, a star piece on it at 100
+  and 160, a fire ball's hit at 260, a thrown shell's at 420, its nerve logged. Seen in PCSX2 before / after:
+  PhantomGalaxy/1 Kabokuri ("fire ball burns walker row 210", "jet turtle row 0 blows walker row 454" -> taken by
+  kabo_break, no generic line), FishTunnelGalaxy/1 NokonokoLand (burned -> nerve 17 ShellStartPunch) and
+  JellyfishElectric (fire ball not taken, shell: knockOut). Not run: KuriboChief, Kameck, BossBegoman, BombTeresa,
+  DharmaSambo. Tests touched for the pass: BANEKITI_TEST (A closes Boo Mario's first-time window: it froze Mario, so
+  no touch: that was the "fall" of #724's note; the Banekitis are placed 319000 under the start planet), KIRAIRA_TEST
+  in steps from Mario's first free frame (the start camera kept the sounds' listener 27000 away), DINO_STAR on Vs2,
+  KP_TEST's camera on the first stairs meteor, BH_TEST's camera on Mario's hand, TORNADO_TEST's held stick,
+  JUMPSTAND_TEST's spin hip drop beside the stand, XF=-DARV_LOG (who stands on an AreaMove / RailMove floor), a
+  jump in WADE_TEST. No repack.
 - TrickRabbitFreeRunCollect, part of #732 (feat/trick-rabbit-collect-class, 2026-11-19): SnowCapsuleGalaxy's only
   star had no class. trick.inc `snc_*` (NPC/TrickRabbitSnowCollect.cpp: Wait, the start wipe and talk, WaitHideSnow,
   Start with the timer and its counter sounds, the failed and the success demos, TakeOutStar, AppearPowerStar) and

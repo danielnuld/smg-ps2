@@ -37,16 +37,26 @@ static void update_banekiti(void)
             break;
         }
     }
-#ifdef BANEKITI_TEST /* plain build XF=-DBANEKITI_TEST (TeresaMario2DGalaxy/1): Boo Mario put by the first Banekiti every 300 frames from 1000 */
-    if (game_frame >= 1000 && game_frame % 300 >= 100 && game_frame % 300 < 104) /* (held four frames: he may be falling) */
+#ifdef BANEKITI_TEST /* plain build XF=-DBANEKITI_TEST (TeresaMario2DGalaxy/1): Boo Mario from frame 1000, put by the first shown Banekiti at 1100 and every 400 frames after */
+    for (int i = 0; game_frame == 1000 && i < ninsts; i++)
+        if (insts[i].row >= 0 && (int)sc->objs[insts[i].row].type == t)
+            printf("banekiti test: inst %d row %d at (%d %d %d) shown %d anim %d zone %d, row pos (%d %d %d)%c", i, insts[i].row, (int)insts[i].m[12], (int)insts[i].m[13], (int)insts[i].m[14],
+                   row_shown(insts[i].row), insts[i].anim != NULL, sc->objs[insts[i].row].zone, (int)sc->objs[insts[i].row].pos[0], (int)sc->objs[insts[i].row].pos[1], (int)sc->objs[insts[i].row].pos[2], 10);
+    if (game_frame >= 1000)
         for (int i = 0; i < ninsts; i++)
-            if (insts[i].row >= 0 && (int)sc->objs[insts[i].row].type == t) {
+            if (insts[i].row >= 0 && (int)sc->objs[insts[i].row].type == t && row_shown(insts[i].row)) {
+                V3 at = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]);
                 test_nolost = 1;
-                if (player_mode != PM_TERESA) set_player_mode(PM_TERESA, 1);
-                mario->pos = vsub(v3(insts[i].m[12] + 60.0f, insts[i].m[13], insts[i].m[14]), vmul(mario->up, HIT_BODY_H)); /* his centre 60 off its body sensor */
-                mario->hvel = v3(0, 0, 0); mario->vup = 0;
-                printf("banekiti test f %u: Boo Mario by row %d (anim %d, mode %d, centre %.0f off)%c", game_frame, insts[i].row, insts[i].anim != NULL, player_mode,
-                       vlen(vsub(mw.c, v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]))), 10);
+                if (game_frame == 1000 && player_mode != PM_TERESA) set_player_mode(PM_TERESA, 1);
+                pad_force = game_frame >= 1060 && game_frame < 1450 && game_frame % 60 < 3 ? PAD_CROSS : 0; /* A (every second until 1450) closes the first Boo Mario's InformationObserver window (it stops Mario: no centre, no touch) */
+                if (game_frame % 400 >= 300 && game_frame % 400 < 303) { /* his centre 60 off its body sensor, held three frames */
+                    mario->pos = vsub(vadd(at, v3(60.0f, 0.0f, 0.0f)), vmul(mario->up, HIT_BODY_H));
+                    mario->hvel = v3(0, 0, 0); mario->vup = 0;
+                }
+                if (game_frame % 30 == 0 || (game_frame % 400 >= 299 && game_frame % 400 < 320))
+                    printf("banekiti test f %u: mode %d Mario (%d %d %d) centre (%d %d %d) %.0f off row %d at (%d %d %d), nerve %d, hurt %d grounded %d zone wait %d%c", game_frame, player_mode,
+                           (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z, (int)mw.c.x, (int)mw.c.y, (int)mw.c.z, vlen(vsub(mw.c, at)), insts[i].row,
+                           (int)at.x, (int)at.y, (int)at.z, row_turn[insts[i].row], mario->hurt_timer, mario->grounded, zone_wait, 10);
                 break;
             }
 #endif
