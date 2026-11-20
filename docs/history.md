@@ -11,6 +11,14 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- The far camera's audience (fix/803-far-camera-mic, #803, 2026-11-19, agent verify-1): in the 2D sections the camera
+  is 10000 from Mario (TeresaMario2DGalaxy 1: `cam -2561 -319913 10003`) and se_seq.c's listener is its eye with a
+  fixed silence at 5000 (se_start's cull, place's fall-off): no positioned sound was started there (seen with
+  XF=-DSE_LOG: nothing after the Boo Mario window's SE_SY_TALK_OK, not SE_OJ_BANEKITI_REPEL at a Repel). Petari:
+  AudCameraWatcher::movement sets the mic at the camera and setFarCamera(getFovy() < 20), and
+  AudAudience_withSetting::calcVolume_ / calcDeltaPriority_ take three times the far distance with mFarCamera.
+  se_listener takes the fovy: under 20 the far distance is 15000 (the cull and the fall-off). ponytail: JAIAudience's
+  curves stay the linear fall-off (the mark in place()). No repack.
 - TrickRabbitFreeRunCollect, part of #732 (feat/trick-rabbit-collect-class, 2026-11-19): SnowCapsuleGalaxy's only
   star had no class. trick.inc `snc_*` (NPC/TrickRabbitSnowCollect.cpp: Wait, the start wipe and talk, WaitHideSnow,
   Start with the timer and its counter sounds, the failed and the success demos, TakeOutStar, AppearPowerStar) and
