@@ -6077,7 +6077,6 @@ typedef struct {
 enum { GAP_NONE, GAP_SHOCKWAVE, GAP_CAPSULE, GAP_DRIFT, GAP_SHELLCOIN, GAP_SHELLCHIP, GAP_ELEVATOR, GAP_UFOKINOKO, GAP_TRIROCK, GAP_HIPMOVE, GAP_HIPDEMO };
 static void gap_place(Inst *in);
 static int st_rail_go(const Inst *in), st_floater_rail(const Inst *in), st_rotor_go(const Inst *in); /* statics.inc */
-static int st_rail_go(const Inst *in), st_floater_rail(const Inst *in); /* statics.inc */
 static u32 st_ufo_move_se(const char *n); static void st_ufo_blast(V3 at, float rad); /* UFOBase (statics.inc) */
 static void st_chain_rebind(const Scene *s), st_wt_rebind(const Scene *s);
 static void ufok_start(int row);
@@ -16287,6 +16286,11 @@ static int jet_hit_walker(Kuribo *e, V3 p, const Inst *in)
     else if (e->kind == WALK_KOTEBUG) took = kb_hitall(e, p); /* a HitAll: Blow overturned, else setOverturnFall */
     else if (e->kind == WALK_MOGU) took = mg_hitall(e); /* isMsgJetTurtleAttack: tryPunchHitted */
     else if (e->kind == WALK_JELLYFISH) took = jf_knock(e, p); /* a HitAll: knockOut */
+    else if (e->kind == WALK_PUKUPUKU) took = pk_blow(e, p); /* a HitAll: BlownOff */
+    else if (e->kind == WALK_BEGOSPIKE || e->kind == WALK_BEGOSPRING || e->kind == WALK_BEGOBABY) took = bg_hitall(e, p); /* a HitAll on its body: Blow */
+    else if (e->kind == WALK_SAMBOHEAD) took = sh_blow(e, p); /* a HitAll: HitBlow */
+    else if (e->kind == WALK_MOGUCCHI) took = mc_hitall(e, p); /* a HitAll on its body while down: Scatter */
+    else if (e->kind == WALK_BOMBBIRD) took = bbd_hitall(e, p); /* a HitAll: Blow swooning, Damage in flight */
     else if (e->kind == WALK_KANINA) took = kan_fire(e, p); /* isMsgJetTurtleAttack: receiveFireBall */
     else if (e->kind == WALK_SPIDER) took = js_blow(e, p); /* a HitAll: HitBlow */
     else if (e->kind == WALK_KURIBO || e->kind == WALK_KMINI || e->kind == WALK_TAKOHEI) { /* isMsgJetTurtleAttack, a HitAll: requestBlowDown (KuriboMini: a coin), TakoHei's requestPunch */
@@ -16467,41 +16471,6 @@ static void update_jets(void)
                     vlen(vsub(p, vadd(e->pos, vmul(e->up, 60.0f)))) > 60.0f + 80.0f) continue;
                 if (e->kind == WALK_BEGOLAUNCH) continue; /* (no sensor) */
                 if (jet_hit_walker(e, p, in)) { camera_shake(SHAKE_WEAK); gone = 1; break; } /* shakeCameraWeak, reset(0) */
-                int took = 1; /* sendArbitraryMsg's answer */
-                if (e->kind == WALK_PETARI) { if (petari_solid(e)) petari_blow(e, p, PT_KICKOUT); else took = 0; } /* KickOut */
-                else if (e->kind == WALK_KAMECK) km_down(e, p); /* Kameck: requestDown */
-                else if (e->kind == WALK_JELEC) je_knock(e); /* JellyfishElectric: knockOut */
-                else if (e->kind == WALK_NOKO) { took = noko_turtle(e, p, in->hvel); if (took) printf("jet turtle row %d hits noko row %d" "\n", in->row, e->row); }
-                else if (e->kind == WALK_UNIZO) { if (unizo_breaking(e)) took = 0; else unizo_break(e); } /* isMsgJetTurtleAttack: doBreak */
-                else if (e->kind == WALK_GESSO) { if (e->nrv == GE_PUNCHDOWN) took = 0; else ge_knock(e, p); } /* isMsgPlayerHitAll: knockOut */
-                else if (e->kind == WALK_POIHANA) { if (!poihana_shock(e)) took = 0; else scene_stop = 3; } /* tryShock, stopSceneForDefaultHit(3) */
-                else if (e->kind == WALK_SNAKEHEAD) { if (e->phase || e->nrv == SN_TURTLEDOWN) took = 0; else w_nrv(e, SN_TURTLEDOWN); } /* TurtleDown */
-                else if (e->kind == WALK_STINKBUG || e->kind == WALK_TERESA || e->kind == WALK_MERAMERA || e->kind == WALK_MKOOPA || e->kind == WALK_MERAKING || e->kind == WALK_TERESAW || e->kind == WALK_METBO || e->kind == WALK_BOMBHEI || e->kind == WALK_STRSPIDER || e->kind == WALK_BOMBTERESA) took = 0; /* (TeresaWater, Metbo, BombHei, StringSpider neither) */ /* StinkBugSmall, Teresa, Meramera, MechanicKoopaMini, IceMerameraKing: no isMsgJetTurtleAttack */
-                else if (e->kind == WALK_KARON) took = kr_jet(e); /* isMsgJetTurtleAttack: Broken */
-                else if (e->kind == WALK_KARIKARI) took = kari_hitall(e, p); /* a HitAll: tryBlowOut */
-                else if (e->kind == WALK_TAKOBO) took = tk_punch(e, p, 1); /* a HitAll: HitPunch */
-                else if (e->kind == WALK_BASABASA) took = bb_punch(e, p, 1); /* a HitAll: PunchDown */
-                else if (e->kind == WALK_PACKUN) took = packun_hit(e, p, 1); /* a HitAll: stopSceneForDefaultHit(5), punchDown */
-                else if (e->kind == WALK_KOTEBUG) took = kb_hitall(e, p); /* a HitAll: Blow overturned, else setOverturnFall */
-                else if (e->kind == WALK_MOGU) took = mg_hitall(e); /* isMsgJetTurtleAttack: tryPunchHitted */
-                else if (e->kind == WALK_JELLYFISH) took = jf_knock(e, p); /* a HitAll: knockOut */
-                else if (e->kind == WALK_PUKUPUKU) took = pk_blow(e, p); /* a HitAll: BlownOff */
-                else if (e->kind == WALK_BEGOSPIKE || e->kind == WALK_BEGOSPRING || e->kind == WALK_BEGOBABY) took = bg_hitall(e, p); /* a HitAll on its body: Blow */
-                else if (e->kind == WALK_SAMBOHEAD) took = sh_blow(e, p); /* a HitAll: HitBlow */
-                else if (e->kind == WALK_MOGUCCHI) took = mc_hitall(e, p); /* a HitAll on its body while down: Scatter */
-                else if (e->kind == WALK_BOMBBIRD) took = bbd_hitall(e, p); /* a HitAll: Blow swooning, Damage in flight */
-                else if (e->kind == WALK_KANINA) took = kan_fire(e, p); /* isMsgJetTurtleAttack: receiveFireBall */
-                else if (e->kind == WALK_SPIDER) took = js_blow(e, p); /* a HitAll: HitBlow */
-                else if (e->kind == WALK_KURIBO || e->kind == WALK_KMINI || e->kind == WALK_TAKOHEI) { /* isMsgJetTurtleAttack, a HitAll: requestBlowDown (KuriboMini: a coin), TakoHei's requestPunch */
-                    took = walker_blow(e, p) > 0;
-                    if (took && e->kind == WALK_KMINI) e->item = 1;
-                }
-                else {
-                    e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up);
-                    pop_coins(e->pos, e->up, 1);
-                    printf("jet turtle row %d blows walker row %d" "\n", in->row, e->row);
-                }
-                if (took) { camera_shake(SHAKE_WEAK); gone = 1; break; } /* shakeCameraWeak, reset(0) */
             }
             if (gone) { jet.inst = -1; jet.phase = 0; jet.oriented = 0; jet_reset(in, reason); continue; } /* (a NokonokoLand's: hidden, its Koopa back) */
             jet_place(in);
@@ -41079,8 +41048,6 @@ static void update_railers(void)
         else if (se == 'D' || se == 'K') in->lv[0] = se_level(stage_se[in->stage - 1].mv, &in->m[12], in->lv[0]); /* getMovingSe */
         else if (st_ufo_move_se(sc->types + 32 * r->type)) /* UFOBase::control: while its rail mover works (its end SE at isDone) */
             in->lv[0] = se_level(st_ufo_move_se(sc->types + 32 * r->type), &in->m[12], in->lv[0]);
-        else if (!strcmp(sc->types + 32 * r->type, "UFOStrongA")) /* UFOBase::control: while its rail mover works (its end SE at isDone) */
-            in->lv[0] = se_level(SE_OJ_LV_UFO_MOVE, &in->m[12], in->lv[0]);
         else if (in->gcap == 3) in->lv[1] = se_level(SE_OJ_LV_UFO_BLUE_STAR_MOVE, &in->m[12], in->lv[1]); /* BlueStarCupsulePlanet::updatePose: UFOBlueStarCupsule while its rail mover works */
         float c = row_coord[row], old[16];
         int dir = row_rdir[row], type = stop >= 0 ? stop : 1;
