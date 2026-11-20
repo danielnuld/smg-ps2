@@ -42402,6 +42402,11 @@ static void update_fpressures(void)
         V3 body = vadd(row_pos(r), vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), 30.0f)), out = vtangent(vsub(mc, body), mario->up);
         float l = vlen(out), want = 70.0f + HIT_BODY_R * 0.6f;
         if (vlen(vsub(mc, body)) < 70.0f + HIT_BODY_R && l > 1e-3f && l < want) mario->pos = vadd(mario->pos, vmul(out, (want - l) / l));
+        if (in->anim && in->anim->skin && in->anim->skin->njoints > 1) { /* its "cannon" sensor (70 at Cannon1's (40, 0, 0)): sendMsgPush too */
+            float jm[16];
+            mat_mul(jm, in->m, in->anim->world[1]);
+            mario_push_out(v3(jm[12] + 40.0f * jm[0], jm[13] + 40.0f * jm[1], jm[14] + 40.0f * jm[2]), 70.0f);
+        }
     }
 }
 static void fpr_joints(Inst *in) /* calcJointCannon: Cannon1 turned arg0 about its Z */
@@ -46543,11 +46548,16 @@ static void update_shells(void)
         const Row *r = &sc->objs[row];
         unsigned short *t = &row_step[row];
         V3 p = row_pos(r);
-        if (!row_shown(row) || (r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) || vlen(vsub(p, mario->pos)) > 8000.0f) {
+        int point = strcmp(sc->types + 32 * r->type, "IronCannonLauncherPoint") == 0, every = r->arg[0] >= 0 ? r->arg[0] : 300;
+        /* IronCannonLauncherPoint::exeWait: Wait again while its SW_A is off. IronCannonLauncher::exeWait does not
+         * test it (its Relax nerve, the one that waits for SW_A, is never set: init leaves it in Wait) */
+        if (!row_shown(row) || (point && r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) || vlen(vsub(p, mario->pos)) > 8000.0f) {
             *t = 0;
             continue;
         }
-        if (++*t <= (r->arg[0] >= 0 ? r->arg[0] : 300)) continue;
+        /* the Point: Shot once Wait's step is over the interval (isGreaterStep), the shot at Shot's first step, Wait
+         * from the frame after: every interval + 3 frames; the Launcher at Wait's step interval (isStep): + 2 */
+        if (++*t < every + (point ? 3 : 2)) continue;
         *t = 0;
         for (int k = 0; k < SHELLS_PER; k++) {
             Shell *o = &shells[i + k];
@@ -46555,7 +46565,6 @@ static void update_shells(void)
             V3 x, z;
             row_axes(r, &x, &z);
             z = vmul(z, r->scale[2]);
-            int point = strcmp(sc->types + 32 * r->type, "IronCannonLauncherPoint") == 0;
             o->pos = vadd(p, vmul(z, 75.0f + (point ? 0.0f : 100.0f))); /* tryShotBullet(0 / sGunPointModelOffset) */
             o->vel = vmul(z, r->arg[1] >= 0 ? (float)r->arg[1] : 30.0f);
             o->dir = vnorm(z);

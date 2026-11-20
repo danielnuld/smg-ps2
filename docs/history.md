@@ -53,6 +53,14 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   CannonFleetGalaxy**; with the old pack the bridge stays as it was (not skinned: update_bridges skips it).
   The same tryGetItem for Plant (100 where he is on the stalk), Trapeze (130, 70 under him) and Fluff (300 at its
   place): `ride_reach` in collect; SpaceCocoon's is not made.
+- Small gaps of the class audit, 2, part of #653 (fix/653-small-gaps-2, 2026-11-19; **not run in PCSX2**, syntax
+  check only). IronCannonLauncher no longer waits for its SW_A (update_shells: IronCannonLauncher::exeWait does not
+  test it and its Relax nerve is never set; CannonFleetGalaxy 1's four have SW_A 10: they fire from the start now);
+  the shot cadence as the nerves give it (the Point every interval + 3 frames, the Launcher interval + 2; it was
+  interval + 1). FirePressureRadiate's cannon sensor (70 at Cannon1's (40, 0, 0)) pushes Mario (update_fpressures).
+  Checked and not gaps: SpaceMine's Appear SEs (the nerve is never set), Rabbit's HOP / CHANGE SEs (no placed row
+  has the rail behaviour, arg1 0), SE_OJ_SMN_VOLC_COL_S_BREAK (SubmarineVolcanoSmallColumn is placed nowhere),
+  SE_OJ_PLANT_MARIO_UP_START (only stopped), SE_SY_PLAYER_LEFT_DEC (menu.c plays it).
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /
