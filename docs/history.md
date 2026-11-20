@@ -99,6 +99,32 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   KP_TEST's camera on the first stairs meteor, BH_TEST's camera on Mario's hand, TORNADO_TEST's held stick,
   JUMPSTAND_TEST's spin hip drop beside the stand, XF=-DARV_LOG (who stands on an AreaMove / RailMove floor), a
   jump in WADE_TEST. No repack.
+- The floaters after Petari (feat/floaters, #783, 2026-11-19; written without the emulator: **not run in PCSX2**
+  until its PR says so): LavaFloater (LavaHomeFloaterB, LavaFloatingStepA .. D, FloaterOtakingFloaterA,
+  IceVolcanoFloaterA / B), OceanWaveFloater (OceanPierFloaterA, OceanHexagonFloater) PhantomShipBoxFloater
+  (A / B / C) and SimpleFloaterObj (IceMountainFloaterA, on MapPartsFloatingForce) had no code, and the generic rotator read their floating force's columns as its own: it turned the
+  platform once Mario stood on it (100 rows: HellProminenceGalaxy, KoopaBattleVs3Galaxy, FloaterOtakingGalaxy,
+  IceVolcanoGalaxy, HeavenlyBeachGalaxy, OceanFloaterLandGalaxy, OceanPhantomCaveGalaxy). statics.inc `st_float`
+  (ST_FLOAT / ST_WFLOAT / ST_BFLOAT, `StFloat` from the arena): FloaterFloatingForceTypeNormal (`st_float_normal`:
+  the depth and speed, MoveFirst's dip, its sounds) under the lava ones with their Float / Sink nerves and
+  LavaBubble; FloaterFloatingForceTypeSpring (`st_float_spring`) under the pier (with WaveFloatingForce, its Ripple
+  and SE_OJ_PIER_FLOATER_WAVE) and the box (Wait / Move / MoveUnderWater, SE_OJ_BOX_FLOATER_BOUND / RIPPLE); Mario
+  carried; `in->rotor` off for them. tools/slice.py: mMoveConditionType whole in arg 3 (`FLOATERS`; a pack without
+  it leaves the floater still), tools/jpa.py NAMED: their effects (**repack** those seven galaxies and
+  resident.bin). Test: plain with `XF=-DST_FLOAT_TEST` ("floater row", "float test" lines). Left out:
+  calcMapGroundUpper for _9C, the lava glow's matrix, LodCtrlPlanet.
+  Run in PCSX2 (2026-11-19 evening, overlays sliced with this branch's tools, plain `XF="-DST_FLOAT_TEST[=k] -DSE_LOG"`;
+  the class code ran as written, only the test hook changed: Mario dropped once he is free, onto the k-th row, from
+  over its model). HeavenlyBeachGalaxy/1 OceanPierFloaterA (depth 50): Move under Mario, sunk 49.7 after 480 frames;
+  each new landing before it is back adds its depth again (the spring restarts from where it is: as Petari).
+  OceanPhantomCaveGalaxy/1 PhantomShipBoxFloaterC (depth 100): Wait / Move / MoveUnderWater past 180 / Move and Wait
+  again once he is off. FloaterOtakingGalaxy/1 (depth 400): no MoveFirst, 0.5 a frame down under him, up again.
+  HellProminenceGalaxy/1 LavaFloatingStepD (depth 600; its top is 750 over its origin): MoveFirst (60 down in 6
+  frames), then down under him to 431 in 120 frames, where the lava burns him; up again when he is off. A pack cut
+  before this PR (arg 3 -1): the boxes move 0.1 a landing. Their level and wave SEs log as `se?` (not in the sound
+  packs until the repack). Not seen: SE_OJ_LAVA_FLOATER_ON(_METAL) at MoveFirst's first step (no log line: to find),
+  the LavaBubble (`a8 0` on every lava row: no map face under them within 1000, the ponytail above), the pier's wave
+  by eye, IceVolcano's and IceMountain's floaters, LavaHomeFloaterB (a column: the test cannot stand on it).
 - TrickRabbitFreeRunCollect, part of #732 (feat/trick-rabbit-collect-class, 2026-11-19): SnowCapsuleGalaxy's only
   star had no class. trick.inc `snc_*` (NPC/TrickRabbitSnowCollect.cpp: Wait, the start wipe and talk, WaitHideSnow,
   Start with the timer and its counter sounds, the failed and the success demos, TakeOutStar, AppearPowerStar) and
