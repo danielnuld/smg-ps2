@@ -17,8 +17,8 @@
  * ponytail: the PS2 pad has no accelerometer: the left stick stands for the remote's tilt (SphereAccelSensorController::
  * clacXY's angles: x right, y forward, Tamakoro.cpp:665 addVelocityOperate) and the tutorial's raise check
  * (TamakoroTutorial.cpp:120 isNearAngleDegree(hRaiseAcc, mPadAccel)) takes the pad as held up; BGM_TAMAKORO is a
- * rendered stream: no track mutes / tempo / pitch by speed (AudTamakoroBgmCtrl::control); no PlayerActionGuidance
- * layout (TamakoroTutorial.cpp:113, the Tamakoro*GuidanceCube areas); the SignBoard's CSV shadow not drawn */
+ * rendered stream: no track mutes / tempo / pitch by speed (AudTamakoroBgmCtrl::control); the PlayerActionGuidance
+ * layout shows the pad (menu.c pag_*, tools/padart.py); the SignBoard's CSV shadow not drawn */
 enum { TMK_STANDBYTUTORIAL, TMK_STANDBYBIND, TMK_BINDSTART, TMK_BINDSTARTLAND, TMK_TUTORIAL, TMK_WAIT, TMK_FALL, TMK_JUMP,
        TMK_BUMPWALL, TMK_LAND, TMK_JUMPHOLE, TMK_JUMPHOLESETUP, TMK_JUMPHOLELAUNCH, TMK_DASHRAIL, TMK_DASHRAILEND, TMK_RIDERAIL,
        TMK_RIDERAILFASTSTART, TMK_RIDERAILFAST, TMK_RIDERAILFASTEND, TMK_BINDEND, TMK_DEAD };
@@ -1158,10 +1158,12 @@ static void tmt_exe(void)
         talk_near(tmk.talk);
         break;
     case TMT_WAITRAISETALK:
+        menu_action_guidance_state(0);
         talk_force(tmk.talk, 0); /* tryTalkForceWithoutDemo */
         if (st > 90 && raised) { se_start(SE_SY_SURF_TUTORIAL_OK, NULL); tmt_set(TMT_WAITRAISESTABLE); }
         break;
     case TMT_WAITRAISESTABLE:
+        menu_action_guidance_state(1);
         talk_force_at_end(tmk.talk, 0);
         if (!raised) { tmt_set(TMT_WAITRAISETALK); se_start(SE_SY_SURF_TUTORIAL_NG, NULL); }
         else {
@@ -1170,13 +1172,16 @@ static void tmt_exe(void)
         }
         break;
     case TMT_RAISEOK:
+        menu_action_guidance_state(2);
         if (st > 60) tmt_set(TMT_RAISEOKTALK);
         break;
     case TMT_RAISEOKTALK:
+        menu_action_guidance_state(2);
         if (st == 0) talk_forward_node(tmk.talk);
         if (talk_force_at_end(tmk.talk, 0)) tmt_set(TMT_FINALTALK);
         break;
     case TMT_FINALTALK:
+        menu_action_guidance_state(3);
         if (st == 0) talk_forward_node(tmk.talk);
         if (talk_force_at_end(tmk.talk, 0)) {
             if (tmk.talk >= 0 && tk_next_node(&talkers[tmk.talk]) != TK_NONE) tmt_set(TMT_FINALTALK); /* isExistNextNode */

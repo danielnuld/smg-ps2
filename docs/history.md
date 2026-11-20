@@ -11,6 +11,17 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- PlayerActionGuidance with the pad's pictures, part of #820 (feat/guidance-pad, 2026-11-20; **not run in PCSX2**,
+  menus.bin not repacked yet: without the layouts in it nothing shows). The user's decision: the control guidance
+  redrawn for the PS2 pad. tools/padart.py draws the 15 pictures of SpinGuidance / BallGuidance / TiltGuidance
+  (128 x 128: a DualShock with SQUARE for the swing, the left stick for the ball's and the ray's tilt, CROSS for
+  the ball's jump) and lyt.py takes them in place of the TPLs; COMMON gains SpinGuidanceReplace and
+  BallGuidanceReplace (RMGE01's archive names). menu.c pag_*: PlayerActionGuidance's nerves (WaitFocusIn, Suspend
+  60, Fadein, Display, Fadeout) and its sounds (SE_SY_CS_NOTICE_USE_DPD, SE_SY_CTRL_GUIDE_APPEAR / _CHANGE /
+  _CHANGE2); game.c action_guidance: isInVolumePlayer on SpinGuidanceCube (SW_A off) and the Tamakoro cubes (SW_A
+  on, never with SW_B on); tamakoro.inc's tutorial sets mGuidanceState 0..3. Left: SurfingGuidance (TiltGuidance),
+  the raise pictures stand for a gesture the pad does not have (the stick let go). **Release: lyt.py (menus.bin),
+  then check its size.** Preview: `python tools/padart.py sheet.png`.
 - AudEffector's special effect, part of #15 (feat/15-audio-special-fx, 2026-11-20; **not run in PCSX2**: build,
   memcheck, host tests). AudioEffectArea / AudEffectDirector were already in (update_audio_effect: the types, the
   priorities, the BGM volume, the two atmosphere sounds). Added: setSpecialFx (1 for type 1, 2 for type 3) as

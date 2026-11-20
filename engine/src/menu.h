@@ -122,6 +122,10 @@ int menu_pointer_touch(const void *id, int rumble);
 void menu_pointer_stream(int on);
 void menu_pointer_draw(void);
 int menu_guidance_request(const char *label, int timeout); /* StarPointerGuidance::request1PGuidance (each frame), 0 none */
+/* PlayerActionGuidance: each frame, Mario in a SpinGuidanceCube / TamakoroMove / JumpGuidanceCube (isInVolumePlayer) and
+ * whether the scene has the spin / the ball guidance (createSpinLayout / createTamakoroLayout) */
+void menu_action_guidance(int spin, int move, int jump, int has_spin, int has_ball);
+void menu_action_guidance_state(int state); /* TamakoroTutorial: mGuidanceState (0 raise .. 4 the A button), _36 */
 int menu_guidance_exists(void);      /* MR::isExistStarPointerGuidance */
 /* TimeLimitLayout (a Red / Black comet's): appear with the limit (frames), a frame on, kill; isReadyToTimeUp; frames left */
 void menu_time_limit_appear(int frames);

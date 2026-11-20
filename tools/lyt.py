@@ -39,6 +39,7 @@ from pathlib import Path
 import numpy as np
 
 import budget as B
+import padart
 import tex
 from layout import tpl
 
@@ -263,7 +264,9 @@ def convert(files, name, texts, extra=None, full=False):
             f = files.get(texname.lower())
             if f is None:
                 return -1
-            src = bti(f) if texname.startswith("@bti:") else tpl(f)
+            src = padart.picture(texname)  # the control guidance pictures: the pad, not the Wii Remote
+            if src is None:
+                src = bti(f) if texname.startswith("@bti:") else tpl(f)
             rgba = (tex.pow2_up(src) if full else src).astype(np.float32) / 255
             if mask and mask.lower() in files:  # a second map as its mask (TitleLogo's PicLogoGalaxy: the space through
                 # the letters): baked at the mask's size, the first one's colour over it, the mask's alpha.
@@ -422,7 +425,8 @@ COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad
           "SuddenDeathMeter",  # MarioMeter with a life of 1 (the Dark comet)
           "BombTimer",  # BombTimerLayout
           "RetryButton",  # CometRetryButton
-          "InformationWindow")  # StageResultInformer's DisplayInformationForResult (InformationMessage)
+          "InformationWindow",  # StageResultInformer's DisplayInformationForResult (InformationMessage)
+          "SpinGuidanceReplace", "BallGuidanceReplace")  # PlayerActionGuidance (RMGE01's archives; pictures: padart.py)
 # ponytail: no DPDPointerSub (the 2P pointer) nor DPDPointerNumber (the player number, shown only with two remotes
 # connected): one pad here
 # the dome's galaxy select's (AstroDomeGalaxySelector): dome.bin, loaded in the AstroDome stages only; GalaxyInfo with
