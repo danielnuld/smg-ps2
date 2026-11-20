@@ -1692,6 +1692,7 @@ static int trs_hold(Player *m); static void trs_update(void), trs_init(void), tr
 static void ljs_init(void), ljs_update(void); /* LavaJamboSunPlanet (lava_jambo_sun.inc) */
 static void lpt_init(void), lpt_update(void); /* LavaProminenceTriple (lava_prominence_triple.inc) */
 static void update_banekiti(void); /* banekiti.inc */
+static void update_bump_planet(void); /* bump_appear_planet.inc */
 static int glr_hold(Player *m); static void glr_update(void), glr_init(void); /* GravityLightRoad (gravity_light_road.inc) */
 static int wrd_hold(Player *m); static void wrd_update(void), draw_water_road(void), wrd_init(void), wrd_cast_hook(int type); /* WaterRoad (water_road.inc) */
 static void or_alloc(void), or_init(void), or_update(void), draw_oceanrings(void); static int or_in_water(V3 p, V3 up, float *depth), or_row(V3 p); /* OceanRing (ocean_ring.inc) */
@@ -6664,7 +6665,7 @@ static void game_rebind_(void)
                                                * pose, the pool full at rebind: kcl_query poses it once it has one) */
         const Inst *o = &insts[i];
         const char *cn = o->md ? s->types + 32 * s->objs[o->row].type : "";
-        if (!o->md || !o->md->skin || o->kparent >= 0 || (strcmp(cn, "HoneyQueen") && strcmp(cn, "SandUpDownTriRock") && strcmp(cn, "SeaBottomTriplePropeller") && strcmp(cn, "BeamGoRoundPlanet") && strcmp(cn, "SnowMan"))) continue;
+        if (!o->md || !o->md->skin || o->kparent >= 0 || (strcmp(cn, "HoneyQueen") && strcmp(cn, "SandUpDownTriRock") && strcmp(cn, "SeaBottomTriplePropeller") && strcmp(cn, "BeamGoRoundPlanet") && strcmp(cn, "SnowMan") && strcmp(cn, "BumpAppearPlanet"))) continue;
         for (int j = 0; j < o->md->skin->njoints; j++)
             for (int p = 0; ninsts < insts_cap; p++) {
                 char kn[48];
@@ -59680,6 +59681,7 @@ static void update_appears(void)
 #include "ocean_ring.inc" /* OceanRing: or_* */
 #include "water_road.inc" /* WaterRoad: wrd_* */
 #include "gravity_light_road.inc" /* GravityLightRoad: glr_* */
+#include "bump_appear_planet.inc" /* BumpAppearPlanet: update_bump_planet */
 #include "banekiti.inc" /* Banekiti: update_banekiti */
 #include "lava_prominence_triple.inc" /* LavaProminenceTriple / LavaProminenceEnvironment: lpt_* */
 #include "lava_jambo_sun.inc" /* LavaJamboSunPlanet: ljs_* */
@@ -61329,6 +61331,7 @@ void game_update(void)
     update_trapezes();
     wrd_update();
     glr_update();
+    update_bump_planet();
     update_banekiti();
     lpt_update();
     ljs_update();
