@@ -147,6 +147,14 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   any enemy attack but fire (`explosion_breaks`) breaks them; their star piece (arg7 4) is StarPieceDummy at its
   Rotation pose (DdmStarPieceR, the clip not played). Left of the BreakableCage list: SW_DEAD's timing, the break
   camera demo.
+- SwingLight, part of #790 (feat/790-swing-light, 2026-11-19, on top of feat/ufo-base; **not run in PCSX2**,
+  syntax check only). TeresaMansionLightA / B (PhantomGalaxy: six, SW_A 9 / 104) and SandRiverLightA
+  (TransformationExGalaxy: five) were generic map parts whose rotator waited for SW_A; SwingLight overrides
+  initCaseUseSwitchA (its SW_A only brings the light): mp_running does not hold kind 118 back, so the lamps swing
+  from the start. Its LightCylinder: the GlaringLight model (slice.py EXTRA: TeresaMansionGlaringLightA / B,
+  SandRiverGlaringLightA) drawn on the lamp's matrix once the light is out (statics.inc case 118, `st_swlights_draw`:
+  at once without SW_A, for good once it comes on). **Repack PhantomGalaxy, TransformationExGalaxy** (three small
+  models more: check PACK_ROOM). Left for #790: the light volume (VolumeModelDrawer), the bloom model.
 - UFOBase and SimpleMapObjPush after Petari (feat/ufo-base, #788, 2026-11-19; **not run in PCSX2**, syntax check
   only). The UFOs (UFOStrongA, UFOBattleStageC / D / E: UFOSolid; UFONormalB / D: UFOBreakable; BattleShipGalaxy,
   CannonFleetGalaxy) were generic map parts: a MapPartsRotator about RotateAxis and a rail mover gated by SW_A / SW_B.

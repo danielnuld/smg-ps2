@@ -39914,10 +39914,12 @@ static void carry(const float old[16], const Inst *in)
  * they start at init. SideSpikeMoveStep's star pointer stop (WalkerStateBindStarPointer) is the 2P pointer's only
  * (isStarPointerPointing2POnPressButton), so a "SideSpikeMoveStepA" is its rail mover alone in one-player */
 static int astro_rotator_dead(const char *cls);
+static int st_kind(int type); /* statics.inc */
 static int mp_running(const Row *r, int row)
 {
     if (astro_rotator_dead(sc->types + 32 * r->type)) return 0; /* AstroMapObj::setStateDead: endMapPartsFunctions */
-    if (r->sw[SW_A] >= 0 && !(row_mp_a[row] & 1)) {
+    if (r->sw[SW_A] >= 0 && !(row_mp_a[row] & 1) && st_kind((int)r->type) != 118) { /* (118: SwingLight::initCaseUseSwitchA
+                                                                                  * only listens for its light: no Wait nerve) */
         if (!sw_on(r, SW_A)) return 0;
         row_mp_a[row] |= 1;
     }

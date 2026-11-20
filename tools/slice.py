@@ -270,6 +270,8 @@ for _box, _item in (("TreasureBoxBlueChip", "BlueChip"), ("TreasureBoxYellowChip
 # WaterLeakPipe::init: its IceStepNoSlip (a ModelObj on its Top joint, its own collision, Start / End clips: game.c
 # update_leakpipes)
 EXTRA["WaterLeakPipe"] = EXTRA.get("WaterLeakPipe", ()) + ("IceStepNoSlip",)
+EXTRA.update({"TeresaMansionLightA": ("TeresaMansionGlaringLightA",), "TeresaMansionLightB": ("TeresaMansionGlaringLightB",),
+              "SandRiverLightA": ("SandRiverGlaringLightA",)})  # SwingLight::makeSubModels: its LightCylinder (statics.inc st_swlights_draw)
 SKINNED_OBJ += ("IceStepNoSlip",)
 SKINNED_OBJ += ("SandCapsulePressGround",)  # its MoveAway clip (DisappearDemo: game.c statics.inc st_scpress)
 SKINNED_OBJ += ("Tsukidashikun",)  # its Sign clip and its face BVAs (game.c tsuki_bva)

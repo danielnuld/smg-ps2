@@ -288,6 +288,7 @@ static int st_kind_name(const char *n)
     if (!strcmp(n, "SpaceShipStep")) return 110; /* ST_SSTEP */
     if (!strncmp(n, "MechaKoopaParts", 15)) return !strcmp(n + 15, "Head") ? 113 : !strncmp(n + 15, "Arm", 3) ? 112 : ST_NONE; /* ST_MKHEAD, ST_MKARM */
     if (!strcmp(n, "DangerSignBoard")) return 115; /* ST_PUSH: SimpleMapObjPush */
+    if (!strcmp(n, "TeresaMansionLightA") || !strcmp(n, "TeresaMansionLightB") || !strcmp(n, "SandRiverLightA")) return 118; /* ST_SWLIGHT: SwingLight */
     if (!strcmp(n, "GravityLightA")) return 117; /* GravityLight (st_floater_rail: its rail mover always runs) */
     if (!strcmp(n, "UFONormalB") || !strcmp(n, "UFONormalD") || !strcmp(n, "UFOStrongA") || !strncmp(n, "UFOBattleStage", 14)) return 116; /* ST_UFO: UFOBase */
     if (!strcmp(n, "SurprisedGalaxy") || (!strncmp(n, "Surp", 4) && strlen(n) > 10 && !strcmp(n + strlen(n) - 6, "Galaxy"))) return ST_SURP;
@@ -1523,6 +1524,12 @@ static void st_objs_update(void)
             }
             break;
         case 116: if (st_ufo(in, g, i)) return; break; /* ST_UFO */
+        case 118: { /* ST_SWLIGHT: SwingLight::initCaseNoUseSwitchA: appearLight at once; initCaseUseSwitchA:
+                     * listenStageSwitchOnA: appearLight when its SW_A comes on (for good). g->on: the light is out */
+            const Row *r = &sc->objs[in->row];
+            if (!g->on && (r->sw[SW_A] < 0 || sw_on(r, SW_A))) { g->on = 1; printf("swing light %d: its light appears%c", in->row, 10); }
+            break;
+        }
         case ST_TEXSW: { /* SimpleMapObj::init: TexChange (BTK) at arg1 (setupInitInfoTextureChangeArg1; -1 none),
                           * SimpleTextureSwitchChangeObj::changeTexture on its SW_A's rise: frame 1 for good (slice.py
                           * BRK_STEPS: "<class>~<frame>") */
@@ -3032,8 +3039,26 @@ static void st_mirror_draw(void)
     if (!row_shown(in->row)) return;
     if (!render_mirror_surface(in->md, in->m)) inst_draw(in, in->md, in->m);
 }
+/* SwingLight.cpp after Petari (TeresaMansionLightA / B, SandRiverLightA): a MapObjActor with a rotator and a rail
+ * mover (the instance's) whose SW_A does not hold them back (mp_running); its LightCylinder, the
+ * "<...>GlaringLight<...>" model (getGlaringLightModelName; slice.py EXTRA) on the lamp's matrix (mHostMtx), dead
+ * until appearLight (st_objs_update: g->on), then drawn with its own animations (tryStartAllAnim: the model's).
+ * ponytail: no VolumeModelDrawer ("<class>LightVolume", colour 255 218 100 160: the destination-alpha light volume,
+ * #790), no bloom model (TeresaMansionGlaringLightBBloom), drawn with the map objects */
+static void st_swlights_draw(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (st_kind(sc->objs[in->row].type) != 118 || in->invisible || !row_shown(in->row) || !st_get(in->row)->on) continue;
+        const char *n = sc->types + 32 * sc->objs[in->row].type;
+        const Model *md = scene_model(sc, !strcmp(n, "TeresaMansionLightA") ? "TeresaMansionGlaringLightA" :
+                                          !strcmp(n, "TeresaMansionLightB") ? "TeresaMansionGlaringLightB" : "SandRiverGlaringLightA");
+        if (md && !render_clip_judge(&in->m[12], 2000.0f, 1e9f)) render_model(md, in->m, 0x80, 0x80, 0x80); /* setupClippingRadius(2000) */
+    }
+}
 static void st_draw(void)
 {
+    st_swlights_draw();
     st_mirror_draw();
     st_flags_draw();
     st_bbeamers_draw();
