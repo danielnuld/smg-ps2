@@ -22,6 +22,7 @@ void se_map_code(int code); /* the player's ground sound code (AudSoundObject::g
 void se_port(u32 handle, int port, u16 value);        /* a sequence port (JAISound::setPort) */
 void se_listener(const float eye[3], const float right[3], float fovy); /* fovy under 20: the far camera */
 void se_volpitch(u32 handle, float vol, float pitch); /* scale a playing sound's volume and pitch */
+void se_special_fx(int fx); /* AudEffector::setSpecialFx: 0 none, 1 / 2 (AudSeStrategy's volumes for a few sounds) */
 /* a note of bank / program outside any sequence (me.c's channels): adsr 24 bytes of big-endian {mode, time, value}
  * points or NULL, release a direct release (0 none) -> handle, 0 none; it ends once released and faded */
 u32 se_note(int bank, int prog, int key, int vel, const u8 *adsr, u16 release);

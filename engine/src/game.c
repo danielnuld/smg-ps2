@@ -49719,7 +49719,9 @@ static void update_bgm_cubes(void)
  * else for type 0 at priority 0; a request wins when its priority is not under the frame's best so far
  * (setEffectType). When the type changes the stage BGM's volume moves to the type's over 90 frames (not in the
  * scenario's opening camera); type 3 plays SE_AT_LV_WATERFALL_CAVE, type 4 SE_AT_LV_PHNCV_TERESA_ROOM.
- * ponytail: no AudEffector (the types' reverb send, cutoff and special effect: all type 1 does) */
+ * AudEffector's special effect (types 1 and 3) is se_seq.c's se_special_fx: a few sounds at half volume.
+ * ponytail: no reverb send (types 1, 3, 4: the SPU2's effect unit is not set up, and isUseFxMix is not in
+ * sound.bin) and no cutoff (type 2: the voices have no filter) */
 static void update_audio_effect(void)
 {
     static const float volume[5] = {1.0f, 1.0f, 1.0f, 0.0f, 1.0f}; /* cAudEffectDataList's mVolume */
@@ -49752,6 +49754,7 @@ static void update_audio_effect(void)
     if (type < 0 || type > 4) type = 0; /* (the table's five types) */
     if (set != type) { /* setAudioEffectParam */
         if (!opening_cam_on) audio_move_volume(volume[type], 90); /* moveVolumeStageBGM */
+        se_special_fx(type == 1 ? 1 : type == 3 ? 2 : 0); /* setSpecialFx */
         set = type;
         printf("audio effect: type %d%c", type, 10);
     }

@@ -11,6 +11,15 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- AudEffector's special effect, part of #15 (feat/15-audio-special-fx, 2026-11-20; **not run in PCSX2**: build,
+  memcheck, host tests). AudioEffectArea / AudEffectDirector were already in (update_audio_effect: the types, the
+  priorities, the BGM volume, the two atmosphere sounds). Added: setSpecialFx (1 for type 1, 2 for type 3) as
+  se_seq.c se_special_fx and AudSeStrategy::calc's volumes: the waterfalls and the seagull at half volume at once
+  under 2 (never moved back, as Petari), the fountain and the rabbit maze's wind to half over 5 frames under 1 and
+  back without. ponytail: no reverb send (types 1, 3, 4: needs the SPU2 effect unit through sndvoice.irx, its work
+  area in SPU RAM, and the sound table's isUseFxMix flag in sound.bin: a repack) and no cutoff (type 2 and those
+  sounds' 10 / 20: the SPU2 voices have no filter). To hear: PhantomGalaxy's fountain inside a type 1 area. No
+  repack.
 - Bowser's fanfare under the appear demo's muted BGM (fix/15-koopa-fanfare-volume, 2026-11-20; **not run in
   PCSX2**). The note below was wrong about the volume: audio_move_volume (moveVolumeStageBGM / SubBGM) is ported
   and star_demo_update sets it to 0 for the appear demo's 290 frames, so the fanfare of #817, on the same one
