@@ -1773,7 +1773,7 @@ static Anim *st_ccm_anim(int row)
     const Model *md = scene_model(sc, "Tico");
     return md && md->skin ? obj_anim(23 * (int)sc->nobjs + row, md, "Tico") : NULL;
 }
-static void st_ccm_set(StSt *g, int n) { g->n = n; g->st = 0; printf("crystal cage moving %d: nerve %d%c", g->row, n, 10); }
+static void st_ccm_set(StSt *g, int n) { g->n = n; g->st = -1; printf("crystal cage moving %d: nerve %d%c", g->row, n, 10); }
 static int st_ccm_rail(int row) { return !st_ccm_end(st_get(row)->n); } /* update_railers: MapObjActor::control runs */
 static void st_ccm_action(int row) { StSt *g = st_get(row); if (g->n == CCM_BREAKSMALL || g->n == CCM_BREAKALL) st_ccm_set(g, CCM_TICOMOVE); }
 static void st_ccm_fx(const Inst *in, const char *name) { fx_named("CrystalCageMoving", name, in->m, NULL, NULL); }
@@ -1799,7 +1799,8 @@ static int st_ccm(Inst *in, StSt *g) /* 1: the instances were bound again */
     }
     if (g->n == CCM_DEAD) return 0;
     Anim *a = st_ccm_anim(in->row);
-    int st = g->st++, played = 0;
+    if (g->st < 0) g->st = 0; /* a nerve set outside this update (st_ccm_action); st_objs_update steps it */
+    int st = g->st, played = 0;
     if (g->n >= CCM_BREAKSMALL) in->invisible = 1; /* (kept over a rebind) */
     switch (g->n) {
     case CCM_BREAKBIG:
