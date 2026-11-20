@@ -917,6 +917,9 @@ static const Model *m_sambohead;
 static int test_cross; /* test builds: X held (Bee Mario) */
 static unsigned char zone_kcl[64]; /* zones with collision bound (game_rebind): walkers wait in the others */
 static unsigned char zone_low[MAX_ZONES]; /* zones streamed in low (game_zone_sets): no collision of their own, only pieces of the base packs */
+#ifdef CARE_TEST
+static int care_test_seen; /* care_update ran: its Caretaker is awake */
+#endif
 static int test_nolost; /* test builds: no miss for falling off (Mario sent to a zone still streaming in) */
 static void notes_spawn(void);
 static int note_rail(const Row *r, const unsigned char **e);
@@ -14092,12 +14095,18 @@ static void update_talkers(void)
     if (!tk_nctl) return;
     rosetta_talk();
 #ifdef CARE_TEST /* (its zone sleeps until Mario is in it: he is put before the mission's Caretaker from here) */
-    for (u32 i = 0; game_frame == 300 && i < sc->nobjs; i++)
-        if (!strcmp(sc->types + 32 * sc->objs[i].type, "Caretaker") && care_mission(&sc->objs[i])) {
-            V3 x, z; row_axes(&sc->objs[i], &x, &z);
-            mario->pos = vadd(row_pos(&sc->objs[i]), vadd(vmul(z, 200.0f), vmul(vcross(z, x), 50.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; test_nolost = 1;
-            printf("care test: Mario before row %u%c", i, 10);
-        }
+    static int care_tt;
+    int care_m = -1, care_p = -1; /* the mission's Caretaker; else the scene's first one: its plain talk, A tapped */
+    for (u32 i = 0; i < sc->nobjs; i++)
+        if (!strcmp(sc->types + 32 * sc->objs[i].type, "Caretaker")) { if (care_mission(&sc->objs[i])) { if (care_m < 0) care_m = (int)i; } else if (care_p < 0 && row_shown((int)i)) care_p = (int)i; }
+    if (!in_opening && mario->launch < 0 && !care_test_seen) care_tt++;
+    if (care_m < 0 && care_p >= 0 && care_tt > 120) pad_force = care_tt % 45 < 5 ? PAD_CROSS : 0;
+    if (!care_test_seen && (care_m >= 0 ? care_tt % 120 == 60 : care_tt == 60) && (care_m >= 0 || care_p >= 0)) {
+        const Row *cr = &sc->objs[care_m >= 0 ? care_m : care_p];
+        V3 x, z; row_axes(cr, &x, &z);
+        mario->pos = vadd(row_pos(cr), vadd(vmul(z, 200.0f), vmul(vcross(z, x), 50.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; test_nolost = 1;
+        printf("care test: Mario before row %d (mission %d)%c", care_m >= 0 ? care_m : care_p, care_m >= 0, 10);
+    }
 #endif
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
@@ -50900,8 +50909,8 @@ static void care_update(Inst *in, int k) /* the mission's nerves (update_talkers
 {
     const Row *r = &sc->objs[in->row];
     if (care.at != sc || care.row != in->row) { care.at = sc; care.row = in->row; care.nrv = CT_WAIT; care.step = -1; care.ctrl = 0; }
-#ifdef CARE_TEST /* XF=-DCARE_TEST (plain, a galaxy with a mission Caretaker): Mario put 200 before it at frame 300; at
-                  * 400 the talk is skipped as answered Yes (=3: the real talk, A through its pages, the pointer swept
+#ifdef CARE_TEST /* XF=-DCARE_TEST (plain, a galaxy with a mission Caretaker): Mario put 200 before it once he is free; 100 steps on
+                  * the talk is skipped as answered Yes (=3: the real talk, A through its pages, the pointer swept
                   * down over the selector: Yes; =4: swept up: No); in Tidy an explosion at one BreakableTrash of its
                   * group every 30 frames from its step 120 (=2: none: the time runs out); A through the talk after it;
                   * a line every 60 frames */
@@ -50911,11 +50920,11 @@ static void care_update(Inst *in, int k) /* the mission's nerves (update_talkers
         int t = scene_type(sc, "BreakableTrash"), alive = 0, first = -1;
         for (u32 i = 0; t >= 0 && i < sc->nobjs; i++)
             if ((int)sc->objs[i].type == t && sc->objs[i].group == r->group && sc->objs[i].zone == r->zone && !row_dead[i]) { alive++; if (first < 0) first = (int)i; }
-        pad_force = 0;
+        pad_force = 0; care_test_seen = 1;
         if (care.nrv == CT_PRETALK) talked = 1;
         if (var < 3) {
-            if (care.nrv == CT_WAIT && game_frame >= 400 && !talked && pd_try_start(CT_DEMO, in->row)) { talked = 1; mario_play("watch", 1.0f, 1); care_set(CT_PREWIPEOUT); }
-        } else if (game_frame > 400 && (care.nrv == CT_PRETALK || (care.nrv == CT_WAIT && !talked))) {
+            if (care.nrv == CT_WAIT && care.step >= 100 && !talked && pd_try_start(CT_DEMO, in->row)) { talked = 1; mario_play("watch", 1.0f, 1); care_set(CT_PREWIPEOUT); }
+        } else if (care.step > 100 && (care.nrv == CT_PRETALK || (care.nrv == CT_WAIT && !talked))) {
             cur_x = 160.0f + 80.0f * (float)(game_frame / 100 % 5);
             cur_y = var == 3 ? 40.0f + 4.0f * (float)(game_frame % 100) : 440.0f - 4.0f * (float)(game_frame % 100);
             if (game_frame % 8 < 2) pad_force = PAD_CROSS;
