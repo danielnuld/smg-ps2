@@ -1974,22 +1974,27 @@ static void st_float(Inst *in, int i, int kind)
     if (on) carry(old, in);
 }
 
-#ifdef ST_FLOAT_TEST /* plain build XF=-DST_FLOAT_TEST: from frame 300 Mario dropped 250 over the first floater row
-                      * (again every 600 frames: he may slip off; its zone streams in meanwhile); a line every 30 frames */
+#ifdef ST_FLOAT_TEST /* plain build XF=-DST_FLOAT_TEST[=k]: once Mario is free he is dropped onto the k-th floater row
+                      * (1 the first; again every 600 frames: he may slip off; its zone streams in meanwhile); a line every 30 frames */
 static void st_float_test(void)
 {
-    if (game_frame < 300) return;
-    int row = -1;
-    for (u32 i = 0; row < 0 && i < sc->nobjs; i++) if (st_float_class(sc->types + 32 * sc->objs[i].type)) row = (int)i;
-    if (row < 0) { if (game_frame == 300) printf("float test: no floater row%c", 10); return; }
+    static int t;
+    if (!game_test_free() && !t) return;
+    int row = -1, k = ST_FLOAT_TEST - 1;
+    for (u32 i = 0; row < 0 && i < sc->nobjs; i++) if (st_float_class(sc->types + 32 * sc->objs[i].type) && k-- == 0) row = (int)i;
+    for (u32 i = 0; row < 0 && i < sc->nobjs; i++) if (st_float_class(sc->types + 32 * sc->objs[i].type)) row = (int)i; /* fewer than k: the first */
+    if (row < 0) { if (!t++) printf("float test: no floater row%c", 10); return; }
     const StFloat *f = NULL;
-    for (int k = 0; k < st_nfloats; k++) if (st_floats[k].row == row) f = &st_floats[k];
+    for (int j = 0; j < st_nfloats; j++) if (st_floats[j].row == row) f = &st_floats[j];
     V3 x, z, p = f ? f->base : row_pos(&sc->objs[row]);
     row_axes(&sc->objs[row], &x, &z);
-    if (game_frame % 600 == 300 || !f) { mario->pos = vadd(p, vmul(vnorm(vcross(z, x)), 250.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; test_nolost = 1; }
-    if (f && game_frame % 30 == 0)
-        printf("float test f %u: row %d force %d/%d host %d, sunk %.1f (v44 %.2f, spring %.1f %.2f), mario on %d%c", game_frame, row, f->fn, f->fstep, f->n,
-               vdot(vsub(f->base, f->pos), f->up), f->v44, f->sval, f->svel, mario_ground >= 0 && insts[mario_ground].row == row, 10);
+    V3 up = f ? f->up : vnorm(vcross(z, x));
+    if (t % 600 == 0 || !f) { mario->pos = vadd(p, vmul(up, row_inst(row) ? row_inst(row)->reach + 100.0f : 250.0f)); /* over its model (LavaFloatingStepD's top is 750 over its origin) */ mario->hvel = v3(0, 0, 0); mario->vup = 0; test_nolost = 1; }
+    if (f && t % 30 == 0)
+        printf("float test t %d: row %d force %d/%d host %d, sunk %.1f (v44 %.2f, spring %.1f %.2f), mario on %d (ground row %d, %.0f over it)%c", t, row, f->fn, f->fstep, f->n,
+               vdot(vsub(f->base, f->pos), f->up), f->v44, f->sval, f->svel, mario_ground >= 0 && insts[mario_ground].row == row,
+               mario_ground >= 0 ? insts[mario_ground].row : -1, vdot(vsub(mario->pos, f->pos), f->up), 10);
+    t++;
 }
 #endif
 
