@@ -49,6 +49,13 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   up after 10 s): "snow rabbit collect: nerve n", "snow rabbit row n: nerve k", "trick test" lines. Left out
   (ponytail): SpotMarkLight, the foot prints (SW_B), the Light effect, the star's demo continued from the success
   demo (the port's own star demo follows it).
+- MeteorStrike's effects, part of #653 (fix/653-meteor, 2026-11-19): update_meteor emitted nothing. Now, on the
+  model's group for the three classes (initEffectKeeper(0, nullptr): MeteorStrike), `MeteorStrike` kept from
+  showModel to the break, `MeteorStrikeBreak` at exeBreak, emitEffectColumn's LavaColumn at the ground
+  (`LavaColumnAttrDamageFire` on a fire floor, else `LavaColumnAttrDefault`, the ground's normal up); a shown
+  MeteorStrikeEnvironment out of the screen is killed (exeMove). ElectricRail's demo Disappear plays
+  SE_OJ_ELEC_RAIL_VANISH (still gone at once: no 20-frame shrink). Test: `meteor`. Left of #653: the broken model
+  (MeteorStrikeBreak's Break clip), the shadow's growth, ArrowSwitch's lock and push.
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /
