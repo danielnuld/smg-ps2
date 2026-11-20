@@ -11,6 +11,14 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- NutShipFleetBridge as a PhantomShipBridge (feat/nut-ship-bridge, #794, 2026-11-19; **not run in PCSX2**, syntax
+  check only). CannonFleetGalaxy 2's bridge (SW_A 30) was a slice.py POSE class: drawn and collided at MoveA's last
+  frame from the start. Now skinned with its Move collision on its joint (slice.py SKINNED_OBJ, KCL_PARTS; POSE is
+  empty) and run by update_bridges (ci->bridge for both classes, the table sized by both, "<class>#Move", the clips
+  "nutshipfleetbridge/movea", the Move joint the one slice.py marks): its bind pose until SW_A, MoveA with
+  SE_OJ_LV_NUT_SHIP_BRIDGE_MV for 55 frames, SE_OJ_NUT_SHIP_BRIDGE_ED and the shake at 55 (..._ST for MoveB: it has
+  no MoveB clip nor SW_B). PhantomShipBridge's riddle SE no longer plays with Mario dead (isPlayerDead). **Repack
+  CannonFleetGalaxy**; with the old pack the bridge stays as it was (not skinned: update_bridges skips it).
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /

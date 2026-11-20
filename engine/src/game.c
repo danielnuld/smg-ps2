@@ -417,7 +417,7 @@ typedef struct {
     u32 lv[2];       /* its level sounds' handles (Tico's wait / float) */
     const Model *md_bloom; /* its "<model>Bloom" model (PlanetMap::initBloomModel, createModelObjBloomModel) or NULL */
     int otamagma;    /* OtaKingMagma's collision (initCollisionParts "OtaKingMagma"): drawn with OtaKing (ota) */
-    int bridge;      /* PhantomShipBridge 1; its Move collision part 2 + the bridge's inst index (update_bridges) */
+    int bridge;      /* PhantomShipBridge / NutShipFleetBridge 1; its Move collision part 2 + the bridge's inst index (update_bridges) */
     int dossun;      /* Dossun: falls and rises on a cycle, a press (update_dossuns, dossun_place) */
     int rbeamer;     /* RingBeamer: its group shoots rings at Mario (update_rbeamers, draw_rbeams) */
     int sbeamer;     /* SearchBeamer: aims its beam at Mario (update_sbeamers, sbm_place, sbm_joints) */
@@ -3060,7 +3060,8 @@ void game_init(const Scene *s, const unsigned char *blob)
     foot_num = foot_rot = 0;
     nseesaws = 0;
     nbridges = 0;
-    bridges = row_table("PhantomShipBridge", MAX_BRIDGES, sizeof *bridges);
+    { int nb = count_type("PhantomShipBridge", 0) + count_type("NutShipFleetBridge", 0);
+      bridges = nb ? mem_alloc(MEM_OBJECTS, (u32)(nb < MAX_BRIDGES ? nb : MAX_BRIDGES) * sizeof *bridges) : NULL; }
     nrclouds = 0; rcloud_max = count_type("RainCloud", 0);
     if (rcloud_max > MAX_RCLOUDS) rcloud_max = MAX_RCLOUDS;
     rclouds = row_table("RainCloud", MAX_RCLOUDS, sizeof *rclouds);
@@ -6089,7 +6090,7 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->hipsw = strcmp(name, "HipDropSwitch") == 0 ? 1 : strcmp(name, "HipDropTimerSwitch") == 0 ? 2 :
                 strncmp(name, "PicketSwitch", 12) == 0 ? 3 : 0;
     ci->seesaw = strcmp(name, "PhantomShipHandle") == 0 ? 1 : seesaw_se(name) ? 2 : strcmp(name, "LavaHomeSeesaw") == 0 ? 4 : 0;
-    ci->bridge = strcmp(name, "PhantomShipBridge") == 0;
+    ci->bridge = strcmp(name, "PhantomShipBridge") == 0 || strcmp(name, "NutShipFleetBridge") == 0;
     ci->dossun = strcmp(name, "Dossun") == 0;
     ci->onimasu = strcmp(name, "Onimasu") == 0 || strcmp(name, "OnimasuPivot") == 0;
     ci->rbeamer = strcmp(name, "RingBeamer") == 0 ? 1 : strcmp(name, "JumpBeamer") == 0 ? 2 : strcmp(name, "JumpGuarder") == 0 ? 3 : 0;
@@ -6572,11 +6573,15 @@ static void game_rebind_(void)
     }
     wz_rebind_insts(s); /* WaterBazooka's Cannon1 and capsule collisions */
     for (int i = 0, n = ninsts; i < n; i++) /* PhantomShipBridge's "Move" collision on its joint (update_bridges) */
-        if (insts[i].bridge == 1 && scene_kcl(s, "PhantomShipBridge#Move") && ninsts < (int)s->nobjs) {
+        if (insts[i].bridge == 1 && ninsts < (int)s->nobjs) {
+            char kn[48];
+            snprintf(kn, sizeof kn, "%s#Move", s->types + 32 * s->objs[insts[i].row].type);
+            const unsigned char *mk = scene_kcl(s, kn);
+            if (!mk) continue;
             Inst *in = &insts[ninsts++];
             *in = insts[i];
             in->bridge = 2 + i; in->invisible = 1; in->anim = NULL; in->anim_want = 0;
-            in->kcl = scene_kcl(s, "PhantomShipBridge#Move");
+            in->kcl = mk;
         }
     m_trainbody = scene_model(s, "ChooChooTrainBody"); m_bfwind = scene_model(s, "BigFanWind");
     for (int i = 0, n = ninsts; i < n; i++) { /* a "<class>#Move" collision (slice.py KCL_PARTS) on its Move joint: an
@@ -39699,8 +39704,9 @@ static Quat q_lerp(Quat a, Quat b, float t) /* JMAQuatLerp (the nearer of b and 
 }
 /* PhantomShipBridge.cpp: with SW_A it waits (no BCK: its bind pose) until SW_A turns on, then MoveA; SW_B on:
  * MoveB; without SW_A it is at MoveA's end at once (setStateMoveA). Step 55 of either: shakeCameraNormal. Its Move
- * collision follows the Move joint (joint 1); the body's stays. Not a NutShipFleetBridge: its FALL_BRIDGE sounds; the
- * riddle SE plays even with Mario dead. Each its own Anim (a LiveActor's model), not the pose pool's: the Move
+ * collision follows the Move joint (the one slice.py marks, else joint 1); the body's stays. NutShipFleetBridge
+ * (mIsNutShipBridge; CannonFleetGalaxy's, with a SW_A and no MoveB clip): SE_OJ_LV_NUT_SHIP_BRIDGE_MV, ..._ED at
+ * step 55, ..._ST for MoveB; the others the FALL_BRIDGE sounds. The riddle SE not with Mario dead (isPlayerDead). Each its own Anim (a LiveActor's model), not the pose pool's: the Move
  * collision needs its pose wherever the camera is */
 enum { BR_WAIT, BR_MOVEA, BR_MOVEB };
 static void update_bridges(void)
@@ -39727,12 +39733,13 @@ static void update_bridges(void)
         }
         if (b->nrv != BR_WAIT && b->t < 1000) b->t++;
         if (b->nrv != BR_WAIT && b->t < 1000) { /* exeMoveA / exeMoveB (step n: t n + 1) */
+            int nut = !strcmp(sc->types + 32 * r->type, "NutShipFleetBridge"); /* mIsNutShipBridge */
             if (b->t == 1) {
-                if (b->nrv == BR_MOVEA) se_start(SE_SY_READ_RIDDLE_S, NULL);
-                else se_start(SE_OJ_PTM_SHIP_BRIDGE_FALL, &in->m[12]);
+                if (b->nrv == BR_MOVEA) { if (!miss_running()) se_start(SE_SY_READ_RIDDLE_S, NULL); }
+                else se_start(nut ? SE_OJ_NUT_SHIP_BRIDGE_ST : SE_OJ_PTM_SHIP_BRIDGE_FALL, &in->m[12]);
             }
-            if (b->t <= 55) in->lv[0] = se_level(SE_OJ_LV_FALL_BRIDGE_FALL, &in->m[12], in->lv[0]); /* isLessStep(55) */
-            if (b->t == 56) se_start(SE_OJ_FALL_BRIDGE_LAND, &in->m[12]);
+            if (b->t <= 55) in->lv[0] = se_level(nut ? SE_OJ_LV_NUT_SHIP_BRIDGE_MV : SE_OJ_LV_FALL_BRIDGE_FALL, &in->m[12], in->lv[0]); /* isLessStep(55) */
+            if (b->t == 56) se_start(nut ? SE_OJ_NUT_SHIP_BRIDGE_ED : SE_OJ_FALL_BRIDGE_LAND, &in->m[12]);
         }
         if (b->nrv != BR_WAIT && b->t == 56) camera_shake(SHAKE_NORMAL);
         Anim *a = &b->anim;
@@ -39740,7 +39747,9 @@ static void update_bridges(void)
         in->anim = a; in->anim_want = 0;
         if (b->nrv == BR_WAIT) { a->clip = NULL; a->clip_id = -1; }
         else {
-            const char *clip = b->nrv == BR_MOVEA ? "phantomshipbridge/movea" : "phantomshipbridge/moveb";
+            const char *clip = !strcmp(sc->types + 32 * r->type, "NutShipFleetBridge") ?
+                               (b->nrv == BR_MOVEA ? "nutshipfleetbridge/movea" : "nutshipfleetbridge/moveb") :
+                               b->nrv == BR_MOVEA ? "phantomshipbridge/movea" : "phantomshipbridge/moveb";
             anim_play(a, clip, 0.0f, 0, 0);
             int len = anim_clip_info(clip, NULL);
             a->frame = (float)(b->t - 1 < len ? b->t - 1 : len); /* its frame, held at the end */
@@ -39776,7 +39785,11 @@ static void update_bridges(void)
         Inst *p = &insts[i];
         if (p->bridge < 2) continue;
         const Inst *in = &insts[p->bridge - 2];
-        if (in->anim && in->anim->skin && in->anim->skin->njoints > 1) mat_mul(p->m, in->m, in->anim->world[1]);
+        if (in->anim && in->anim->skin && in->anim->skin->njoints > 1) {
+            int mj = 1;
+            for (int j = 0; j < in->anim->skin->njoints; j++) if (in->anim->skin->joints[j].pad == 1) { mj = j; break; } /* (its Move joint) */
+            mat_mul(p->m, in->m, in->anim->world[mj]);
+        }
     }
 }
 
