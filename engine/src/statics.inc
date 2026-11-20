@@ -285,6 +285,7 @@ static int st_kind_name(const char *n)
     if (!strcmp(n, "QuarterRollGravityRoomArrow")) return ST_QRARROW;
     if (!strcmp(n, "SandCapsulePressGround")) return ST_SCPRESS;
     if (!strcmp(n, "DangerSignBoard")) return 115; /* ST_PUSH: SimpleMapObjPush */
+    if (!strcmp(n, "GravityLightA")) return 117; /* GravityLight (st_floater_rail: its rail mover always runs) */
     if (!strcmp(n, "UFONormalB") || !strcmp(n, "UFONormalD") || !strcmp(n, "UFOStrongA") || !strncmp(n, "UFOBattleStage", 14)) return 116; /* ST_UFO: UFOBase */
     if (!strcmp(n, "SurprisedGalaxy") || (!strncmp(n, "Surp", 4) && strlen(n) > 10 && !strcmp(n + strlen(n) - 6, "Galaxy"))) return ST_SURP;
     for (u32 k = 0; k < sizeof st_still / sizeof *st_still; k++) if (!strcmp(n, st_still[k])) return ST_STILL;
@@ -1378,6 +1379,7 @@ static int st_iastone(Inst *in, StSt *g)
 static int st_floater_rail(const Inst *in) /* update_railers: -1 not a floater, else may its rail mover run */
 {
     if (st_kind(sc->objs[in->row].type) == 116) return st_get(in->row)->n == 2; /* ST_UFO: its mover started by exeMove */
+    if (st_kind(sc->objs[in->row].type) == 117) return 1; /* GravityLight::init: mMapPartsRailMover->start(), no switch read (its rows' SW_B is not the class's) */
     if (st_kind(sc->objs[in->row].type) != ST_FLOATERU) return -1;
     return st_get(in->row)->n == FU_MOVE;
 }

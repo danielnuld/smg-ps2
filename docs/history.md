@@ -25,6 +25,9 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   LodCtrl. DangerSignBoard (SimpleMapObjPush): its body sensor, 200 at 200 up, pushes Mario (kind 115). Test: plain
   with `XF=-DUFO_TEST` (BattleShipGalaxy/1 or /2): "ufo n (class): nerve .. front .." every 120 frames, at frame 600
   an explosion at each UFONormal*: "ufo n: broken".
+  GravityLightA (GravityLight.cpp; KoopaBattleVs3Galaxy's six, each on a rail with SW_B 2 in its row): its rail
+  mover starts at init and reads no switch: it no longer waits for SW_B (kind 117 in st_floater_rail). Its
+  LightCylinder / light volume: #790.
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /
