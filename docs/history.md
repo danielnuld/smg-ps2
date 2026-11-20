@@ -11,6 +11,12 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- SurfingGuidance with the pad's pictures, part of #820 (feat/820-surf-guidance, 2026-11-20; **not run in PCSX2**,
+  menus.bin not repacked yet). menu.c sfg_*: SurfingGuidance's eleven nerves on the TiltGuidanceReplace layout
+  (Appear / End on channel 0, the lesson's clip on channel 1; SE_SY_CTRL_GUIDE_APPEAR, _CHANGE / _CHANGE2 at the
+  Ready clips' frames 0 and 85 / 35); surf.inc's SurfRayTutorial calls it where Petari does (activate at AllStart's
+  end, Ready at a lesson's start and at a Keep's failure, Hold, Success, deactivate at AllEnd). lyt.py COMMON gains
+  TiltGuidanceReplace. **Release: lyt.py (menus.bin), then its size.**
 - PlayerActionGuidance with the pad's pictures, part of #820 (feat/guidance-pad, 2026-11-20; **not run in PCSX2**,
   menus.bin not repacked yet: without the layouts in it nothing shows). The user's decision: the control guidance
   redrawn for the PS2 pad. tools/padart.py draws the 15 pictures of SpinGuidance / BallGuidance / TiltGuidance

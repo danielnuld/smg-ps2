@@ -25,7 +25,7 @@
  * 4 / 5 its time under 90 / 180 s, eventFunc 2 forceKillPlayerByGroundRace.
  * ponytail: the remote's accelerometer (getCorePadAcceleration) is the left stick: x its x, y its y, z -sqrt(1 - x^2 -
  * y^2) (SurfRay.cpp:741 updateRotate, SurfRayTutorial.cpp:313-341); isPadSwing is the square button (as Mario's spin);
- * no SurfingGuidance (TiltGuidance: the remote's picture, SurfRayTutorial.cpp:68), no ActorJointCtrl (its tail's
+ * SurfingGuidance shows the pad (menu.c sfg_*, tools/padart.py), no ActorJointCtrl (its tail's
  * dynamicjointctrl.bcsv), no BTK rate (control's setBtkRate) / Blink BTP, no ShadowSurfaceOval on the water
  * (initShadowFromCSV: its alpha kept, not drawn), the level SEs' parameter as their volume / 1000 (no per-sound
  * AudSoundObject modifier), no star pointer modes, startTalkingSequence (the fade's talk hold) */
@@ -608,10 +608,10 @@ static int srt_update(void) /* update */
     switch (n) {
     case ST_ALLSTART:
         if (st == 0) { pad_rumble(RUMBLE_MIDDLE); sr_msg(SRM_TUTORIAL_START); srt_node(0); }
-        if (talk_force_at_end(k, 0)) srt_next(); /* (mSurfingGuidance->activate) */
+        if (talk_force_at_end(k, 0)) { srt_next(); menu_surf_guidance(0); } /* mSurfingGuidance->activate */
         break;
     case ST_STRAIGHT_START: case ST_LEFT_START: case ST_RIGHT_START:
-        if (st == 0) { pad_rumble(RUMBLE_MIDDLE); srt_node(n == ST_STRAIGHT_START ? 1 : n == ST_LEFT_START ? 3 : 5); }
+        if (st == 0) { pad_rumble(RUMBLE_MIDDLE); srt_node(n == ST_STRAIGHT_START ? 1 : n == ST_LEFT_START ? 3 : 5); menu_surf_guidance(n == ST_STRAIGHT_START ? 1 : n == ST_LEFT_START ? 4 : 7); } /* levelOffReady / turnLeftReady / turnRightReady */
         talk_force(k, 0);
         if (st > 150) srt_next(); /* isGreaterStep sStepTalk */
         break;
@@ -623,22 +623,22 @@ static int srt_update(void) /* update */
         break;
     }
     case ST_STRAIGHT_KEEP: case ST_LEFT_KEEP: case ST_RIGHT_KEEP: {
-        if (st == 0) { srt.change = 0; pad_rumble(RUMBLE_WEAK); se_start(SE_SY_SURF_TUTORIAL_OK, NULL); }
+        if (st == 0) { srt.change = 0; pad_rumble(RUMBLE_WEAK); se_start(SE_SY_SURF_TUTORIAL_OK, NULL); menu_surf_guidance(n == ST_STRAIGHT_KEEP ? 2 : n == ST_LEFT_KEEP ? 5 : 8); } /* ..Hold */
         srt_timer(st, srt.n28);
         int ok = n == ST_STRAIGHT_KEEP ? srt_ok_straight() : n == ST_LEFT_KEEP ? srt_ok_left() : srt_ok_right();
         if (ok) {
             srt.change = 0;
             if (st == 90) { se_start(n == ST_RIGHT_KEEP ? SE_SY_SURF_TUTORIAL_GONEXT2 : SE_SY_SURF_TUTORIAL_GONEXT, NULL); srt.n28++; srt_next(); break; } /* sStepToSuccess */
-        } else if (srt.change++ == 10) { srt_prev(); se_start(SE_SY_SURF_TUTORIAL_NG, NULL); }
+        } else if (srt.change++ == 10) { srt_prev(); se_start(SE_SY_SURF_TUTORIAL_NG, NULL); menu_surf_guidance(n == ST_STRAIGHT_KEEP ? 1 : n == ST_LEFT_KEEP ? 4 : 7); } /* ..Ready */
         talk_force(k, 0);
         break;
     }
     case ST_STRAIGHT_OK: case ST_LEFT_OK: case ST_RIGHT_OK:
-        if (st == 0) { pad_rumble(RUMBLE_MIDDLE); srt_node(n == ST_STRAIGHT_OK ? 2 : n == ST_LEFT_OK ? 4 : 6); }
+        if (st == 0) { pad_rumble(RUMBLE_MIDDLE); srt_node(n == ST_STRAIGHT_OK ? 2 : n == ST_LEFT_OK ? 4 : 6); menu_surf_guidance(n == ST_STRAIGHT_OK ? 3 : n == ST_LEFT_OK ? 6 : 9); } /* ..Success */
         if (talk_force_at_end(k, 0)) srt_next();
         break;
     case ST_ALLEND:
-        if (st == 0) { pad_rumble(RUMBLE_MIDDLE); srt_node(7); }
+        if (st == 0) { pad_rumble(RUMBLE_MIDDLE); srt_node(7); menu_surf_guidance(10); } /* deactivate */
         if (talk_force_at_end(k, 0) && !srt.pass) { sr_msg(SRM_TUTORIAL_PASS); srt.pass = 1; }
         break;
     }

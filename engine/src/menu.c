@@ -1622,6 +1622,44 @@ static void pag_draw(void) /* (hideAllLayout out of Fadein / Display / Fadeout; 
     render_world_done(); lyt_draw(pag.cur);
 }
 
+/* --- SurfingGuidance after Petari (Screen/SurfingGuidance.cpp; SurfRayTutorial's): the TiltGuidance layout, Appear /
+ * End on channel 0 and the lesson's clip on channel 1 (Slope, SlopeHold, SlopeOK, TurnLeft.., TurnRight..); the Ready
+ * nerves play SE_SY_CTRL_GUIDE_CHANGE / _CHANGE2 at their clip's frames. The disc's TiltGuidanceReplace with the
+ * pad's pictures (tools/padart.py) */
+enum { SG_FADEIN, SG_LEVELREADY, SG_LEVELHOLD, SG_LEVELOK, SG_LEFTREADY, SG_LEFTHOLD, SG_LEFTOK, SG_RIGHTREADY, SG_RIGHTHOLD,
+       SG_RIGHTOK, SG_FADEOUT };
+static struct { LytInst *l; Nrv n; int alive; } sfg;
+static void sfg_init(void) { memset(&sfg, 0, sizeof sfg); sfg.n.next = -1; }
+void menu_surf_guidance(int cmd) /* 0 activate; 1..9 levelOffReady .. turnRightSuccess; 10 deactivate */
+{
+    if (cmd == 0) { if (!sfg.l) sfg.l = lyt_new("TiltGuidanceReplace"); sfg.alive = sfg.l != NULL; return; } /* appear */
+    if (cmd >= SG_LEVELREADY && cmd <= SG_FADEOUT && !nrv_is(&sfg.n, cmd)) nrv_set(&sfg.n, cmd);
+}
+static void sfg_update(void)
+{
+    static const char *const clip[10] = {NULL, "Slope", "SlopeHold", "SlopeOK", "TurnLeft", "TurnLeftHold", "TurnLeftOK",
+                                         "TurnRight", "TurnRightHold", "TurnRightOK"};
+    if (!sfg.alive) return;
+    int n = nrv_begin(&sfg.n);
+    if (n == SG_FADEIN) {
+        if (FIRST(&sfg.n)) { lyt_start(sfg.l, "Appear", 0); lyt_start(sfg.l, "Slope", 1); se_start(SE_SY_CTRL_GUIDE_APPEAR, NULL); }
+    } else if (n == SG_FADEOUT) {
+        if (FIRST(&sfg.n)) lyt_start(sfg.l, "End", 0);
+        else if (lyt_stopped(sfg.l, 0)) { nrv_set(&sfg.n, SG_FADEIN); nrv_end(&sfg.n); sfg.alive = 0; return; } /* kill */
+    } else {
+        if (FIRST(&sfg.n)) lyt_start(sfg.l, clip[n], 1);
+        if (n == SG_LEVELREADY || n == SG_LEFTREADY || n == SG_RIGHTREADY) {
+            int level = n == SG_LEVELREADY;
+            float f = lyt_frame(sfg.l, 1);
+            if (!FIRST(&sfg.n) && f == 0.0f) se_start(level ? SE_SY_CTRL_GUIDE_CHANGE2 : SE_SY_CTRL_GUIDE_CHANGE, NULL);
+            if (f == (level ? 85.0f : 35.0f)) se_start(level ? SE_SY_CTRL_GUIDE_CHANGE : SE_SY_CTRL_GUIDE_CHANGE2, NULL);
+        }
+    }
+    nrv_end(&sfg.n);
+    lyt_update(sfg.l);
+}
+static void sfg_draw(void) { if (sfg.alive) { render_world_done(); lyt_draw(sfg.l); } }
+
 /* --- GamePauseSequence ----------------------------------------------------------------------------------------- */
 static char select_after[32]; /* MoviePlayingSequence (FinalBattle): the scenario select opened over the stage */
 static void subm_init(void);
@@ -1666,6 +1704,7 @@ void menu_init(const Scene *s)
     sp_init();
     spg_init();
     pag_init();
+    sfg_init();
     memset(&ynl, 0, sizeof ynl);
     if ((ynl.l = lyt_new("SelectButton"))) yn_init(&ynl.yn, ynl.l);
     fs_init(s);
@@ -2355,6 +2394,7 @@ int menu_update(void)
     pb_update();
     spg_update();
     pag_update();
+    sfg_update();
     ynl_update();
     if (sr.delay && --sr.delay == 0 && sr.l) { /* the clear's demo sequence: StageResultInformer, then the save */
         sr.alive = 1; sr.n.next = -1; nrv_set(&sr.n, SR_APPEARSTAR);
@@ -5903,6 +5943,7 @@ void menu_draw(void)
     bt_draw(); /* BombTimerLayout */
     if (spg.l && !nrv_is(&spg.n, SPG_ENDWAIT)) { render_world_done(); lyt_draw(spg.l); } /* StarPointerGuidance */
     pag_draw(); /* PlayerActionGuidance */
+    sfg_draw(); /* SurfingGuidance */
     if (mono.on) { render_world_done(); lyt_draw(mono.l); iab_draw(mono_ab()); }
     if (ynl.alive) { render_world_done(); lyt_draw(ynl.l); }
     pro_lyt_draw();
