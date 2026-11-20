@@ -56,6 +56,7 @@ void menu_meter_force_appear(void);    /* MarioMeter::requestForceAppearHPMeter 
 void menu_bomb_timer_appear(void);     /* BombTimerLayout */
 void menu_bomb_timer_limit(int frames);
 void menu_bomb_timer_suspend(int on);
+void menu_bomb_timer_danger(int frames);
 void menu_bomb_timer_kill(void);
 int menu_bomb_timer_rest(void);
 int menu_bomb_timer_up(void);
