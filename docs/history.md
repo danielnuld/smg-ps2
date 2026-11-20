@@ -35,6 +35,14 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   rumble, the shake, SE_OJ_SEESAW_NUT_STOP; autoBackHome after 180 frames without Mario. update_railers skips it.
   slice.py writes its inertia (RotateAccelType) whole to arg 3: **repack its galaxy**. Test: plain with
   `XF=-DNUT_TEST`: "seesaw nut n: nerve .. coord .." every 60 frames.
+- Pole's marks, part of #684 (feat/684-pole, 2026-11-19; **not run in PCSX2**, syntax check only). Pole.cpp's
+  DemoAppear (a demo cast's appear action, dx_cast_hook -> `pole_demo_appear`: 60 frames not held, its top rising,
+  SE_OJ_LV_POLE_APPEAR while a demo runs; the instance scaled along its up, not its top joint), its push sensor (30
+  at its point, Mario on the ground, not in FreeInvalid: update_poles), receiveMsgEnemyAttack with a rider
+  (`pole_hit` from mario_attack: he lets go, FreeInvalid, and takes the attack), its ride sensor's tryGetItem
+  (`pole_reach` / `pole_body` in collect: 100 at 50 up its point). Left: the top joint (PoleTop) moved instead of
+  the model scaled, the NoModel ones' collision (Pole.arc / PoleSquare.arc at its base), isMsgRushCancel. Test: plain
+  with `XF=-DPOLE_APPEAR_TEST` (every pole appears at frame 300: "pole n: demo appear", "pole n: appeared").
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /
