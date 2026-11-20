@@ -33,6 +33,15 @@ ONE_VARIANT = True  # a note whose key comes from a register (random variant) ke
 # where the class is placed, like Enemy/ or MapObj/.
 GLOBAL_DIRS = {"Player", "Screen", "System", "Scene", "Camera", "Util", "AudioLib", "Demo", "LiveActor", "Effect",
                "Gravity", "NameObj", "Speaker", "RhythmLib"}
+# classes that play their sounds by id from a table (no "SE_..." string in their source): SoundEmitter.cpp sSeTable
+TABLE_SE = {"SoundEmitter": {
+    "SE_AT_LV_RIVER_S", "SE_AT_LV_WATERFALL_S", "SE_AT_LV_WATERFALL_L", "SE_AT_LV_WATERFALL_UPPER_S", "SE_AT_LV_WATERFALL_UPPER_L",
+    "SE_AT_LV_DUNGEON_WIND_1", "SE_OJ_LV_SHIP_PROPELLER_S", "SE_OJ_LV_SHIP_PROPELLER_L", "SE_AT_LV_RIVER_M", "SE_AT_LV_FOREST_INSECT_1",
+    "SE_AT_LV_FOREST_INSECT_2", "SE_AT_LV_FOREST_INSECT_3", "SE_AT_LV_SPACE_WIND", "SE_OJ_LV_FLOATING_SAND", "SE_AT_LV_WIND_DESERT",
+    "SE_AT_LV_SAND_FALL", "SE_AT_LV_SAND_FALL_BASIN", "SE_OJ_LV_TWIN_FALL", "SE_OJ_LV_TWIN_FALL_BASIN", "SE_AT_LV_MAGMA_IN_BTLSHIP",
+    "SE_SV_LV_KINOPIO_NOISILY_SCREAM", "SE_SV_LV_KINOPIO_NOISILY_CHEER", "SE_AT_LV_BATHROOM_FOUNTAIN", "SE_AT_LV_BATHROOM_WATERFALL",
+    "SE_OJ_LV_LAVA_ROT_STEPS_PLN", "SE_AT_LV_LAVA_MINI_SUN", "SE_AT_LV_B_SHIP_SIREN", "SE_OJ_LV_ASTRO_ENGINE_3", "SE_AT_LV_ASTRO_LOFT_WIND",
+    "SE_AT_LV_MAGMA_AMBIENT", "SE_SY_READ_RIDDLE_S", "SE_AT_LV_LAVA_TAMAKORO_ZONE", "SE_OJ_LV_GRAVITY_LIGHT"}}
 SE_RE = re.compile(r'"((?:SE|HOMESE)_[A-Z0-9_]+)"')
 
 
@@ -127,6 +136,7 @@ class Cutter:
             names |= self.sounds[f]
         for n in placed:
             names |= self.stage_fx.get(n, set())
+            names |= TABLE_SE.get(n, set())
         out = set()
         for cat, ns in se_names:
             if cat in DROP_CATEGORIES:

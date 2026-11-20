@@ -244,7 +244,7 @@ static void st_flag_test(void)
 }
 #endif
 /* ---- MapObj classes by placed type: their per-row state (StSt, kept across rebinds) ---- */
-enum { ST_NONE = 1, ST_MARBLE, ST_HDSTEP, ST_TURTLE, ST_SWFLOAT, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_WTOWER, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE, ST_FLOATERU, ST_QRARROW, ST_SCPRESS }; enum { FU_WAIT = 1, FU_MOVE, FU_DONE }; /* st_floater nerves */
+enum { ST_NONE = 1, ST_MARBLE, ST_HDSTEP, ST_TURTLE, ST_SWFLOAT, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_WTOWER, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE, ST_FLOATERU, ST_QRARROW, ST_SCPRESS, ST_CCM }; enum { FU_WAIT = 1, FU_MOVE, FU_DONE }; /* st_floater nerves */
 /* Placed classes whose Petari behaviour is the model drawn with its animations and collision (the engine's generic
  * instance does that): LavaGalaxyParts.cpp (LavaShellTowerStep, LavaStepA / B / C: startBtk / Brk / Bpk / Btp of its
  * name, collision, clipping; ponytail: the steps' DLMakerProjmapEffectMtxSetter lava glow is baked at slice time and
@@ -284,6 +284,7 @@ static int st_kind_name(const char *n)
     if (!strcmp(n, "OceanFloaterTypeU")) return ST_FLOATERU; /* OceanFloaterLandParts */
     if (!strcmp(n, "QuarterRollGravityRoomArrow")) return ST_QRARROW;
     if (!strcmp(n, "SandCapsulePressGround")) return ST_SCPRESS;
+    if (!strcmp(n, "CrystalCageMoving")) return ST_CCM;
     if (!strcmp(n, "SurprisedGalaxy") || (!strncmp(n, "Surp", 4) && strlen(n) > 10 && !strcmp(n + strlen(n) - 6, "Galaxy"))) return ST_SURP;
     for (u32 k = 0; k < sizeof st_still / sizeof *st_still; k++) if (!strcmp(n, st_still[k])) return ST_STILL;
     return ST_NONE;
@@ -299,6 +300,7 @@ typedef struct { int row, n, st, on, t2, t3; const unsigned char *kcl; u32 lv[3]
 static StSt st_st[128];
 static void st_column(Inst *in, StSt *g); /* SubmarineVolcanoBigColumn (below) */
 static void st_flex(Inst *in, StSt *g, int i); /* FlexibleSphere (below) */
+static int st_ccm(Inst *in, StSt *g), st_ccm_rail(int row); static void st_ccm_action(int row); /* CrystalCageMoving (below) */
 static int nst_st;
 static const Scene *st_st_sc;
 static StSt *st_get(int row)
@@ -1020,6 +1022,7 @@ static int st_rail_obj(const char *n)
 static int st_rail_go(const Inst *in) /* update_railers: may its rail mover run (RailDemoMoveObj: its demo's camera) */
 {
     const char *n = sc->types + 32 * sc->objs[in->row].type;
+    if (st_kind(sc->objs[in->row].type) == ST_CCM) return st_ccm_rail(in->row); /* CrystalCageMoving::control */
     if (st_rail_obj(n) != 2) return 1;
     StSt *g = st_get(in->row);
     if (g->n == 0) { /* tryStartMove: DemoCtrlBase::tryStart */
@@ -1219,6 +1222,10 @@ static int st_cast_hook(int row, int type, int part) /* dx_cast_hook: the demo a
     if (type == 3 && st_kind(sc->objs[row].type) == ST_WTOWER) { /* registerDemoActionNerve: MoveStart */
         StSt *g = st_get(row);
         if (g->n == 0) { g->n = 1; g->t2 = 0; printf("watch tower %d: MoveStart (demo)%c", row, 10); }
+        return 1;
+    }
+    if (type == 3 && st_kind(sc->objs[row].type) == ST_CCM) { /* registerDemoActionNerve: DemoTicoMove */
+        st_ccm_action(row);
         return 1;
     }
     if (type == 3 && st_kind(sc->objs[row].type) == ST_SCPRESS) { /* tryRegisterDemoActionNerve: DisappearDemo */
@@ -1491,6 +1498,7 @@ static void st_objs_update(void)
         case ST_FLOATERU: st_floater_u(in, g); break;
         case ST_QRARROW: st_qrarrow(in, g); break;
         case ST_SCPRESS: if (st_scpress(in, g, i)) return; break;
+        case ST_CCM: if (st_ccm(in, g)) return; break;
         case ST_TEXSW: { /* SimpleMapObj::init: TexChange (BTK) at arg1 (setupInitInfoTextureChangeArg1; -1 none),
                           * SimpleTextureSwitchChangeObj::changeTexture on its SW_A's rise: frame 1 for good (slice.py
                           * BRK_STEPS: "<class>~<frame>") */
@@ -1740,6 +1748,162 @@ static void st_columns_draw(void)
         if (a) draw_skin(md, in->m, a); /* (its base matrix, the column's) */
     }
 }
+
+/* CrystalCageMoving.cpp after Petari (1 placed: MarioLancherLecture3Zone, BattleShipGalaxy): a MapObjActor on its
+ * rail (setupRailMover only: update_railers, stopped while isNerveTypeEnd; no rotator though its row has a
+ * RotateSpeed), Wait clip, a Tico inside (ModelObj "Tico", scale 3) on its joint 0 moved by sDummyModelOffset
+ * (0, -150, 0). Its Body (350 at its place; once the outside is broken 30 at the foot of Mario's place on its joint's
+ * Y within 450 - 30 either way) touched by Mario bound in a rush (MarioActor::attackOrPushSensorInRush:
+ * ACTMES_RUSH_PLAYER_TOUCH; here the MarioLauncher's flight) is crashMario: a very strong rumble and shake; the
+ * outside broken (_108): BreakSmall; else the sensors under 30 apart and Mario under 450 from it: BreakAll; else
+ * BreakBig (CoreWait, its actor camera for the nerve, the sensor 30, _108, BreakOutside, ..._BREAK_EDG; step 10:
+ * WaitSmall). BreakSmall / BreakAll: startBreakDemo (..._TICO_APR, 脱出スピドラ出現 from its part クリスタル破壊 (1),
+ * hidden, the Tico's scale 1), BreakInside (BreakAll: both effects), ..._BREAK_CNT / _ALL. The demo's action nerve
+ * (チコ出現): DemoTicoMove (Fly, SE_SM_TICO_SPIN, the Tico from its place to the cage's first place _FC over 30),
+ * DemoTicoStop (its base matrix at _FC, the clip at 1.5, 30), DemoTicoChange (Metamorphosis at 1.5,
+ * SE_SM_TICO_METAMORPHOSE; at its end killed, the Tico with it). StSt: n its nerve, st its step, on _108.
+ * ponytail: one a scene (st_ccm_s); the Tico yellow (ColorChange's frame 0 is not set: the pack's default), playing
+ * its Wait until the demo (obj_anim's: a ModelObj without a clip of its own name stays in its bind pose) and drawn
+ * after the map objects, not in DrawBufferType_CrystalItem's order; no star pointer target */
+enum { CCM_WAITBIG, CCM_BREAKBIG, CCM_WAITSMALL, CCM_BREAKSMALL, CCM_BREAKALL, CCM_TICOMOVE, CCM_TICOSTOP, CCM_TICOCHANGE, CCM_DEAD };
+static struct { const Scene *at; int row, demo; float m[16], scale; V3 fc; } st_ccm_s = {NULL, -1, -1, {0}, 3.0f, {0, 0, 0}}; /* _C8, the Tico's scale, _FC */
+static int st_ccm_end(int n) { return n == CCM_BREAKBIG || (n >= CCM_BREAKSMALL && n <= CCM_TICOCHANGE); } /* isNerveTypeEnd */
+static Anim *st_ccm_anim(int row)
+{
+    const Model *md = scene_model(sc, "Tico");
+    return md && md->skin ? obj_anim(23 * (int)sc->nobjs + row, md, "Tico") : NULL;
+}
+static void st_ccm_set(StSt *g, int n) { g->n = n; g->st = 0; printf("crystal cage moving %d: nerve %d%c", g->row, n, 10); }
+static int st_ccm_rail(int row) { return !st_ccm_end(st_get(row)->n); } /* update_railers: MapObjActor::control runs */
+static void st_ccm_action(int row) { StSt *g = st_get(row); if (g->n == CCM_BREAKSMALL || g->n == CCM_BREAKALL) st_ccm_set(g, CCM_TICOMOVE); }
+static void st_ccm_fx(const Inst *in, const char *name) { fx_named("CrystalCageMoving", name, in->m, NULL, NULL); }
+static void st_ccm_break_demo(Inst *in) /* startBreakDemo */
+{
+    se_start(SE_OJ_CRY_CAGE_MV_TICO_APR, &in->m[12]);
+    if (st_ccm_s.demo >= 0) dx_request_at(st_ccm_s.demo, 1); /* requestStartTimeKeepDemo(脱出スピドラ出現, クリスタル破壊) */
+    in->invisible = 1; /* hideModel */
+    st_ccm_s.scale = 1.0f;
+}
+static int st_ccm(Inst *in, StSt *g) /* 1: the instances were bound again */
+{
+    V3 pos = v3(in->m[12], in->m[13], in->m[14]);
+    float jm[16]; /* getJointMtx(this, 0) */
+    if (in->anim && in->anim->skin) mat_mul(jm, in->m, in->anim->world[0]); else memcpy(jm, in->m, 64);
+    if (st_ccm_s.at != sc || st_ccm_s.row != in->row) { /* init */
+        st_ccm_s.at = sc; st_ccm_s.row = in->row; st_ccm_s.fc = pos; st_ccm_s.scale = 3.0f; st_ccm_s.demo = -1;
+        for (int d = 0; d < ndemos; d++) if (!strcmp(demos[d].h->name, "脱出スピドラ出現")) st_ccm_s.demo = d;
+        in->rotor = 0; /* (setupRailMover only) */
+        obj_play(in, "wait", 1, 0);
+        g->n = CCM_WAITBIG; g->st = 0; g->on = 0;
+        printf("crystal cage moving %d: demo %d, clips %d, tico %d%c", in->row, st_ccm_s.demo, in->anim != NULL, scene_model(sc, "Tico") != NULL, 10);
+    }
+    if (g->n == CCM_DEAD) return 0;
+    Anim *a = st_ccm_anim(in->row);
+    int st = g->st++, played = 0;
+    if (g->n >= CCM_BREAKSMALL) in->invisible = 1; /* (kept over a rebind) */
+    switch (g->n) {
+    case CCM_BREAKBIG:
+        if (st == 0) {
+            obj_play(in, "corewait", 1, 0);
+            if (row_camset[in->row] != -1) /* startActorCameraNoTarget */
+                camera_actor_start("CrystalCageMoving", "", (unsigned short)row_camset[in->row], vnorm(v3(in->m[4], in->m[5], in->m[6])), vnorm(v3(in->m[8], in->m[9], in->m[10])), pos);
+            g->on = 1; /* setSensorRadius(body, 30), _108 */
+            st_ccm_fx(in, "BreakOutside");
+            se_start(SE_OJ_CRY_CAGE_MV_BREAK_EDG, &in->m[12]);
+        }
+        if (st == 10) {
+            if (row_camset[in->row] != -1) camera_event_end_now(-1); /* endBreakBig: endActorCamera(…, true) */
+            st_ccm_set(g, CCM_WAITSMALL);
+        }
+        break;
+    case CCM_BREAKSMALL:
+        if (st == 0) { st_ccm_break_demo(in); st_ccm_fx(in, "BreakInside"); se_start(SE_OJ_CRY_CAGE_MV_BREAK_CNT, &in->m[12]); }
+        break;
+    case CCM_BREAKALL:
+        if (st == 0) { st_ccm_break_demo(in); st_ccm_fx(in, "BreakOutside"); st_ccm_fx(in, "BreakInside"); se_start(SE_OJ_CRY_CAGE_MV_BREAK_ALL, &in->m[12]); }
+        break;
+    case CCM_TICOMOVE: {
+        if (st == 0) { if (a) played = anim_play(a, "tico/fly", 1.0f, 1, 0); se_start(SE_SM_TICO_SPIN, &st_ccm_s.m[12]); }
+        float rate = st < 30 ? st / 30.0f : 1.0f; /* calcNerveRate(this, 30) */
+        V3 p = vadd(pos, vmul(vsub(st_ccm_s.fc, pos), rate));
+        st_ccm_s.m[12] = p.x; st_ccm_s.m[13] = p.y; st_ccm_s.m[14] = p.z;
+        if (st == 30) st_ccm_set(g, CCM_TICOSTOP);
+        break;
+    }
+    case CCM_TICOSTOP:
+        if (st == 0) { /* _C8 its base matrix at _FC, setBckRate 1.5 */
+            memcpy(st_ccm_s.m, in->m, 64);
+            st_ccm_s.m[12] = st_ccm_s.fc.x; st_ccm_s.m[13] = st_ccm_s.fc.y; st_ccm_s.m[14] = st_ccm_s.fc.z;
+            if (a) a->speed = 1.5f;
+        }
+        if (st == 30) st_ccm_set(g, CCM_TICOCHANGE);
+        break;
+    case CCM_TICOCHANGE:
+        if (st == 0) { if (a) played = anim_play(a, "tico/metamorphosis", 1.5f, 0, 0); se_start(SE_SM_TICO_METAMORPHOSE, &st_ccm_s.m[12]); }
+        if (st > 0 && (!a || a->done)) { /* isBckStopped: kill, the Tico with it */
+            g->n = CCM_DEAD;
+            row_kill(in->row); game_rebind();
+            printf("crystal cage moving %d: gone%c", g->row, 10);
+            return 1;
+        }
+        break;
+    }
+    if (a && !played) anim_update(a);
+    if (!st_ccm_end(g->n)) { /* control: _C8 its joint 0, moved by sDummyModelOffset in it */
+        memcpy(st_ccm_s.m, jm, 64);
+        st_ccm_s.m[12] = jm[12] - 150.0f * jm[4]; st_ccm_s.m[13] = jm[13] - 150.0f * jm[5]; st_ccm_s.m[14] = jm[14] - 150.0f * jm[6];
+    }
+    int rush = ml_flying();
+#ifdef ST_CCM_TEST
+    rush = game_frame >= 400;
+#endif
+    if (!st_ccm_end(g->n) && rush) { /* receiveOtherMsg ACTMES_RUSH_PLAYER_TOUCH: crashMario */
+        V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), sp = pos; /* updateHitSensor */
+        float rad = 350.0f;
+        if (g->on) {
+            rad = 30.0f;
+            V3 up = vnorm(v3(jm[4], jm[5], jm[6]));
+            float t = vdot(vsub(mario->pos, pos), up), lim = 450.0f - rad; /* calcPerpendicFootToLineInside */
+            sp = vadd(pos, vmul(up, t > lim ? lim : t < -lim ? -lim : t));
+        }
+        if (!mario_touch(sp, rad)) return 0;
+        pad_rumble(RUMBLE_VERY_STRONG); camera_shake(SHAKE_VERY_STRONG);
+        if (g->on) st_ccm_set(g, CCM_BREAKSMALL);
+        else if (vlen(vsub(sp, mc)) < 30.0f && vlen(vsub(pos, mc)) < 450.0f) st_ccm_set(g, CCM_BREAKALL);
+        else st_ccm_set(g, CCM_BREAKBIG);
+    }
+    return 0;
+}
+static void st_ccm_draw(void) /* the Tico (mTicoModel) on _C8 */
+{
+    if (st_ccm_s.at != sc || st_ccm_s.row < 0 || row_dead[st_ccm_s.row] || !row_shown(st_ccm_s.row) || st_get(st_ccm_s.row)->n == CCM_DEAD) return;
+    const Model *md = scene_model(sc, "Tico");
+    Anim *a = st_ccm_anim(st_ccm_s.row);
+    if (!md || !a) return;
+    float m[16];
+    memcpy(m, st_ccm_s.m, 64);
+    for (int j = 0; j < 12; j++) if (j % 4 != 3) m[j] *= st_ccm_s.scale;
+    draw_skin(md, m, a);
+}
+#ifdef ST_CCM_TEST /* plain build XF=-DST_CCM_TEST, BattleShipGalaxy: from frame 300 the camera on the CrystalCageMoving,
+                    * from 400 Mario held at its place as if in a rush (BreakBig, WaitSmall, BreakSmall, the demo) */
+static void st_ccm_test(void)
+{
+    if (game_frame < 300) return;
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (strcmp(sc->types + 32 * sc->objs[in->row].type, "CrystalCageMoving")) continue;
+        V3 p = v3(in->m[12], in->m[13], in->m[14]);
+        StSt *g = st_get(in->row);
+        if (!dx.on) camera_set_override(1, vadd(p, v3(1800.0f, 600.0f, 0.0f)), p, v3(0, 1, 0), 45.0f);
+        else camera_set_override(0, p, p, v3(0, 1, 0), 45.0f);
+        if (game_frame >= 400 && g->n < CCM_BREAKSMALL) { mario->pos = vsub(p, vmul(mario->up, HIT_BODY_H)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+        if (game_frame % 30 == 0) printf("ccm test f %u: row %d n %d st %d on %d dead %d demo %d part %d%c", game_frame, in->row, g->n, g->st, g->on, row_dead[in->row], dx.on, dx.on ? dx.part : -1, 10);
+        return;
+    }
+    if (game_frame % 300 == 0) printf("ccm test f %u: no CrystalCageMoving instance%c", game_frame, 10);
+}
+#endif
 
 /* FlexibleSphere.cpp after Petari (FlexibleSandPlanetPartsA): idle until its SW_A is on (Wind effect), or without
  * one until Mario stands on it; then it grows by arg2 / 10000 (0.002) a frame up to arg0 / 10000 (1) and shrinks to
@@ -2462,6 +2626,9 @@ static void st_update(void)
 #ifdef ST_COL_TEST
     st_col_test();
 #endif
+#ifdef ST_CCM_TEST
+    st_ccm_test();
+#endif
 #ifdef ST_BB_TEST
     st_bb_test();
 #endif
@@ -2541,6 +2708,7 @@ static void st_draw(void)
     st_flags_draw();
     st_bbeamers_draw();
     st_columns_draw();
+    st_ccm_draw();
     st_bfs_draw();
     st_mp_draw();
 }

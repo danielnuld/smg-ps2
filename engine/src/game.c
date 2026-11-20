@@ -146,6 +146,7 @@ static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WA
 #define POL_GROCKS 16 /* PoltaGroundRockHolder sMaxPoltaGroundRock (polta.inc) */
 #define POL_BOMBS 6 /* Polta's BombTeresaHolder: sBombTeresaBufferSize */
 #define BB_FOLLOWERS 5 /* BossBegoman: mBabyFollowerNum 3, mSpikeFollowerNum 2 (the slots after its own) */
+#define UZL_UNIZOS 4 /* UnizoLauncher: sUnizoNumber */
 #define BL_BABIES(r) ((r)->arg[3] > 0 ? ((r)->arg[3] < 16 ? (r)->arg[3] : 16) : 1) /* BegomanBabyLauncher: arg3 babies (mBegomanCount 1) */
 static const Model *m_wnew[NEW_WALKERS];
 static int walker_new_kind(const char *cls)
@@ -3009,6 +3010,7 @@ void game_init(const Scene *s, const unsigned char *blob)
               count_type("Teresa", 0) + count_type("Butterfly", 0);
     for (int i = 0; i < NEW_WALKERS; i++) nkuribo += count_type(new_walkers[i].cls, 0);
     nkuribo += BB_FOLLOWERS * count_type("BossBegoman", 0); /* its followers (3 BegomanBaby, 2 BegomanSpike) */
+    nkuribo += UZL_UNIZOS * count_type("UnizoLauncher", 0); /* its UnizoLands */
     nkuribo += 4 * count_type("JumpGuarder", 0); /* JumpGuarder: its sBabyNum BegomanBabies */
     nkuribo += count_type("BegomanSpringHide", 0); /* BegomanSpring (mType 1): its mBaby */
     nkuribo += POL_BOMBS * count_type("Polta", 0); /* BombTeresaHolder: sBombTeresaBufferSize (polta.inc) */
@@ -3143,6 +3145,13 @@ void game_init(const Scene *s, const unsigned char *blob)
                 memset(&kuribo[ik], 0, sizeof(Kuribo));
                 kuribo[ik].kind = WALK_BEGOBABY; kuribo[ik].pos = row_pos(r); kuribo[ik].up = up_at(kuribo[ik].pos, v3(0, 1, 0));
                 kuribo[ik].row = i; kuribo[ik].host = -2;
+                kuribo[ik++].state = KURIBO_DEAD;
+            }
+        } else if (!strcmp(s->types + 32 * r->type, "UnizoLauncher")) {
+            for (int f = 0; f < UZL_UNIZOS; f++) { /* UnizoLauncher::init: mUnizos (陸ウニゾー: UnizoLand, init(rIter)), makeActorDead */
+                memset(&kuribo[ik], 0, sizeof(Kuribo));
+                kuribo[ik].kind = WALK_UNIZO; kuribo[ik].dir = 1; kuribo[ik].pos = row_pos(r); kuribo[ik].up = up_at(kuribo[ik].pos, v3(0, 1, 0));
+                kuribo[ik].row = i; kuribo[ik].host = -3;
                 kuribo[ik++].state = KURIBO_DEAD;
             }
         } else if (r->type == t_circle || r->type == t_rail)
@@ -24119,6 +24128,12 @@ static V3 m_last_safety(void) /* getLastSafetyTrans */
     float cm[16], k;
     return tri_part(&safe.t, cm, &k) && !memcmp(cm, safe.m, 64) ? safe.p : safe.p814;
 }
+static V3 m_last_safety_n(const Player *m) /* its pNormal: the place's ground normal, else his up (-getAirGravityVec) */
+{
+    float cm[16], k;
+    if (tri_part(&safe.t, cm, &k) && !memcmp(cm, safe.m, 64)) return tri_n(&safe.t);
+    return tri_part(&safe.t820, cm, &k) ? tri_n(&safe.t820) : m->up;
+}
 
 /* MarioRecovery: a PullBackCylinder (arg0 not 1) takes Mario back to his last safe place: up its axis at 10 a frame
  * to the place's height (or 600 over and 600 out from its base when the place is under it; 180 frames at most), then
@@ -24297,13 +24312,81 @@ static void rec_close(Player *m) /* MarioRecovery::close */
     m_anim("基本");
     printf("recovery: done at %d %d %d\n", (int)m->pos.x, (int)m->pos.y, (int)m->pos.z);
 }
-/* Mario::doRecovery: not in MarioFoo, a recovery or a warp; squat and walk stopped, the status on (_12: the cylinder's)
- * and the jump stopped. ponytail: without _12 doPointWarpRecovery (MarioWarp's mode 3: PullBackCube, a PullBackCylinder
- * with arg0 1) is not ported; MarioActor _934 / _EA4 not checked */
+/* Mario::doPointWarpRecovery and MarioWarp's mode 3 (MarioWarp.cpp:237, _45 3): in 引き戻し泡 with 引き戻し and 声慌て
+ * he waits 40 frames (_54), then flies an arc of 0.4 pi each side (calcAxis; max(radius / 25, 120) frames, sine
+ * eased) that blends into the straight way to the place as it runs out (updateJump: the rest of the frames the
+ * arc's share, followed at 0.5 up to 1); at its end the bubble bursts (引き戻し泡破裂) and he falls (落下: in a jump
+ * with no jump vector, no air walk). The global event camera 引き戻し from start to close.
+ * ponytail: 引き戻し浮遊 at full volume (its volume by the flight's middle is not made); MarioActor::_A6E (2 in the
+ * flight) and the binder off (_F44) are not kept */
+static struct { int on, rise, n, left; V3 dest, axis, centre, start; } pwr;
+static void m_point_warp_recovery(Player *m, V3 dest)
+{
+    m->hvel = v3(0, 0, 0); m->vup = 0;
+    m_stop_walk(m);
+    m_blend_mtx(16);
+    memset(&pwr, 0, sizeof pwr);
+    pwr.on = 1; pwr.dest = dest; pwr.rise = 40;
+    rec_bubble = 1; /* playEffect 引き戻し泡 */
+    mario_sound("声慌て");
+    m_anim("引き戻し");
+    m_stop_jump(m);
+    camera_event_named("引き戻し", 0); /* startGlobalEventCameraNoTarget */
+    printf("point warp recovery to %d %d %d\n", (int)dest.x, (int)dest.y, (int)dest.z);
+}
+static int pwr_update(Player *m) /* MarioWarp::update (mode 3): 1 while it runs */
+{
+    if (!pwr.on) return 0;
+    m->hvel = v3(0, 0, 0); m->vup = 0; /* clearVelocity */
+    m->spin_lock = 1; /* _2B */
+    mario_named_fx("BringBubble", &rec_bubble);
+    if (pwr.rise) {
+        mario_sound("引き戻し基本");
+        if (--pwr.rise == 0) { /* calcAxis */
+            V3 disp = vsub(pwr.dest, m->pos);
+            float dist = vlen(disp), a = 3.14159265f * 0.4f;
+            pwr.axis = vcross(disp, vmul(m->up, -1.0f));
+            pwr.axis = vlen(pwr.axis) > 1e-6f ? vnorm(pwr.axis) : v3(0, 0, 0);
+            V3 normal = vcross(pwr.axis, disp);
+            normal = vlen(normal) > 1e-6f ? vnorm(normal) : v3(0, 0, 0);
+            float r = 0.5f * dist / sinf(a), h2 = r * r - 0.25f * dist * dist;
+            pwr.centre = vadd(vadd(m->pos, vmul(disp, 0.5f)), vmul(normal, h2 > 0.0f ? sqrtf(h2) : 0.0f));
+            pwr.start = vmul(normal, -r);
+            pwr.n = (int)(r / 25.0f);
+            if (pwr.n < 120) pwr.n = 120;
+            pwr.left = pwr.n;
+        }
+        return 1;
+    }
+    if (pwr.left) { /* updateJump */
+        float a = 3.14159265f * 0.4f, ang = ((float)(pwr.n - pwr.left) - 0.5f * pwr.n) / pwr.n * 3.14159265f;
+        float p = (1.0f + sinf(ang)) * 0.5f, rem = (float)pwr.left / pwr.n, follow = (1.0f - rem) + 0.5f * rem;
+        V3 at = vadd(pwr.centre, rot_axis(pwr.start, pwr.axis, -a * (1.0f - p) + a * p));
+        at = vadd(vmul(at, rem), vmul(pwr.dest, 1.0f - rem));
+        m->pos = vadd(m->pos, vmul(vsub(at, m->pos), follow)); /* addTrans */
+    }
+    mario_sound("引き戻し基本"); mario_sound("引き戻し浮遊");
+    if (pwr.left) { pwr.left--; return 1; }
+    pwr.on = 0; /* close */
+    m->s420 = 16;
+    m_clip_stop();
+    mario_sound("引き戻し泡破裂");
+    rec_bubble = 0; mario_named_fx("BringBubbleBreak", NULL); /* stopEffectForce 引き戻し泡, playEffect 引き戻し泡破裂 */
+    camera_event_end_now(-1); /* endGlobalEventCamera(引き戻し, -1, true) */
+    m->grounded = 0; m->jumping = 1; m->spin_lock = 1; m->air_spin = 0; /* _1, jumping, _2B, _402 */
+    m_set_jv(m, v3(0, 0, 0));
+    m_anim("落下");
+    m->spin_kind = 0; m->jump_kind = 0; /* _42A, _430 */
+    printf("point warp recovery: done at %d %d %d\n", (int)m->pos.x, (int)m->pos.y, (int)m->pos.z);
+    return 0;
+}
+/* Mario::doRecovery: not in MarioFoo, a recovery or a warp; squat and walk stopped; with a PullBackCylinder met (_12)
+ * the status on and the jump stopped, else doPointWarpRecovery to 160 up his last safe place's normal.
+ * ponytail: MarioActor _934 / _EA4 not checked */
 static int m_do_recovery(Player *m)
 {
-    if (fo.on || rec.on || warp.from >= 0) return 0;
-    if (!rec.s12) return 0;
+    if (fo.on || rec.on || warp.from >= 0 || pwr.on || pw.on) return 0;
+    if (!rec.s12) { m_stop_walk(m); m_point_warp_recovery(m, vadd(m_last_safety(), vmul(m_last_safety_n(m), 160.0f))); return 1; }
     m_stop_walk(m);
     if (rec_start(m)) { rec.on = 1; camera_event_named("引き戻し", 0); } /* MarioRecovery::start: startGlobalEventCameraNoTarget */
     m_stop_jump(m);
@@ -24731,6 +24814,7 @@ static void update_mario_(void)
         return;
     }
     if (pw_update(m)) { if (mario_anim) anim_update(mario_anim); return; } /* MarioWarp's point warp (forceFlyPlayer) */
+    if (pwr_update(m)) { if (mario_anim) anim_update(mario_anim); return; } /* its mode 3 (doPointWarpRecovery) */
     if (sr_hold(m) || (!demo_on && warp.from < 0 && sr_try(m) && sr_hold(m))) { /* on a SurfRay (ACTMES_AUTORUSH_BEGIN; its movement on in the race's demo) */
         if (mario_anim) anim_update(mario_anim);
         return;
@@ -25993,7 +26077,8 @@ static void unizo_update(Kuribo *k, V3 to, float d)
             if (k->nrv == UZ_FIREDOWN && k->step == 34) unizo_pieces(k); /* sFireDownStarPiece */
         }
         if (k->act_frames <= 0 || w_bck_stopped(k) || ((k->nrv == UZ_FIREDOWN || k->nrv == UZ_JUMPDOWN) && k->step >= 50)) { /* sDamageFloorFrame */
-            k->state = KURIBO_DEAD; row_kill(k->row);
+            k->state = KURIBO_DEAD;
+            if (!k->host) row_kill(k->row); /* (a UnizoLauncher's: its row stays) */
             printf("unizo row %d: dead" "\n", k->row);
         }
         return;
@@ -26099,7 +26184,7 @@ static void unizo_update(Kuribo *k, V3 to, float d)
  * literally. setNerve: step -1, so the next frame runs the new nerve at step 0 ---- */
 static void w_nrv(Kuribo *k, int n) { k->nrv = n; k->step = -1; }
 static void w_snrv(Kuribo *k, int n) { k->snrv = n; k->sstep = -1; }
-static const char *walker_cls(const Kuribo *k) { return k->host ? (k->kind == WALK_BOMBTERESA ? "BombTeresa" : k->kind == WALK_BEGOBABY ? "BegomanBaby" : "BegomanSpike") : sc->types + 32 * sc->objs[k->row].type; }
+static const char *walker_cls(const Kuribo *k) { return k->host ? (k->kind == WALK_UNIZO ? "UnizoLand" : k->kind == WALK_BOMBTERESA ? "BombTeresa" : k->kind == WALK_BEGOBABY ? "BegomanBaby" : "BegomanSpike") : sc->types + 32 * sc->objs[k->row].type; }
 static int w_akey(const Kuribo *k); /* its obj_anim key */
 /* the class whose clips a walker plays: a launcher's bomb is a BombHei */
 static const char *walker_acls(const Kuribo *k) { return k->kind == WALK_BOMBHEI ? "BombHei" : walker_cls(k); }
@@ -36293,8 +36378,36 @@ static void walker_push_pass(void) /* ponytail: the first WP_MAX walkers with se
     }
 #endif
 }
+/* UnizoLauncher.cpp after Petari: no model; Wait until its step passes sUnizoInter 300, then Launch for a frame: the
+ * first dead one of its sUnizoNumber 4 UnizoLand (kuribo[].host -3, its row) is put at its place (z + its index) and
+ * appears (Unizo::appear: Wait, mJumpCount sJumpNow); back to Wait. row_step its count of frames.
+ * ponytail: its Body sensor (100, no attackSensor) is not registered */
+static void update_unizo_launchers(void)
+{
+    for (int i = 0; i < nkuribo; i++) {
+        Kuribo *k = &kuribo[i];
+        if (k->host != -3 || (i && kuribo[i - 1].host == -3 && kuribo[i - 1].row == k->row)) continue; /* its first Unizo: once a launcher */
+        const Row *r = &sc->objs[k->row];
+        if (!row_shown(k->row) || ++row_step[k->row] < 303) continue; /* Wait's steps 0 .. 301, Launch's 0 */
+        row_step[k->row] = 0;
+        for (int f = 0; f < UZL_UNIZOS && i + f < nkuribo; f++) {
+            Kuribo *u = &kuribo[i + f];
+            if (u->state != KURIBO_DEAD) continue;
+            int row = u->row;
+            memset(u, 0, sizeof *u);
+            u->kind = WALK_UNIZO; u->dir = 1; u->row = row; u->host = -3;
+            u->pos = row_pos(r); u->pos.z += (float)f; /* copyTransRotateScale, mPosition.z += i */
+            u->up = up_at(u->pos, v3(0, 1, 0));
+            u->jc = 1; u->step = -1; /* appear: UnizoNrvWait, mJumpCount sJumpNow */
+            u->state = KURIBO_WALK;
+            printf("unizo launcher row %d: unizo %d out\n", row, f);
+            break;
+        }
+    }
+}
 static void update_kuribo(void)
 {
+    update_unizo_launchers();
 #ifdef BH_TEST /* the first Bob-omb dropped 200 before Mario, 120 frames after he is free, and updated here from then
                 * on (its zone may not be streamed in: update_kuribo_one would wait for its ground) */
     static int bh_ti = -1;
@@ -52016,8 +52129,13 @@ static void ambient_effects(void)
  * sphere's MAGMA_AMBIENT / FLOATING_SAND / WIND_DESERT / MAGMA_WIND_VOLCANO / KOOPA_FLOAT_SAND / WIND_RABBIT_MAZE)
  * played at the camera's watch point (cube 0 / 3, sphere 1 / 2 / 4 / 5) or the microphone, moved into the area: the
  * cube's world bounding box, the sphere's surface. PlayerSeArea.cpp (placed as PlayerSeCube / Sphere / Cylinder; arg0
- * 0): SE_PM_LV_LONG_FALL while Mario is in it and not rising in a jump. ponytail: the microphone (AudMicWrap::getMicPos) taken as the camera's eye */
-static struct { short row; unsigned char kind; u32 h; } snd_em[48];
+ * 0): SE_PM_LV_LONG_FALL while Mario is in it and not rising in a jump. ponytail: the microphone (AudMicWrap::getMicPos) taken as the camera's eye.
+ * SoundEmitter.cpp (the actor; the soundinfo rows, 116 on the disc: rivers, waterfalls, insects, winds, propellers, the
+ * Observatory's engine ...): StandBy until its appear switch when it reads one, then PlaySound: sSeTable[arg0] as a level
+ * sound at its place, or on its rail at the place nearest the camera (13 / 17 / 18: nearest the camera's watch point);
+ * 9 .. 11 not with Mario within 1000, 22 / 23 not in ロゼッタ状況説明デモ, 30 SE_SY_READ_RIDDLE_S once and kill; its SW_A on
+ * kills it. ponytail: 26's fifth startLevelSound argument (5) is not passed; setClippingTypeSphere 20000 not kept */
+static struct { short row; unsigned char kind; u32 h; } snd_em[96]; /* kind 5: a SoundEmitter, | 0x40 playing (out of StandBy), | 0x80 killed */
 static int n_snd_em = -1;
 static const Scene *snd_em_sc;
 /* MarioActor::calcViewWallShadowModel (MarioActorShadow.cpp:208) and drawWallShade (MarioActorSpecialDraw.cpp:505): in
@@ -52413,11 +52531,11 @@ static void update_sound_emitters(void)
     static const u32 sphere_se[6] = {SE_AT_LV_MAGMA_AMBIENT, SE_OJ_LV_FLOATING_SAND, SE_AT_LV_WIND_DESERT,
                                      SE_AT_LV_MAGMA_WIND_VOLCANO, SE_AT_LV_KOOPA_FLOAT_SAND, SE_AT_LV_WIND_RABBIT_MAZE};
     if (snd_em_sc != sc || n_snd_em < 0) {
-        int t[5] = {scene_type(sc, "SoundEmitterCube"), scene_type(sc, "SoundEmitterSphere"), scene_type(sc, "PlayerSeCube"),
-                    scene_type(sc, "PlayerSeSphere"), scene_type(sc, "PlayerSeCylinder")};
+        int t[6] = {scene_type(sc, "SoundEmitterCube"), scene_type(sc, "SoundEmitterSphere"), scene_type(sc, "PlayerSeCube"),
+                    scene_type(sc, "PlayerSeSphere"), scene_type(sc, "PlayerSeCylinder"), scene_type(sc, "SoundEmitter")};
         snd_em_sc = sc; n_snd_em = 0;
-        for (u32 i = 0; i < sc->nobjs && n_snd_em < 48; i++)
-            for (int k = 0; k < 5; k++)
+        for (u32 i = 0; i < sc->nobjs && n_snd_em < 96; i++)
+            for (int k = 0; k < 6; k++)
                 if (t[k] >= 0 && (int)sc->objs[i].type == t[k]) { snd_em[n_snd_em].row = (short)i; snd_em[n_snd_em].kind = (unsigned char)k; snd_em[n_snd_em++].h = 0; }
     }
     if (!n_snd_em) return;
@@ -52428,6 +52546,34 @@ static void update_sound_emitters(void)
         const Row *r = &sc->objs[snd_em[k].row];
         int a0 = r->arg[0];
         V3 c = row_pos(r), q;
+        if ((snd_em[k].kind & 0x3F) == 5) { /* SoundEmitter (the actor: soundinfo rows) */
+            static const u32 se[33] = { /* sSeTable */
+                SE_AT_LV_RIVER_S, SE_AT_LV_WATERFALL_S, SE_AT_LV_WATERFALL_L, SE_AT_LV_WATERFALL_UPPER_S, SE_AT_LV_WATERFALL_UPPER_L,
+                SE_AT_LV_DUNGEON_WIND_1, SE_OJ_LV_SHIP_PROPELLER_S, SE_OJ_LV_SHIP_PROPELLER_L, SE_AT_LV_RIVER_M, SE_AT_LV_FOREST_INSECT_1,
+                SE_AT_LV_FOREST_INSECT_2, SE_AT_LV_FOREST_INSECT_3, SE_AT_LV_SPACE_WIND, SE_OJ_LV_FLOATING_SAND, SE_AT_LV_WIND_DESERT,
+                SE_AT_LV_SAND_FALL, SE_AT_LV_SAND_FALL_BASIN, SE_OJ_LV_TWIN_FALL, SE_OJ_LV_TWIN_FALL_BASIN, SE_AT_LV_MAGMA_IN_BTLSHIP,
+                SE_SV_LV_KINOPIO_NOISILY_SCREAM, SE_SV_LV_KINOPIO_NOISILY_CHEER, SE_AT_LV_BATHROOM_FOUNTAIN, SE_AT_LV_BATHROOM_WATERFALL,
+                SE_OJ_LV_LAVA_ROT_STEPS_PLN, SE_AT_LV_LAVA_MINI_SUN, SE_AT_LV_B_SHIP_SIREN, SE_OJ_LV_ASTRO_ENGINE_3, SE_AT_LV_ASTRO_LOFT_WIND,
+                SE_AT_LV_MAGMA_AMBIENT, SE_SY_READ_RIDDLE_S, SE_AT_LV_LAVA_TAMAKORO_ZONE, SE_OJ_LV_GRAVITY_LIGHT};
+            if (snd_em[k].kind & 0x80) continue; /* killed */
+            if (r->sw[SW_A] >= 0 && sw_on(r, SW_A)) { snd_em[k].kind |= 0x80; continue; } /* control: its SW_A kills it */
+            if (!(snd_em[k].kind & 0x40)) { /* exeStandBy: until its appear switch is on (none: PlaySound from init) */
+                if (r->sw[SW_APPEAR] >= 0 && !sw_on(r, SW_APPEAR)) continue;
+                snd_em[k].kind |= 0x40;
+            }
+            /* exePlaySound */
+            if (r->path >= 0 && scene_blob_g) { /* on a rail: at its place nearest the camera (13 / 17 / 18: nearest what it watches) */
+                u32 np = 0;
+                int closed = 0;
+                const float *pts = find_rail(scene_blob_g, r->zone, r->path, &np, &closed);
+                if (pts && np > 1) c = rail_at(pts, np, rail_nearest(pts, (int)np, a0 == 13 || a0 == 17 || a0 == 18 ? watch : eye));
+            }
+            if (a0 >= 9 && a0 <= 11 && vlen(vsub(mario->pos, c)) < 1000.0f) continue; /* the insects hush with Mario within 1000 */
+            if ((a0 == 22 || a0 == 23) && dx.on && !strcmp(demos[dx.cur].h->name, "ロゼッタ状況説明デモ")) continue;
+            if (a0 == 30) { se_start(SE_SY_READ_RIDDLE_S, NULL); snd_em[k].kind |= 0x80; continue; } /* startSystemSE, kill */
+            if (a0 >= 0 && a0 < 33) snd_em[k].h = se_level(se[a0], &c.x, snd_em[k].h); /* startLevelSound(sSeTable[_8C]) */
+            continue;
+        }
         if (snd_em[k].kind == 0) { /* SoundEmitterCube (a base origin cube) */
             if (a0 < 0 || a0 > 3) continue;
             V3 x, z, lo, hi;
@@ -62691,6 +62837,27 @@ void game_test_blaunch(unsigned frame)
         return;
     }
 }
+/* walker test with -DUZL_TEST (IceVolcanoGalaxy, VolcanoPlanetZone): Mario 800 off the first UnizoLauncher from frame
+ * 300; a UnizoLand out every 303 frames */
+void game_test_uzl(unsigned frame)
+{
+    for (int i = 0; i < nkuribo; i++) {
+        Kuribo *k = &kuribo[i];
+        if (k->host != -3) continue;
+        V3 p = row_pos(&sc->objs[k->row]), up = up_at(p, mario->up);
+        if (frame == 300) {
+            game_test_unclip(); test_nolost = 1;
+            mario->up = up; mario->pos = vadd(vadd(p, vmul(up, 300.0f)), vmul(vnorm(vtangent(v3(0.3f, 0.2f, 0.9f), up)), 800.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        }
+        if (frame >= 300 && frame % 60 == 0) {
+            printf("uzl test f %u: row %d step %d, mario %.0f off, unizos", frame, k->row, row_step[k->row], vlen(vsub(mario->pos, p)));
+            for (int j = 0; j < UZL_UNIZOS; j++) printf(" [%d nrv %d %.0f off]", k[j].state != KURIBO_DEAD, k[j].nrv, vlen(vsub(k[j].pos, p)));
+            printf("%c", 10);
+        }
+        return;
+    }
+    if (frame == 300) printf("uzl test: no UnizoLauncher\n");
+}
 /* walker test with -DTRIROCK_TEST (SandClock): from frame 400 (Mario landed) Mario held over the first
  * SandUpDownTriRock's place until it streams in, then 1500 over it; its SW_B on 150 frames later (off after 20) */
 void game_test_trirock(unsigned frame)
@@ -62835,6 +63002,16 @@ void game_test_pullback(unsigned frame)
         V3 x, z;
         row_axes(r, &x, &z);
         V3 up = vnorm(vcross(z, x)), b = row_pos(r);
+#ifdef PWR_TEST /* -DPWR_TEST with pullback: doPointWarpRecovery (no cylinder met) from 1500 up and 1000 ahead */
+        if (frame == 300) {
+            mario->pos = vadd(vadd(mario->pos, vmul(mario->up, 1500.0f)), vmul(mario->face, 1000.0f)); mario->grounded = 0;
+            rec.s12 = 0; m_do_recovery(mario);
+        }
+        if (frame >= 300 && frame <= 900 && frame % 10 == 0)
+            printf("pwr test f %u: pos %d %d %d on %d rise %d left %d/%d grounded %d anim %s\n", frame, (int)mario->pos.x,
+                   (int)mario->pos.y, (int)mario->pos.z, pwr.on, pwr.rise, pwr.left, pwr.n, mario->grounded, m_jp ? m_jp : "-");
+        return;
+#endif
         if (frame == 300) {
             V3 s = m_last_safety();
             printf("pullback test f %u: safe %d %d %d (start %d %d %d), drop over row %d\n", frame, (int)s.x, (int)s.y, (int)s.z,
