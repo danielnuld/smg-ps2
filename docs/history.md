@@ -11,6 +11,17 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Enemy audit, fifth batch (feat/enemy-audit-5, #773, 2026-11-19, agent moves, finished by the lead; **not run in
+  PCSX2** beyond what its PR says): the placed FireBubble after FireBubble.cpp (`update_fbubs`: Appear / Wait / Chase /
+  Down / WaitToAppear, burns Mario, a star piece gives a coin; only OtaKing's six existed; drawn as the still model,
+  no Reflect nerves); OtaRock's `orock_hit` (a star piece reflected, a thrown shell or any enemy attack: Down) and
+  its push when the strong attack is refused; isMsgPlayerHitAll from thrown shells, fire balls and rainbow Mario for
+  Pukupuku (`pk_blow`, BlownOff), BegomanSpike / Spring / Baby (`bg_hitall`), SamboHead (`sh_blow`), Mogucchi
+  (`mc_hitall`: only down, Scatter) and BombBird (`bbd_hitall`); star pieces reflected by RingBeamer / JumpBeamer /
+  JumpGuarder (`rb_shot`; a shell breaks on a RingBeamer), SearchBeamer (`sbm_shot`: CloseWaitNear), StinkBugParent
+  (`sbp_shot`: SpinReaction) and Pukupuku; Petari's StartSmoke / WalkSmoke / RunSmoke / LeaveAppearanceSmoke; the
+  Begomans killed by a fire floor (Fall) and their AttackBlur in Pursue; Pukupuku's Land / WaterColumn / SpinDamage
+  effects; EyeBeamer's BeamSurface only with arg1 over 0. No pack change.
 - SoundEmitter after Petari, part of #15 (feat/15-sound-emitter, 2026-11-19; written without the emulator: **not
   run in PCSX2** until its PR says so): the actor SoundEmitter (116 rows on the disc, all in the stages' `soundinfo`
   tables: rivers, waterfalls, forest insects, winds, the ships' propellers and siren, the Observatory's engine and
