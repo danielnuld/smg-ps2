@@ -126,6 +126,7 @@ int menu_guidance_request(const char *label, int timeout); /* StarPointerGuidanc
  * whether the scene has the spin / the ball guidance (createSpinLayout / createTamakoroLayout) */
 void menu_action_guidance(int spin, int move, int jump, int has_spin, int has_ball);
 void menu_action_guidance_state(int state); /* TamakoroTutorial: mGuidanceState (0 raise .. 4 the A button), _36 */
+void menu_surf_guidance(int cmd); /* SurfingGuidance: 0 activate, 1..9 levelOffReady / Hold / Success, turnLeft.., turnRight.., 10 deactivate */
 int menu_guidance_exists(void);      /* MR::isExistStarPointerGuidance */
 /* TimeLimitLayout (a Red / Black comet's): appear with the limit (frames), a frame on, kill; isReadyToTimeUp; frames left */
 void menu_time_limit_appear(int frames);

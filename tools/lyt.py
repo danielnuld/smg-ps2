@@ -426,7 +426,7 @@ COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad
           "BombTimer",  # BombTimerLayout
           "RetryButton",  # CometRetryButton
           "InformationWindow",  # StageResultInformer's DisplayInformationForResult (InformationMessage)
-          "SpinGuidanceReplace", "BallGuidanceReplace")  # PlayerActionGuidance (RMGE01's archives; pictures: padart.py)
+          "SpinGuidanceReplace", "BallGuidanceReplace", "TiltGuidanceReplace")  # PlayerActionGuidance, SurfingGuidance (RMGE01's archives; pictures: padart.py)
 # ponytail: no DPDPointerSub (the 2P pointer) nor DPDPointerNumber (the player number, shown only with two remotes
 # connected): one pad here
 # the dome's galaxy select's (AstroDomeGalaxySelector): dome.bin, loaded in the AstroDome stages only; GalaxyInfo with
