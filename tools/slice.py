@@ -2528,7 +2528,7 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
                         used[ji] = used.get(ji, -1) + 1
                         jn = f"{ji}.{used[ji]}"
                     kcls.append(name32(f"{t}#{jn}") + struct.pack("<I", len(pk)) + pk + b"\0" * (-len(pk) % 4))
-        if collision and (cls in planets or cls == "UFOStrongA"):  # PlanetMap / UFOBase: tryCreateCollisionMoveLimit, "<class>#ML" (31 characters at most)
+        if collision and (cls in planets or cls in ("UFOStrongA", "UFONormalB", "UFONormalD", "UFOBattleStageC", "UFOBattleStageD", "UFOBattleStageE")):  # PlanetMap / UFOBase: tryCreateCollisionMoveLimit, "<class>#ML" (31 characters at most)
             fl = {k.lower().rsplit("/", 1)[-1]: v for k, v in B.rarc_files(arc.read_bytes())}  # (game.c: only trySetMoveLimitCollision's walkers bind to it)
             if "movelimit.kcl" in fl:
                 pk = kcl_to_le(kcl_codes(fl["movelimit.kcl"], fl.get("movelimit.pa", b"")))

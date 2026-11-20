@@ -6055,6 +6055,8 @@ typedef struct {
 enum { GAP_NONE, GAP_SHOCKWAVE, GAP_CAPSULE, GAP_DRIFT, GAP_SHELLCOIN, GAP_SHELLCHIP, GAP_ELEVATOR, GAP_UFOKINOKO, GAP_TRIROCK, GAP_HIPMOVE, GAP_HIPDEMO };
 static void gap_place(Inst *in);
 static int st_rail_go(const Inst *in), st_floater_rail(const Inst *in), st_rotor_go(const Inst *in); /* statics.inc */
+static int st_rail_go(const Inst *in), st_floater_rail(const Inst *in); /* statics.inc */
+static u32 st_ufo_move_se(const char *n); static void st_ufo_blast(V3 at, float rad); /* UFOBase (statics.inc) */
 static void st_chain_rebind(const Scene *s), st_wt_rebind(const Scene *s);
 static void ufok_start(int row);
 static int gap_class(const char *name)
@@ -6428,7 +6430,7 @@ static void game_rebind_(void)
                     find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->plant = strcmp(name, "FlowerGroup") == 0 || strcmp(name, "FlowerBlueGroup") == 0 || strcmp(name, "CutBushGroup") == 0 ||
                     stone_row(r);
-        in->rotor = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->arg[4] != -1 && r->arg[4] != 0; /* -1: not a map part */
+        in->rotor = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->arg[4] != -1 && r->arg[4] != 0 && !st_ufo_move_se(name); /* -1: not a map part; a UFOBase turns itself (st_ufo) */
         in->stage = (u8)(stage_se_of(name) + 1);
         in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
                     strcmp(name, "ReverseGravityRoomPressGroundB") == 0 || in->dossun || in->onimasu ||
@@ -38207,6 +38209,7 @@ static int woodbox_reached(const Inst *in, V3 at, float rad) /* its body sensor 
 static int explosion_breaks(V3 at, float rad)
 {
     st_sstep_blast(at, rad); /* SpaceShipStep: isMsgExplosionAttack (statics.inc) */
+    st_ufo_blast(at, rad); /* UFOBreakable: isMsgExplosionAttack (statics.inc) */
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
         if (row_dead[in->row]) continue;
@@ -40620,8 +40623,8 @@ static void update_railers(void)
         row_mp_a[row] |= 2;
         if (se == 'R') stage_moving(in); /* move: tryStageEffectMoving */
         else if (se == 'D' || se == 'K') in->lv[0] = se_level(stage_se[in->stage - 1].mv, &in->m[12], in->lv[0]); /* getMovingSe */
-        else if (!strcmp(sc->types + 32 * r->type, "UFOStrongA")) /* UFOBase::control: while its rail mover works (its end SE at isDone) */
-            in->lv[0] = se_level(SE_OJ_LV_UFO_MOVE, &in->m[12], in->lv[0]);
+        else if (st_ufo_move_se(sc->types + 32 * r->type)) /* UFOBase::control: while its rail mover works (its end SE at isDone) */
+            in->lv[0] = se_level(st_ufo_move_se(sc->types + 32 * r->type), &in->m[12], in->lv[0]);
         float c = row_coord[row], old[16];
         int dir = row_rdir[row], type = stop >= 0 ? stop : 1;
         const unsigned char *pb = pa + 12 * nr; /* nr x {s32 arg1, s32 arg2} */
@@ -40661,8 +40664,9 @@ static void update_railers(void)
             if (cam >= 0 && stage_cam[cam].in > 0.0f) camera_shake_stop(in); /* stopShakingCameraMoving */
             if (type == 0) { /* MoveStopType 0: Wait */
                 row_rdir[row] = 2;
-                if (!strncmp(sc->types + 32 * r->type, "UFO", 3)) { /* UFOBase::control: isDone the first time */
-                    pad_rumble(RUMBLE_MIDDLE); camera_shake(SHAKE_NORMAL); se_start(SE_OJ_UFO_MOVE_END, &in->m[12]);
+                if (st_ufo_move_se(sc->types + 32 * r->type)) { /* UFOBase::control: isDone the first time (the UFOBase classes only) */
+                    pad_rumble(RUMBLE_MIDDLE); camera_shake(SHAKE_NORMAL);
+                    se_start(st_ufo_move_se(sc->types + 32 * r->type) == SE_OJ_LV_UFO_BTL_C_MOVE ? SE_OJ_UFO_BTL_C_STOP : SE_OJ_UFO_MOVE_END, &in->m[12]);
                 }
             } else { /* reachedEnd */
                 int hold = railer_a5(pa, dir > 0 ? (int)nr - 1 : 0) & 0xFFFF;

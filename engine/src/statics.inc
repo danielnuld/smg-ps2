@@ -287,6 +287,9 @@ static int st_kind_name(const char *n)
     if (!strcmp(n, "CrystalCageMoving")) return ST_CCM;
     if (!strcmp(n, "SpaceShipStep")) return 110; /* ST_SSTEP */
     if (!strncmp(n, "MechaKoopaParts", 15)) return !strcmp(n + 15, "Head") ? 113 : !strncmp(n + 15, "Arm", 3) ? 112 : ST_NONE; /* ST_MKHEAD, ST_MKARM */
+    if (!strcmp(n, "DangerSignBoard")) return 115; /* ST_PUSH: SimpleMapObjPush */
+    if (!strcmp(n, "GravityLightA")) return 117; /* GravityLight (st_floater_rail: its rail mover always runs) */
+    if (!strcmp(n, "UFONormalB") || !strcmp(n, "UFONormalD") || !strcmp(n, "UFOStrongA") || !strncmp(n, "UFOBattleStage", 14)) return 116; /* ST_UFO: UFOBase */
     if (!strcmp(n, "SurprisedGalaxy") || (!strncmp(n, "Surp", 4) && strlen(n) > 10 && !strcmp(n + strlen(n) - 6, "Galaxy"))) return ST_SURP;
     for (u32 k = 0; k < sizeof st_still / sizeof *st_still; k++) if (!strcmp(n, st_still[k])) return ST_STILL;
     return ST_NONE;
@@ -305,6 +308,7 @@ static void st_flex(Inst *in, StSt *g, int i); /* FlexibleSphere (below) */
 static int st_ccm(Inst *in, StSt *g), st_ccm_rail(int row); static void st_ccm_action(int row); /* CrystalCageMoving (below) */
 static void st_sstep(Inst *in, StSt *g, int i); static int st_sstep_rail(int row); /* SpaceShipStep (below) */
 static int st_mkarm(Inst *in, StSt *g, int i), st_mkarm_rail(int row), st_mkhead_star(int row); static void st_mkhead(Inst *in, StSt *g), st_mkhead_action(int row, int part); /* MechaKoopaParts (below) */
+static int st_ufo(Inst *in, StSt *g, int i); /* UFOBase (below) */
 static int nst_st;
 static const Scene *st_st_sc;
 static StSt *st_get(int row)
@@ -1388,6 +1392,8 @@ static int st_iastone(Inst *in, StSt *g)
  * Move) has no sender in the port */
 static int st_floater_rail(const Inst *in) /* update_railers: -1 not a floater, else may its rail mover run */
 {
+    if (st_kind(sc->objs[in->row].type) == 116) return st_get(in->row)->n == 2; /* ST_UFO: its mover started by exeMove */
+    if (st_kind(sc->objs[in->row].type) == 117) return 1; /* GravityLight::init: mMapPartsRailMover->start(), no switch read (its rows' SW_B is not the class's) */
     if (st_kind(sc->objs[in->row].type) != ST_FLOATERU) return -1;
     return st_get(in->row)->n == FU_MOVE;
 }
@@ -1509,6 +1515,14 @@ static void st_objs_update(void)
         case 110: st_sstep(in, g, i); break; /* ST_SSTEP */
         case 112: if (st_mkarm(in, g, i)) return; break; /* ST_MKARM */
         case 113: st_mkhead(in, g); break; /* ST_MKHEAD */
+        case 115: /* ST_PUSH: SimpleMapObjPush::attackSensor (DangerSignBoard: MapObjActorUtil::setupInitInfoTypical's
+                   * body sensor, 200 at 200 up its own Y, not scaled): sendMsgPush to the player */
+            if (row_shown(in->row)) {
+                V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+                mario_push_out(vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(up, 200.0f)), 200.0f);
+            }
+            break;
+        case 116: if (st_ufo(in, g, i)) return; break; /* ST_UFO */
         case ST_TEXSW: { /* SimpleMapObj::init: TexChange (BTK) at arg1 (setupInitInfoTextureChangeArg1; -1 none),
                           * SimpleTextureSwitchChangeObj::changeTexture on its SW_A's rise: frame 1 for good (slice.py
                           * BRK_STEPS: "<class>~<frame>") */
@@ -2135,6 +2149,89 @@ static void st_mkhead(Inst *in, StSt *g)
         if (g->on == 1 && pd.name && !strcmp(pd.name, "パワースター出現")) g->on = 2;
         if (g->on == 2 && !pd.name) { g->n = 6; printf("mecha koopa head %d: gone%c", in->row, 10); } /* isEndPowerStarAppearDemo: kill (hidden already) */
         break;
+    }
+}
+
+/* UFOBase.cpp after Petari (UFOSolid: UFOStrongA, UFOBattleStageC / D / E; UFOBreakable: UFONormalB / D). They were
+ * generic map parts: a MapPartsRotator about RotateAxis and a rail mover gated by SW_A / SW_B. Here: Wait until its
+ * SW_B is on (or it has none), or with a MoveConditionType WaitForPlayerOn until Mario stands on it too; then Move for
+ * good: its rail mover started (UFOBattleStageC: SE_OJ_UFO_BTL_C_START) and its front _9C turned RotateSpeed x 0.01
+ * degrees a frame about its gravity (a LiveActor's default, world -Y). calcAndSetBaseMtx: makeMtxUpFrontPos of its
+ * placed up, that front and its place. control: UFONormalB's and UFOBattleStageD's level sounds; the mover's
+ * (st_ufo_move_se: update_railers plays it while it works, the stop SE, the rumble and the shake at isDone).
+ * UFOBreakable: an explosion at its body sensor (100 at its origin, not scaled): Break: kill (its dead switch on).
+ * StSt: n 0 Wait / 1 WaitForPlayerOn / 2 Move / 3 Break, st its step, on 1 once set up, off _9C.
+ * (Its Bloom model and its MoveLimit collision are the instance's: md_bloom, "<class>#ML".)
+ * ponytail: no LodCtrl (createLodCtrlMapObj); isDone only for MoveStopType 0 (3, the vanish, is the rail mover's kill) */
+enum { ST_PUSH = 115, ST_UFO = 116 }; /* (their own line: the list above is edited by every new class) */
+static u32 st_ufo_move_se(const char *n) /* UFOBase::control: the level SE while its rail mover works; 0 not a UFOBase */
+{
+    if (!strcmp(n, "UFOBattleStageC")) return SE_OJ_LV_UFO_BTL_C_MOVE;
+    return !strcmp(n, "UFONormalB") || !strcmp(n, "UFONormalD") || !strcmp(n, "UFOStrongA") || !strncmp(n, "UFOBattleStage", 14) ? SE_OJ_LV_UFO_MOVE : 0;
+}
+static int st_ufo(Inst *in, StSt *g, int i) /* 1: it was killed (the instances rebound) */
+{
+    const Row *r = &sc->objs[in->row];
+    const char *n = sc->types + 32 * r->type;
+    int row = in->row, mp = r->arg[7] > 0 && (r->arg[7] >> 30 & 1);
+    if (!row_shown(row)) return 0;
+    if (!g->on) { /* init: calcFrontVec, the nerve by isMoveStartTypeUnconditional */
+        float b[16];
+        mat_translate_rot_scale(b, r->pos, r->rot, r->scale);
+        g->off = vnorm(v3(b[8], b[9], b[10]));
+        g->on = 1; g->n = mp && (r->arg[7] >> 8 & 15) ? 1 : 0; g->st = 0;
+    }
+    in->rotor = 0; /* not a MapPartsRotator: exeMove turns it */
+    int st = g->st, swb = r->sw[SW_B] < 0 || sw_on(r, SW_B); /* (st_objs_update steps g->st after the switch: a nerve change leaves -1) */
+#ifdef UFO_TEST /* plain build XF=-DUFO_TEST: its state every 120 frames; at frame 600 an explosion at each UFOBreakable */
+    if (game_frame % 120 == 0) printf("ufo %d (%s): nerve %d step %d, front x1000 (%d %d %d), rail %d dir %d%c", row, n, g->n, st, (int)(g->off.x * 1000), (int)(g->off.y * 1000), (int)(g->off.z * 1000), in->railer != NULL, row_rdir[row], 10);
+    if (game_frame == 600 && !strncmp(n, "UFONormal", 9)) st_ufo_blast(v3(in->m[12], in->m[13], in->m[14]), 50.0f);
+#endif
+    switch (g->n) {
+    case 0: if (swb) { g->n = 2; g->st = -1; } break; /* exeWait */
+    case 1: if (mario_ground == i && swb) { g->n = 2; g->st = -1; } break; /* exeWaitForPlayerOn */
+    case 2: /* exeMove */
+        if (st == 0 && in->railer) { /* mRailMover->start() */
+            if (!row_rdir[row]) {
+                int sign = mp ? r->arg[7] >> 26 & 7 : 0;
+                row_rdir[row] = 1;
+                if (sign == 1 || sign == 2 || sign == 4 || sign == 5) { row_mp_a[row] |= 64; row_rstep[row] = 0; } /* HostTypeMoveStart */
+            }
+            if (!strcmp(n, "UFOBattleStageC")) se_start(SE_OJ_UFO_BTL_C_START, &in->m[12]);
+        }
+        if (mp && r->arg[4] != -1) g->off = rot_axis(g->off, v3(0.0f, -1.0f, 0.0f), (float)r->arg[4] * 0.01f * 0.0174533f);
+        break;
+    case 3: /* exeBreak: kill */
+        printf("ufo %d (%s): broken%c", row, n, 10);
+        row_kill(row); game_rebind();
+        return 1;
+    }
+    if (!strcmp(n, "UFONormalB")) g->lv[0] = se_level(SE_OJ_LV_UFO_NORM_B_WORK, &in->m[12], g->lv[0]); /* control */
+    else if (!strcmp(n, "UFOBattleStageD")) g->lv[0] = se_level(SE_OJ_LV_UFO_BTL_D_ROTATE, &in->m[12], g->lv[0]);
+    { /* calcAndSetBaseMtx */
+        float b[16], old[16];
+        mat_translate_rot_scale(b, r->pos, r->rot, r->scale);
+        V3 up = vnorm(v3(b[4], b[5], b[6])), side = vcross(up, g->off);
+        if (vlen(side) < 1e-4f) return 0;
+        side = vnorm(side);
+        V3 front = vcross(side, up);
+        memcpy(old, in->m, 64);
+        in->m[0] = side.x * r->scale[0]; in->m[1] = side.y * r->scale[0]; in->m[2] = side.z * r->scale[0];
+        in->m[4] = up.x * r->scale[1]; in->m[5] = up.y * r->scale[1]; in->m[6] = up.z * r->scale[1];
+        in->m[8] = front.x * r->scale[2]; in->m[9] = front.y * r->scale[2]; in->m[10] = front.z * r->scale[2];
+        if (mario_ground == i && memcmp(old, in->m, 64)) carry(old, in);
+    }
+    return 0;
+}
+static void st_ufo_blast(V3 at, float rad) /* UFOBreakable::receiveMsgEnemyAttack: isMsgExplosionAttack: Break */
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (st_kind(sc->objs[in->row].type) != ST_UFO || !row_shown(in->row)) continue;
+        if (strncmp(sc->types + 32 * sc->objs[in->row].type, "UFONormal", 9)) continue; /* UFOSolid takes none */
+        StSt *g = st_get(in->row);
+        if (g->n == 3 || vlen(vsub(at, v3(in->m[12], in->m[13], in->m[14]))) > rad + 100.0f) continue;
+        g->n = 3; g->st = 0;
     }
 }
 
