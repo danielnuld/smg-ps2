@@ -11,6 +11,13 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- JetTurtle's trample and Drop clip, part of #649 (feat/649-jet-trample, 2026-11-20; **not run in PCSX2**: build,
+  memcheck, host tests). update_jets: Mario falling on a waiting shell (mario_offence's trample on its body sensor)
+  plays SE_EM_TURTLE_SHELL_TRAMPLE, bounces (doTrampleJump) and takes it (tryTrampleAttack's tryGetItem); a rush
+  drop starts its Drop clip (if the pack has it). Left of #649: the homing, JET_TURTLE_ATTACK to the binded faces'
+  map objects, the pull by a spin, the enemy attack's and ACTMES_FOO_ATTACK's reset, GoldenTurtle's BTK, CocoNut's
+  WaitOnBind / reviseFrontVec / water test point / Watermelon. To run: `build.sh jet` FishTunnelGalaxy/1, a jump onto
+  a shell on land. No repack.
 - The Observatory's revival and count down plate sounds, part of #650 and #15 (feat/650-astro-revival-se,
   2026-11-20; **not run in PCSX2**: build, memcheck, host tests). AstroMapObj::startDemo as a cast functor
   (dx_cast_hook type 2 -> astro_cast_hook): an AstroStarPlate of the dome being opened, AstroRotateStepA / B when
