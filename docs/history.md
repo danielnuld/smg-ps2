@@ -19,6 +19,8 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   (`pole_reach` / `pole_body` in collect: 100 at 50 up its point). Left: the top joint (PoleTop) moved instead of
   the model scaled, the NoModel ones' collision (Pole.arc / PoleSquare.arc at its base), isMsgRushCancel. Test: plain
   with `XF=-DPOLE_APPEAR_TEST` (every pole appears at frame 300: "pole n: demo appear", "pole n: appeared").
+  The same tryGetItem for Plant (100 where he is on the stalk), Trapeze (130, 70 under him) and Fluff (300 at its
+  place): `ride_reach` in collect; SpaceCocoon's is not made.
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /
