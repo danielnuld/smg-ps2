@@ -1758,15 +1758,15 @@ enum { ST_SSTEP = 110 }; /* (its own line: the list above is edited by every new
 static int st_sstep_rail(int row) { return st_get(row)->t3; } /* update_railers: its mover runs once Move started it */
 static void st_sstep(Inst *in, StSt *g, int i)
 {
-    int st = g->st++;
+    int st = g->st; /* (st_objs_update steps it) */
     switch (g->n) {
     case 0: /* exeWait */
         if (st == 0) obj_play(in, "wait", 1, 0);
-        if (mario_ground == i) { g->n = 1; g->st = 0; }
+        if (mario_ground == i) { g->n = 1; g->st = -1; }
         break;
     case 1: /* exeMoveSign */
         if (st == 0) { obj_play(in, "onmario", 0, 0); se_start(SE_OJ_SPACE_SHIP_STEP_ST, &in->m[12]); }
-        else if (!in->anim || in->anim->done) { g->n = 2; g->st = 0; }
+        else if (!in->anim || in->anim->done) { g->n = 2; g->st = -1; }
         break;
     case 2: /* exeMove */
         if (st == 0) { obj_play(in, "wait", 1, 0); g->t3 = 1; }
@@ -1786,10 +1786,25 @@ static void st_sstep(Inst *in, StSt *g, int i)
         if (in->railer) railer_place(in);
         float d = vlen(vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14])));
         if (!render_clip_judge(&in->m[12], 700.0f, 1e9f) && d < 3000.0f) { fx_named("SpaceShipStep", "Appear", in->m, NULL, NULL); se_start(SE_OJ_SPACE_SHIP_STEP_RESET, &in->m[12]); }
-        g->n = d < 1000.0f ? 0 : 2; g->st = 0;
+        g->n = d < 1000.0f ? 0 : 2; g->st = -1;
         g->t2 = 0; g->on = 0; g->t3 = 0;
         printf("space ship step %d: back at its first place, nerve %d%c", row, g->n, 10);
     }
+#ifdef ST_SSTEP_TEST /* plain XF="-DPUT_TEST=SpaceShipStep -DST_SSTEP_TEST" (CannonFleetGalaxy): the step Mario was put on,
+                      * 300 frames into Move: an explosion at it (Break); 120 later the camera turned away from it (its
+                      * reset after 240 frames out of the view); a line every 60 frames */
+    {
+        static int row = -1, t;
+        if (row < 0 && g->n == 2) row = in->row;
+        if (in->row == row) {
+            V3 p = v3(in->m[12], in->m[13], in->m[14]);
+            if (++t == 300) { st_sstep_blast(p, 0.0f); g->st = -1; }
+            if (t == 420) camera_set_override(1, vadd(p, v3(0, 1000, 3000)), vadd(p, v3(0, 1000, 6000)), v3(0, 1, 0), 45.0f);
+            if (t % 60 == 0) printf("sstep test t %d: row %d nerve %d step %d, coord %.0f, mover %d, clipped %d, out %d, mario on %d%c", t, row, g->n, g->st,
+                                    row_coord[row], g->t3, clipped, g->t2, mario_ground == i, 10);
+        }
+    }
+#endif
 }
 static void st_sstep_blast(V3 at, float rad) /* receiveMsgEnemyAttack: isMsgExplosionAttack: Break */
 {
