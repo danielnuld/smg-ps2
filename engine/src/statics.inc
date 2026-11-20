@@ -245,7 +245,6 @@ static void st_flag_test(void)
 #endif
 /* ---- MapObj classes by placed type: their per-row state (StSt, kept across rebinds) ---- */
 enum { ST_NONE = 1, ST_MARBLE, ST_HDSTEP, ST_TURTLE, ST_SWFLOAT, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_WTOWER, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE, ST_FLOATERU, ST_QRARROW, ST_SCPRESS, ST_CCM }; enum { FU_WAIT = 1, FU_MOVE, FU_DONE }; /* st_floater nerves */
-enum { ST_NONE = 1, ST_MARBLE, ST_HDSTEP, ST_TURTLE, ST_SWFLOAT, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_WTOWER, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE, ST_FLOATERU, ST_QRARROW, ST_SCPRESS }; enum { FU_WAIT = 1, FU_MOVE, FU_DONE }; /* st_floater nerves */
 enum { ST_QBOX = 100 }; /* QuestionBoxGalleryObj (its own line: the list above is edited by every new class) */
 /* Placed classes whose Petari behaviour is the model drawn with its animations and collision (the engine's generic
  * instance does that): LavaGalaxyParts.cpp (LavaShellTowerStep, LavaStepA / B / C: startBtk / Brk / Bpk / Btp of its
