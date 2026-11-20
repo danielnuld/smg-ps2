@@ -1607,7 +1607,7 @@ static const float *scene_gpos(const char *name) /* MR::findNamePos: a GeneralPo
 {
     const u8 *q = sc->gpos;
     for (u32 i = 0; i < sc->ngpos; i++, q += 48 + 24)
-        if (!strcmp((const char *)q, name)) return (const float *)(q + 48);
+        if (!strncmp((const char *)q, name, 47)) return (const float *)(q + 48); /* (a name of 48 bytes or more is cut to the field) */
     return NULL;
 }
 static int dino_demo_on, ota_demo_on; /* whose demo camera runs */
