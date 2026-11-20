@@ -6051,7 +6051,7 @@ typedef struct {
 /* #143's placed classes ported since the audit (update_gaps) */
 enum { GAP_NONE, GAP_SHOCKWAVE, GAP_CAPSULE, GAP_DRIFT, GAP_SHELLCOIN, GAP_SHELLCHIP, GAP_ELEVATOR, GAP_UFOKINOKO, GAP_TRIROCK, GAP_HIPMOVE, GAP_HIPDEMO };
 static void gap_place(Inst *in);
-static int st_rail_go(const Inst *in), st_floater_rail(const Inst *in); /* statics.inc */
+static int st_rail_go(const Inst *in), st_floater_rail(const Inst *in), st_rotor_go(const Inst *in); /* statics.inc */
 static void st_chain_rebind(const Scene *s), st_wt_rebind(const Scene *s);
 static void ufok_start(int row);
 static int gap_class(const char *name)
@@ -39846,6 +39846,7 @@ static int mp_running(const Row *r, int row)
         if (!sw_on(r, SW_A)) return 0;
         row_mp_a[row] |= 1;
     }
+    if (!strncmp(sc->types + 32 * r->type, "MechaKoopaPartsArm", 18)) return 1; /* initCaseUseSwitchB: its SW_B is startBreak alone (statics.inc st_mkarm) */
     return r->sw[SW_B] < 0 || sw_on(r, SW_B);
 }
 
@@ -40318,6 +40319,7 @@ static void update_rotors(void)
     FOR_KIND(i, rotor) {
         Inst *in = &insts[i];
         if (!in->rotor || !dx_row_moves(in->row)) continue;
+        if (!st_rotor_go(in)) continue; /* MechaKoopaPartsArm: pauseRotator (statics.inc) */
         int mv = rotor_step(in, i);
         if (!in->stage || stage_se[in->stage - 1].kind != 'O') continue;
         int was = row_mp_a[in->row] & 4;
