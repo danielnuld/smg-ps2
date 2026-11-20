@@ -15,8 +15,11 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   same cause as Banekiti's (#809): TeresaMario2DGalaxy's seven BigFanNoLeg are 10000 from its camera, beyond
   update_obj_anims' 8000, so their Wait / Appear never played (the wind model, posed by draw_bigfan_winds, did).
   BigFan::init's sphere (400 + mWindLength about mPosition + front x mWindLength / 2, far level 6) is `clipcls` 4.
-  The galaxy's other placed classes were read: none else is posed by update_obj_anims alone. To see: the blades
-  turning in TeresaMario2DGalaxy/1. No repack.
+  MorphItemObjNeo too (that galaxy's MorphItemNeoTeresa: its Appear clip): `clipcls` 5, LiveActor's sphere of 300,
+  ponytail: never clipped within 8000 (its invalidateClipping nerves and the 2000 sphere of shadow types 3 / 4 are
+  not followed). The galaxy's other placed classes were looked over by name only (TeresaRacer has race.inc's own
+  pose; SignBoard, EarthenPipe, QuestionCoin, the 1-up not checked). To see: the blades turning and the Boo
+  mushroom's Appear in TeresaMario2DGalaxy/1. No repack.
 - Banekiti never left Repel (fix/809-banekiti-clip, 2026-11-20; **not run in PCSX2**: build, memcheck, host tests).
   verify-1 saw it stay in Repel (isBckStopped never true): update_obj_anims poses a generic skinned instance only
   within 8000 of the camera and TeresaMario2DGalaxy's 2D camera is 10000 from the play plane, so neither Repel nor
