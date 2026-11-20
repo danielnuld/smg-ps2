@@ -147,6 +147,14 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   packs until the repack). Not seen: SE_OJ_LAVA_FLOATER_ON(_METAL) at MoveFirst's first step (no log line: to find),
   the LavaBubble (`a8 0` on every lava row: no map face under them within 1000, the ponytail above), the pier's wave
   by eye, IceVolcano's and IceMountain's floaters, LavaHomeFloaterB (a column: the test cannot stand on it).
+- The far camera's audience (fix/803-far-camera-mic, #803, 2026-11-19, agent verify-1): in the 2D sections the camera
+  is 10000 from Mario (TeresaMario2DGalaxy 1: `cam -2561 -319913 10003`) and se_seq.c's listener is its eye with a
+  fixed silence at 5000 (se_start's cull, place's fall-off): no positioned sound was started there (seen with
+  XF=-DSE_LOG: nothing after the Boo Mario window's SE_SY_TALK_OK, not SE_OJ_BANEKITI_REPEL at a Repel). Petari:
+  AudCameraWatcher::movement sets the mic at the camera and setFarCamera(getFovy() < 20), and
+  AudAudience_withSetting::calcVolume_ / calcDeltaPriority_ take three times the far distance with mFarCamera.
+  se_listener takes the fovy: under 20 the far distance is 15000 (the cull and the fall-off). ponytail: JAIAudience's
+  curves stay the linear fall-off (the mark in place()). No repack.
 - TrickRabbitFreeRunCollect, part of #732 (feat/trick-rabbit-collect-class, 2026-11-19): SnowCapsuleGalaxy's only
   star had no class. trick.inc `snc_*` (NPC/TrickRabbitSnowCollect.cpp: Wait, the start wipe and talk, WaitHideSnow,
   Start with the timer and its counter sounds, the failed and the success demos, TakeOutStar, AppearPowerStar) and

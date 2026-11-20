@@ -710,14 +710,15 @@ static void track_stop(Track *t) /* every track done, its notes released (the sl
 
 /* ---- sounds ---- */
 static int map_code = -1; /* the player's ground sound code (se_map_code) */
+static float far_dist = 5000.0f; /* the audience's far distance (se_listener) */
 void se_map_code(int code) { map_code = code; }
 
 u32 se_start(u32 id, const float *pos)
 {
     const SeRow *r = se_row(id);
-    if (pos) { /* past place()'s silence (5000): no slot for it */
+    if (pos) { /* past place()'s silence (5000, a far camera's 15000): no slot for it */
         float d[3] = {pos[0] - listener[0], pos[1] - listener[1], pos[2] - listener[2]};
-        if (d[0] * d[0] + d[1] * d[1] + d[2] * d[2] > 5000.0f * 5000.0f) return 0;
+        if (d[0] * d[0] + d[1] * d[1] + d[2] * d[2] > far_dist * far_dist) return 0;
     }
 #ifdef SE_LOG
     printf("se%c %08x map %d\n", r ? '+' : '?', id, map_code); /* tests: started, or not in this sound.bin */
@@ -873,9 +874,12 @@ int se_anim(const char *clip, float from, float to, const float pos[3], const vo
     return 1;
 }
 
-void se_listener(const float eye[3], const float r[3])
+/* AudCameraWatcher::movement: the mic at the camera; a far camera (fovy under 20: the 2D sections' camera 10000 off)
+ * sets AudAudience's mFarCamera, whose far distance is three times the usual (calcVolume_ / calcDeltaPriority_) */
+void se_listener(const float eye[3], const float r[3], float fovy)
 {
     for (int k = 0; k < 3; k++) { listener[k] = eye[k]; right[k] = r[k]; }
+    far_dist = fovy < 20.0f ? 15000.0f : 5000.0f;
 }
 
 /* the distance fall-off and pan of a positioned sound (ponytail: JAIAudience's curves not ported) */
@@ -885,7 +889,7 @@ static void place(const Sound *s, float *vol, float *pan)
     if (!s->has_pos) return;
     float d[3] = {s->pos[0] - listener[0], s->pos[1] - listener[1], s->pos[2] - listener[2]};
     float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-    if (dist > 500.0f) *vol = dist > 5000.0f ? 0.0f : 1.0f - (dist - 500.0f) / 4500.0f;
+    if (dist > 500.0f) *vol = dist > far_dist ? 0.0f : 1.0f - (dist - 500.0f) / (far_dist - 500.0f);
     if (dist > 1.0f) *pan = 0.5f + 0.5f * (d[0] * right[0] + d[1] * right[1] + d[2] * right[2]) / dist * 0.8f;
 }
 
