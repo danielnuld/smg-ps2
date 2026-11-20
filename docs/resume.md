@@ -1,6 +1,6 @@
 # Where the port stands (resume notes)
 
-Last updated 2026-11-17. Short on purpose: the state, the rules, how to run things, what is next. The notes of every
+Last updated 2026-11-19. Short on purpose: the state, the rules, how to run things, what is next. The notes of every
 fix and feature (cause, test mode, what was left out) are in `docs/history.md`: search it by PR number, class or test
 mode, do not read it whole. New notes go at the top of its first list.
 
@@ -8,8 +8,18 @@ mode, do not read it whole. New notes go at the top of its first list.
 
 - Playable on PCSX2 and on a real PS2 (SCPH-75001, the ISO read over the network from nuld: Orbit + Neutrino udpfs)
   from the title through the opening, the Gateway, the first Grand Star and the Observatory into the Terrace dome.
-- Last release: main 55634a7 (#552, the dome doors' Open collision). Packs: the 2026-11-09 full repack (main 813f479,
-  everything up to #550) + AstroGalaxy repacked for #552.
+- Last ISO: 2026-11-17 (main c04897f: the five console reports #555-#559, a full repack of 592 packs, smoke.ps1
+  passed), on nuld. Nothing released since.
+- Sprint 2026-11-18 .. 22 (the whole port this week): about 170 PRs merged after that ISO, most of them classes
+  and gaps ported from Petari by parallel agents and merged on a build, the host tests, memcheck and the route test
+  (EggStarGalaxy/1 `star got, f 4281`), NOT each on a run in PCSX2. What still wants its run:
+  `D:/smg-ps2-wt/unverified-2026-11-18.md` and `-19.md` (one line a PR: what to run, what to see). The packs in
+  `out/packs` are the 2026-11-17 ones: many of those PRs changed a converter (pack formats too: VGRP #731, RGPH #745,
+  lyt.py #685 / #733, the appear-SE flag #737) and wait for the full repack; their lines are in
+  `D:/smg-ps2-wt/repack-todo.md`. Until then a PR that needs new packs is run on an overlay slice of its galaxy
+  (`D:/smg-ps2-wt/lead-slice.sh`, `XF=-DPACKS_OVERLAY=wt-<name>`).
+- Memory: the ELF's bss is the limit (the packs' region shrinks in 256 KB steps): `tools/memcheck.sh <elf>
+  out/mem-baseline-plain.elf` after every plain build; per-class tables go to the scene's arena, not to statics.
 - The user tests each ISO on the console and reports with a capture; the Wii reference is the walkthrough
   `C:\Users\danie\Videos\smg-wii-reference\` (iFAT6BqhE5A).
 
@@ -53,10 +63,11 @@ and iso.sh do. The console's log over the network: `tools/udptty.py` (UDP 18194)
 
 ## Next
 
-1. The user's console test of the 2026-11-16 ISO gave five reports (2026-11-17), all fixed on main: the sound stuck
-   through loads (#558), the save's window under the black wipe (#559), the camera's roll under a planet (#555), the
-   blue Luma's pull stars (#556), the gravity room's walls (#557). Before the next ISO: a full repack (`release.sh`,
-   every scene.bin: CAMS has the roll now), `smoke.ps1`, `iso.sh`. Then the user's test of that ISO.
+1. The sprint's queue, in this order: the open PRs run and merged; the two unverified lists worked down (each line
+   run on an overlay slice, what is wrong fixed); then ONE full repack (`release.sh`), `smoke.ps1`, the disc ELF,
+   `iso.sh nuld`, and the user's console test of that ISO. Open leads: the audit issues (#649, #650, #653, #684,
+   #691), the light volumes (#790), sound (#15: `docs/sound-gaps.md` must be regenerated first, its table is older
+   than the sprint).
 2. The opening against the Wii (the user's capture of 2026-11-10): Mario stands inside Rosalina when she appears
    (should stand apart); the save screen after the tutorial stayed black for a while; then a scene by scene
    comparison of the whole opening (prologue, Bowser's attack, Gateway, Grand Star, the Observatory's talks).
