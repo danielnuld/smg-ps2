@@ -23,6 +23,19 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   (Front / Rear / BreakStart), the head a star declarer; tools/jpa.py NAMED MechaKoopaPartsHead (**repack**
   FactoryGalaxy, resident.bin). Its twelve sounds were three lines of docs/sound-gaps.md. Not done: the demo's
   other casts' actions (MechaKoopaPartsCaterpillar's nerve at 白画面, ClockworkHandle's functor at 耳飛び).
+  Run in PCSX2 (2026-11-19 evening, overlay FactoryGalaxy/1, plain `XF="-DST_MK_TEST=900 -DPUT_TEST=MechaKoopaPartsArmRight
+  -DPUT_FILE -DSE_LOG"`, Mario held over the right arm). Two defects fixed: the classes read `int st = g->st++` though
+  st_objs_update steps `g->st` itself (a nerve set inside the class never showed step 0: MoveStart played no clip and
+  lasted a few frames, then the arms stuck in MoveStartRear), now `int st = g->st` and `g->st = -1` at a change; and
+  the right arm never swung: game.c `mp_running` runs a map part only while its SW_B is on, but its SW_B (6) is
+  startBreak alone (initCaseUseSwitchB): the arms are excepted there. After that: both arms MoveStart / Move / Wait in
+  turn (`se? 0005028f`, the 00050290 level, 00050291); SW_B on: `mecha koopa arm 689: break`, 00050292, the fall
+  along its rail (1710 frames, the 00050293 level), `gone`; the HipDropRock's dead switch 65 on: the demo starts,
+  `mecha koopa head 690: demo nerve 1` (360 frames) `2`, `3`, `4`, `its star`, the star's appear demo with the head
+  as its declarer, `gone`; SW_A 61 off from 白画面. Not seen: the explosions and the white wipe in a picture, the
+  head's SEs (the test's listener is over the arm, past the 5000 of a placed sound), ..._ARM_BREAK (the rail's end is
+  as far). To check by hand: Mario fell and missed 15 s after the demo in this run (he stood at 爆破デモ後マリオ with
+  the test's hold over).
 - TrickRabbitFreeRunCollect, part of #732 (feat/trick-rabbit-collect-class, 2026-11-19): SnowCapsuleGalaxy's only
   star had no class. trick.inc `snc_*` (NPC/TrickRabbitSnowCollect.cpp: Wait, the start wipe and talk, WaitHideSnow,
   Start with the timer and its counter sounds, the failed and the success demos, TakeOutStar, AppearPowerStar) and

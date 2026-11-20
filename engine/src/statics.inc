@@ -1783,26 +1783,34 @@ static int st_mkarm(Inst *in, StSt *g, int i)
     int moving = g->on && ang != g->k; /* isRotatorMoving */
     g->k = ang; g->on = 1;
     if (g->n == MKA_DEAD) return 0;
+#ifdef ST_MK_TEST /* plain XF="-DST_MK_TEST=900 -DPUT_TEST=MechaKoopaPartsArmRight" FactoryGalaxy/1: the right arm's SW_B on that many
+                   * frames after it is first updated; 1900 later the HipDropRock's dead switch (65: the head's demo); Mario held where he was put; a line every 60 frames */
+    {
+        static int t;
+        if (right && ++t == ST_MK_TEST && r->sw[SW_B] >= 0) { sw_set(r, SW_B, 1); printf("mk test: row %d SW_B %d on%c", in->row, r->sw[SW_B], 10); }
+        if (game_frame % 60 == 0) printf("mk test f %u: arm %d (%s) nerve %d step %d, angle %.2f, coord %.0f, rotor %d railer %d, anim %d done %d, args %d %d %d %x%c", game_frame, in->row, right ? "right" : "left", g->n, g->st, ang, row_coord[in->row], in->rotor, in->railer != NULL, in->anim != NULL, in->anim ? in->anim->done : -1, (int)r->arg[4], (int)r->arg[5], (int)r->arg[6], (unsigned)r->arg[7], 10);
+    }
+#endif
     if (right && g->n < MKA_BREAKSTART && r->sw[SW_B] >= 0 && sw_on(r, SW_B)) { g->n = MKA_BREAKSTART; g->st = 0; printf("mecha koopa arm %d: break%c", in->row, 10); } /* startBreak */
-    int st = g->st++, front = g->n == MKA_STARTFRONT || g->n == MKA_MOVEFRONT;
+    int st = g->st, front = g->n == MKA_STARTFRONT || g->n == MKA_MOVEFRONT;
     switch (g->n) {
     case MKA_WAITREAR: case MKA_WAITFRONT: /* exeWait */
-        if (moving) { g->n = g->n == MKA_WAITFRONT ? MKA_STARTREAR : MKA_STARTFRONT; g->st = 0; }
+        if (moving) { g->n = g->n == MKA_WAITFRONT ? MKA_STARTREAR : MKA_STARTFRONT; g->st = -1; }
         break;
     case MKA_STARTFRONT: case MKA_STARTREAR: /* exeMoveStart */
         if (st == 0) {
             obj_play(in, front ? "front" : "rear", 0, 0);
             se_start(SE_OJ_M_KOOPA_ARM_START, &in->m[12]);
             if (mario_ground == i) { camera_shake(SHAKE_NORMAL); pad_rumble(RUMBLE_MIDDLE); }
-        } else if (!in->anim || in->anim->done) { g->n = front ? MKA_MOVEFRONT : MKA_MOVEREAR; g->st = 0; } /* endMoveStart: resumeAllMapPartsFunctions */
+        } else if (!in->anim || in->anim->done) { g->n = front ? MKA_MOVEFRONT : MKA_MOVEREAR; g->st = -1; } /* endMoveStart: resumeAllMapPartsFunctions */
         break;
     case MKA_MOVEFRONT: case MKA_MOVEREAR: /* exeMove */
         g->lv[0] = se_level(SE_OJ_LV_M_KOOPA_ARM_MOVE, &in->m[12], g->lv[0]);
-        if (st > 1 && !moving) { se_start(SE_OJ_M_KOOPA_ARM_END, &in->m[12]); g->n = front ? MKA_WAITFRONT : MKA_WAITREAR; g->st = 0; }
+        if (st > 1 && !moving) { se_start(SE_OJ_M_KOOPA_ARM_END, &in->m[12]); g->n = front ? MKA_WAITFRONT : MKA_WAITREAR; g->st = -1; }
         break;
     case MKA_BREAKSTART:
         if (st == 0) { obj_play(in, "breakstart", 0, 0); se_start(SE_OJ_M_KOOPA_ARM_FALL_ST, &in->m[12]); }
-        else if (!in->anim || in->anim->done) { g->n = MKA_BREAK; g->st = 0; }
+        else if (!in->anim || in->anim->done) { g->n = MKA_BREAK; g->st = -1; }
         break;
     case MKA_BREAK:
         fx_named("MechaKoopaPartsArmRight", "Spark", in->m, NULL, g);
@@ -1831,7 +1839,18 @@ static void st_mkhead(Inst *in, StSt *g)
     const Row *r = &sc->objs[in->row];
     if (!g->t3) { g->t3 = 1; if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1); } /* init: onSwitchA */
     if (g->n >= 3) in->invisible = 1; /* hideModel (kept over a rebind) */
-    int st = g->st++;
+#ifdef ST_MK_TEST
+    {
+        static int t; static V3 at;
+        if (++t == 1) at = mario->pos; else if (g->n < 3) { mario->pos = at; mario->hvel = v3(0, 0, 0); mario->vup = 0; } /* (until the demo moves him) */
+        test_nolost = 1;
+        if (t == ST_MK_TEST + 1900)
+            for (u32 j = 0; j < sc->nobjs; j++)
+                if (!strcmp(sc->types + 32 * sc->objs[j].type, "HipDropRock") && sc->objs[j].sw[SW_DEAD] >= 0) { sw_set(&sc->objs[j], SW_DEAD, 1); printf("mk test: HipDropRock row %u SW_DEAD %d on%c", j, sc->objs[j].sw[SW_DEAD], 10); }
+        if (t % 60 == 0) printf("mk test t %d: head %d nerve %d step %d, SW_A %d, star asked %d, mario %.0f %.0f %.0f%c", t, in->row, g->n, g->st, r->sw[SW_A] >= 0 && sw_on(r, SW_A), g->on, mario->pos.x, mario->pos.y, mario->pos.z, 10);
+    }
+#endif
+    int st = g->st;
     switch (g->n) {
     case 1: /* exeDemoBreak */
         if (st == 0) { se_start(SE_BM_MECHA_KOOPA_DOWN, &in->m[12]); audio_move_volume(0.0f, 30); camera_shake_infinity(g, 0.2f, 2.0f); }
@@ -1867,7 +1886,7 @@ static void st_mkhead(Inst *in, StSt *g)
         break;
     case 4: /* exeDemoWhiteFadeIn */
         if (st == 0) menu_wipe(0, 60, 0xFFFFFF); /* openWipeWhiteFade(sStepForWhiteFadeIn) */
-        if (dx_last(4)) { g->n = 5; g->st = 0; } /* isDemoPartLastStep(フェードイン) */
+        if (dx_last(4)) { g->n = 5; g->st = -1; } /* isDemoPartLastStep(フェードイン) */
         break;
     case 5: /* exeDemoAppearStar */
         if (st == 0) { bgm_after_boss(); g->on = 1; sw_changed = 1; printf("mecha koopa head %d: its star%c", in->row, 10); }

@@ -39622,6 +39622,7 @@ static int mp_running(const Row *r, int row)
         if (!sw_on(r, SW_A)) return 0;
         row_mp_a[row] |= 1;
     }
+    if (!strncmp(sc->types + 32 * r->type, "MechaKoopaPartsArm", 18)) return 1; /* initCaseUseSwitchB: its SW_B is startBreak alone (statics.inc st_mkarm) */
     return r->sw[SW_B] < 0 || sw_on(r, SW_B);
 }
 
