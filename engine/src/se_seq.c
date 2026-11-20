@@ -10,6 +10,7 @@
 #include "se.h"
 
 #include "me.h"
+#include "se_ids.h"
 
 #include <libsd-common.h>
 #include <math.h>
@@ -81,6 +82,7 @@ struct Sound {
     u8 prio;
     float vol, pitch, acc, pos[3], base; /* base: the table's volume */
     float pan;                           /* not placed: its pan (se_note_params; 0.5 the middle) */
+    float fx_dip;                        /* AudSeStrategy::calc's special effect volume: 1 - it (se_special_fx) */
     Track *root;
 };
 static Chan ch[MAX_CH];
@@ -909,9 +911,36 @@ void se_silence(void)
     se_wait();
 }
 
+/* AudEffector::mSpecialFx (AudEffectDirector::setAudioEffectParam: 1 for effect type 1, 2 for type 3) and what
+ * AudSeStrategy::calc does with it each frame: with 2 the waterfalls and the seagull go to half volume at once
+ * (moveVolume(0.5, 0); nothing moves them back); the fountain and the rabbit maze's wind go to half over 5 frames with
+ * 1, back to full over 5 without. ponytail: their cutoffs (10 / 20: no filter on the SPU2 voices), and isUseLpf is
+ * taken as set for these ids (the sound table's flag is not in sound.bin) */
+static int special_fx;
+void se_special_fx(int fx) { special_fx = fx; }
+static void special_fx_tick(int steps)
+{
+    for (int i = 0; i < MAX_SND; i++) {
+        Sound *s = &so[i];
+        if (!s->used) continue;
+        switch (s->id) {
+        case SE_AT_LV_WATERFALL_S: case SE_AT_LV_WATERFALL_L: case SE_AT_LV_WATERFALL_UPPER_S: case SE_AT_LV_WATERFALL_UPPER_L:
+        case SE_OJ_SEAGULL_CHIRP:
+            if (special_fx == 2) s->fx_dip = 0.5f;
+            break;
+        case SE_AT_LV_WIND_RABBIT_MAZE: case SE_OJ_LV_FOUNTAIN:
+            s->fx_dip += (special_fx == 1 ? 0.1f : -0.1f) * steps;
+            if (s->fx_dip > 0.5f) s->fx_dip = 0.5f;
+            if (s->fx_dip < 0.0f) s->fx_dip = 0.0f;
+            break;
+        }
+    }
+}
+
 void se_update(int steps)
 {
     if (!snd) return;
+    special_fx_tick(steps);
     for (int i = 0; i < 32; i++) /* animation level sounds that ended free their slot */
         if (anim_lv[i].owner) {
             int alive = 0;
@@ -963,7 +992,7 @@ void se_update(int steps)
         }
         float dv, pan;
         place(t->snd, &dv, &pan);
-        float amp = (c->vel / 127.0f) * (c->vel / 127.0f) * c->vol * vol * t->mix_vol * dv;
+        float amp = (c->vel / 127.0f) * (c->vel / 127.0f) * c->vol * vol * t->mix_vol * dv * (1.0f - t->snd->fx_dip);
         if (amp < 0) amp = 0;
         float rate = c->w->rate * c->mul * pitch * t->snd->pitch * powf(2.0f, t->mix_oct + (c->key + c->sweep) / 12.0f);
         u32 p = (u32)(rate * 4096.0f / 48000.0f);
