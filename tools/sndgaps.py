@@ -36,6 +36,13 @@ NOT_PLAYED = {
     "SE_OJ_TSPIDER_COCOON_BOUND": "TombSpiderActionCocoon: only for a sender that is no ATYPE_SPRING_ATTACKER, and "
                                   "SlingShooter's attack sensor (that type) is the only sender of the message",
     "SE_EM_FIRE_BUBBLE_REFLECT": "the second player's pointer (FireBubble / FireBall Reflect, KoopaFireShort Erase2P)",
+    "SE_OJ_SPACEMINE_APPEAR": "SpaceMine's Appear nerve is never set",
+    "SE_OJ_LV_SPACEMINE_APPEAR": "SpaceMine's Appear nerve is never set",
+    "SE_SM_RABBIT_HOP": "Rabbit's rail behaviour (arg1 0: PreJump / PreJumpBack) has no placed row",
+    "SE_SM_RABBIT_CHANGE_JUMP": "Rabbit's rail behaviour (arg1 0: Finish) has no placed row",
+    "SE_SM_RABBIT_CHANGE_EFFECT": "Rabbit's rail behaviour (arg1 0: Finish) has no placed row",
+    "SE_OJ_SMN_VOLC_COL_S_BREAK": "SubmarineVolcanoSmallColumn is placed nowhere",
+    "SE_OJ_PLANT_MARIO_UP_START": "only stopped (Plant.cpp stopSound), never started",
 }
 
 
