@@ -48,6 +48,7 @@ static void update_banekiti(void)
                 V3 at = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]);
                 test_nolost = 1;
                 if (game_frame == 1000 && player_mode != PM_TERESA) set_player_mode(PM_TERESA, 1);
+                pad_force = game_frame >= 1060 && game_frame < 1064 ? PAD_CROSS : 0; /* A closes the first Boo Mario's InformationObserver window (it stops Mario: no centre, no touch) */
                 if (game_frame % 400 >= 300 && game_frame % 400 < 303) { /* his centre 60 off its body sensor, held three frames */
                     mario->pos = vsub(vadd(at, v3(60.0f, 0.0f, 0.0f)), vmul(mario->up, HIT_BODY_H));
                     mario->hvel = v3(0, 0, 0); mario->vup = 0;
