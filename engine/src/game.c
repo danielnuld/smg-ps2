@@ -49991,6 +49991,78 @@ static void put_test(void)
 #ifdef PUT_HOLD /* -DPUT_HOLD: held where he was put (an area he would fall out of) */
     { static V3 at; if (t == PUT_AT) at = mario->pos; else if (row >= 0 && t > PUT_AT) mario->pos = at; }
 #endif
+#ifdef PUT_SCRIPT /* -DPUT_SCRIPT (with PUT_FILE): the other lines of host:put.txt, one ELF for many checks. T counts frames
+                   * from the put:
+                   *   nth K      the K-th row of the class (0 the first)      up N      N over it instead of PUT_UP
+                   *   hold N     held there N frames                           again N   put there again every N frames
+                   *   sw ID [T]  the stage switch ID of the row's zone on      pad T MASK [LEN]  buttons held LEN frames:
+                   *   stick T X Y LEN  the left stick                          s square, x cross, r R1, l L1, z R2 */
+    {
+        static struct { char op; int t, a, len; float x, y; } cmd[24];
+        static int ncmd = -1, hold, again, nth, up = PUT_UP, pads;
+        static V3 at;
+        static char buf[768];
+        if (ncmd < 0) {
+            FILE *f = fopen("host:put.txt", "rb");
+            int n = f ? (int)fread(buf, 1, sizeof buf - 1, f) : 0;
+            if (f) fclose(f);
+            buf[n > 0 ? n : 0] = 0;
+            ncmd = 0;
+            for (char *l = strchr(buf, 10); l && ncmd < 24; l = strchr(l, 10)) {
+                char m[12] = "";
+                int a = 0, b = 0, c = 1;
+                float x = 0, y = 0;
+                l++;
+                if (sscanf(l, "nth %d", &a) == 1) nth = a;
+                else if (sscanf(l, "up %d", &a) == 1) up = a;
+                else if (sscanf(l, "hold %d", &a) == 1) hold = a;
+                else if (sscanf(l, "again %d", &a) == 1) again = a;
+                else if (sscanf(l, "sw %d %d", &a, &b) >= 1) { cmd[ncmd].op = 'w'; cmd[ncmd].a = a; cmd[ncmd++].t = b; }
+                else if (sscanf(l, "pad %d %11s %d", &a, m, &c) >= 2) {
+                    u32 k = 0;
+                    for (const char *q = m; *q; q++)
+                        k |= *q == 's' ? PAD_SQUARE : *q == 'x' ? PAD_CROSS : *q == 'r' ? PAD_R1 : *q == 'l' ? PAD_L1 : *q == 'z' ? PAD_R2 : 0;
+                    cmd[ncmd].op = 'p'; cmd[ncmd].t = a; cmd[ncmd].a = (int)k; cmd[ncmd++].len = c; pads = 1;
+                } else if (sscanf(l, "stick %d %f %f %d", &a, &x, &y, &c) == 4) {
+                    cmd[ncmd].op = 's'; cmd[ncmd].t = a; cmd[ncmd].x = x; cmd[ncmd].y = y; cmd[ncmd++].len = c; pads = 1;
+                }
+            }
+            for (char *q = buf; *q; q++) if (*q == 13 || *q == 10) { *q = 0; break; } /* buf: the class */
+            printf("put script: %s nth %d up %d hold %d again %d, %d commands%c", buf, nth, up, hold, again, ncmd, 10);
+        }
+        if (t == PUT_AT && row >= 0) {
+            int ty = scene_type(sc, buf), k = 0;
+            for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++)
+                if ((int)sc->objs[i].type == ty && k++ == nth) {
+                    V3 x, z;
+                    row_axes(&sc->objs[i], &x, &z);
+                    row = (int)i;
+                    mario->pos = vadd(row_pos(&sc->objs[i]), vmul(vcross(z, x), (float)up));
+                    mario->hvel = v3(0, 0, 0); mario->vup = 0;
+                    break;
+                }
+            at = mario->pos;
+            test_nolost = 1;
+        }
+        int u = t - PUT_AT;
+        if (row >= 0 && u >= 0) {
+            u32 mask = 0;
+            int st = 0;
+            for (int k = 0; k < ncmd; k++) {
+                if (cmd[k].op == 'w' && u == cmd[k].t) {
+                    Row r;
+                    r.zone = sc->objs[row].zone; r.sw[0] = (s16)cmd[k].a;
+                    sw_set(&r, 0, 1);
+                    printf("put script f %d: switch %d of zone %d on%c", u, cmd[k].a, r.zone, 10);
+                }
+                if (cmd[k].op == 'p' && u >= cmd[k].t && u < cmd[k].t + cmd[k].len) mask |= (u32)cmd[k].a;
+                if (cmd[k].op == 's' && u >= cmd[k].t && u < cmd[k].t + cmd[k].len) { st = 1; pad_force_lx = cmd[k].x; pad_force_ly = cmd[k].y; }
+            }
+            if (pads) { pad_force = mask; pad_force_stick = st; }
+            if (u < hold || (again && u > 0 && u % again == 0)) { mario->pos = at; mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+        }
+    }
+#endif
     if (row >= 0 && t % 60 == 0) {
         const Inst *in = NULL;
         for (int i = 0; i < ninsts; i++) if (insts[i].row == row) { in = &insts[i]; break; }
