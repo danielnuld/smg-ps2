@@ -51,6 +51,8 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   SE_OJ_LV_NUT_SHIP_BRIDGE_MV for 55 frames, SE_OJ_NUT_SHIP_BRIDGE_ED and the shake at 55 (..._ST for MoveB: it has
   no MoveB clip nor SW_B). PhantomShipBridge's riddle SE no longer plays with Mario dead (isPlayerDead). **Repack
   CannonFleetGalaxy**; with the old pack the bridge stays as it was (not skinned: update_bridges skips it).
+  The same tryGetItem for Plant (100 where he is on the stalk), Trapeze (130, 70 under him) and Fluff (300 at its
+  place): `ride_reach` in collect; SpaceCocoon's is not made.
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /

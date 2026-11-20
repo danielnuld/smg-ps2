@@ -51708,6 +51708,17 @@ static int plane_get(V3 c, float r)
     if (depth >= 250.0f || depth <= -250.0f) return 0;
     return m_cylinder(vsub(c, vmul(z, depth)), r, 55.0f + (mario->tsi >= 5 ? 15.0f : 0.0f), mario->grounded ? 60.0f : 70.0f);
 }
+/* attackSensor's tryGetItem of the Ride classes with a rider (a coin's 55 added, as the others): Plant's callback
+ * binder (100, at the stalk's point nearest to him: where he is), Trapeze's body (130, 70 under him along the hang
+ * point's up: sSensorOffsetY -70), Fluff's WindReceiver (300 at its place; its body, 150 at MarioHang, is inside).
+ * ponytail: SpaceCocoon's (its Bind / Push / Attack sensors while it stretches and flies) is not made */
+static float ride_reach(V3 *c)
+{
+    if (vine_ride >= 0) { *c = mario->pos; return 100.0f + 55.0f; } /* Plant.cpp:442 */
+    if (tz_ride >= 0) { *c = vadd(mario->pos, vmul(tzs[tz_ride].hang.up, -70.0f)); return 130.0f + 55.0f; } /* Trapeze.cpp:398 */
+    if (flf.inst >= 0 && flf.inst < ninsts) { const Inst *in = &insts[flf.inst]; *c = v3(in->m[12], in->m[13], in->m[14]); return 300.0f + 55.0f; } /* Fluff.cpp:298 */
+    return 0.0f;
+}
 /* r: the item's sensor radius (Coin.cpp:45 55, StarPiece.cpp:109 30) */
 static void collect(Pickup *p, int n, float reach, float r, int *counter, int fx, u32 se)
 {
@@ -51717,6 +51728,7 @@ static void collect(Pickup *p, int n, float reach, float r, int *counter, int fx
     if (sr_reach() > reach) { reach = sr_reach(); c = sr_body(); } /* on a SurfRay: its ride sensor's tryGetItem */
     if (swr_reach() > reach) { reach = swr_reach(); c = swr_body(); } /* on a SwingRope: its ride sensor's tryGetItem */
     if (pole_reach() > reach) { reach = pole_reach(); c = pole_body(); } /* on a Pole: its ride sensor's tryGetItem */
+    { V3 rc; float rr = ride_reach(&rc); if (rr > reach) { reach = rr; c = rc; } } /* on a Plant / Trapeze / Fluff */
     for (int i = 0; i < n; i++)
         if (pickup_on(&p[i], 1) && (vlen(vsub(p[i].pos, c)) < reach || plane_get(p[i].pos, r))) {
             p[i].alive = PICK_GONE;
