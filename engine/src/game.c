@@ -16486,7 +16486,12 @@ static void update_jets(void)
             jet.row = in->row; jet.head = in->head; jet.vel = in->hvel;
             continue;
         }
-        if (jet.inst < 0 && vlen(vsub(c, vadd(in->head, vmul(mario->up, 50.0f)))) < 80.0f + HIT_BODY_R) {
+        /* receiveMsgPlayerAttack: a trample plays SE_EM_TURTLE_SHELL_TRAMPLE and is taken: tryTrampleAttack's
+         * doTrampleJump, then its tryGetItem (the shell taken as he bounces) */
+        int trampled = jet.inst < 0 && !swimming && !mario->grounded && mario->spin_timer <= 0 && mario->hip != HIP_FALL &&
+                       mario_offence(in, vadd(in->head, vmul(mario->up, 50.0f)), 80.0f, vmul(mario->up, -1.0f)) == 1 /* MSG_TRAMPLE */;
+        if (trampled) { se_start(SE_EM_TURTLE_SHELL_TRAMPLE, &in->head.x); mario_trample(); }
+        if (jet.inst < 0 && (trampled || vlen(vsub(c, vadd(in->head, vmul(mario->up, 50.0f)))) < 80.0f + HIT_BODY_R)) {
             if (mario->hip == HIP_FALL) { jet_reset(in, 0); continue; } /* receiveMsgPlayerAttack in Wait: a hip drop resets it */
             /* receiveMsgTaken: startJet by its body sensor's type: ATYPE_JET_TURTLE for the red shell (arg0 1:
              * mShellType RED), ATYPE_JET_TURTLE_SLOW (1) for the green one (becomeSlowType) and the golden one */
@@ -56059,7 +56064,7 @@ static void drop_taking(int damage)
         if (sw.jet_t) { sw.jet_t = 0; if (swimming) m_anim("水泳基本"); } /* resetJet: changeDefault 水泳基本 */
         jet.drop = 0;
         if (damage) { jet.inst = -1; jet.phase = 0; jet_vanish(in); }
-        else { jet.phase = 3; jet.t = 0; jet.dground = jet.dwall = 0; jet.dgrav = vmul(mario->up, -1.0f); printf("jet turtle row %d: dropped (rush)" "%c", in->row, 10); }
+        else { obj_play(in, "drop", 0, 0); /* ACTMES_RUSHDROP: startBck Drop */ jet.phase = 3; jet.t = 0; jet.dground = jet.dwall = 0; jet.dgrav = vmul(mario->up, -1.0f); printf("jet turtle row %d: dropped (rush)" "%c", in->row, 10); }
     }
     if (bh_held >= 0) { /* a BombHei: ACTMES_DAMAGEDROP / RUSHDROP (receiveOtherMsg): Thrown where it is */
         Kuribo *k = &kuribo[bh_held];
