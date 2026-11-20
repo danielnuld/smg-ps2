@@ -50596,6 +50596,10 @@ int game_test_put_at(const char *cls, float up) /* tests: Mario `up` over the fi
 #define PUT_STR(x) PUT_STR_(x)
 /* XF=-DPUT_TEST=<class> [-DPUT_UP=n] (plain): 60 frames after Mario is free he is put PUT_UP over the first row of that
  * class, the camera 3000 off it; its row printed every 60 frames after */
+#ifdef PUT_FILE
+static int put_ev[26]; /* put.txt's events by their letter: frames after the put (0 none) */
+static V3 put_cam[3];
+#endif
 static void put_test(void)
 {
     static int t, row = -1;
@@ -50610,18 +50614,44 @@ static void put_test(void)
 #endif
 #ifdef PUT_FILE /* -DPUT_FILE: the class named by host:put.txt's first line instead, if there is one (one ELF, a class a run) */
         {
-            static char cls[40];
+            static char cls[96];
             FILE *f = fopen("host:put.txt", "rb");
             if (f) {
                 int n = fread(cls, 1, sizeof cls - 1, f);
                 fclose(f);
                 cls[n > 0 ? n : 0] = 0;
                 for (char *c = cls; *c; c++) if (*c == '\r' || *c == '\n') *c = 0;
-                row = game_test_put_at(cls, PUT_UP);
+                /* its other words: "<class> [n] [U<up>] [X<side>] [A<f>] [B<f>] [P<f>] [S<f>] [E<f>] [J<f>] [G<f>]": the n-th row of
+                 * the class (0 the first); U / X: that far up / along its X instead of PUT_UP; f frames after the put:
+                 * its SW_A / SW_B / appear switch on, a spin, an explosion (250) / a thrown shell / the golden shell there */
+                char *w = strchr(cls, ' ');
+                float pu = PUT_UP, px = 0;
+                int nth = 0;
+                if (w) *w++ = 0;
+                for (; w && *w; w = strchr(w, ' ') ? strchr(w, ' ') + 1 : NULL) {
+                    if (*w >= '0' && *w <= '9') nth = atoi(w);
+                    else if (*w == 'U') pu = (float)atoi(w + 1);
+                    else if (*w == 'X') px = (float)atoi(w + 1);
+                    else if (*w >= 'A' && *w <= 'Z') put_ev[*w - 'A'] = atoi(w + 1);
+                }
+                row = -1;
+                for (u32 i = 0, k = 0, ty = (u32)scene_type(sc, cls); i < sc->nobjs; i++) { /* (the class's rows listed) */
+                    const Row *q = &sc->objs[i];
+                    if (q->type != ty) continue;
+                    printf("put file: #%d row %d zone %d args %d %d %d, 6: %d, 7: %d, appear %d A %d B %d dead %d, shown %d\n", (int)k, (int)i, (int)q->zone,
+                           (int)q->arg[0], (int)q->arg[1], (int)q->arg[2], (int)q->arg[6], (int)q->arg[7], q->sw[SW_APPEAR], q->sw[SW_A], q->sw[SW_B], q->sw[SW_DEAD], row_shown((int)i));
+                    if ((int)k++ == nth) row = (int)i;
+                }
                 if (row >= 0) { /* PUT_UP along the row's own up (an area of a turned zone) */
                     V3 x, z;
                     row_axes(&sc->objs[row], &x, &z);
-                    mario->pos = vadd(row_pos(&sc->objs[row]), vmul(vcross(z, x), PUT_UP));
+                    mario->pos = vadd(vadd(row_pos(&sc->objs[row]), vmul(vcross(z, x), pu)), vmul(x, px));
+                    mario->hvel = v3(0, 0, 0); mario->vup = 0;
+                    if (put_ev[2]) { /* C<d> [H<h>]: the camera d along the row's X, h (300) up, on the row */
+                        V3 u = vnorm(vcross(z, x)), o = row_pos(&sc->objs[row]);
+                        put_cam[0] = vadd(vadd(o, vmul(vnorm(x), (float)put_ev[2])), vmul(u, put_ev[7] ? (float)put_ev[7] : 300.0f));
+                        put_cam[1] = vadd(o, vmul(u, 100.0f)); put_cam[2] = u;
+                    }
                 }
                 if (row >= 0 && !strcmp(cls, "CollisionArea")) { /* 30 before the +X face (its AreaPolygon's first face) of
                                                                    * the first shown one that has a polygon there */
@@ -50640,6 +50670,9 @@ static void put_test(void)
 #endif
 #endif
 #ifndef PUT_NOCAM
+#ifdef PUT_FILE
+        if (row >= 0 && put_ev[2]) { camera_start_pos_end(); camera_set_override(1, put_cam[0], put_cam[1], put_cam[2], 45.0f); } else
+#endif
         if (row >= 0) { camera_start_pos_end(); camera_set_override(1, vadd(mario->pos, v3(0, 1000, 3000)), vadd(mario->pos, v3(0, 1000, 0)), v3(0, 1, 0), 45.0f); }
 #endif
         printf("put test: %s row %d" "\n", PUT_STR(PUT_TEST), row);
@@ -50649,6 +50682,21 @@ static void put_test(void)
             if (sc->objs[i].sw[SW_A] == PUT_SW_B_OF && sc->objs[i].sw[SW_B] >= 0) sw_set(&sc->objs[i], SW_B, 1);
 #endif
     }
+#ifdef PUT_FILE
+    if (row >= 0 && t > PUT_AT) {
+        Row *r = (Row *)&sc->objs[row];
+        V3 p = row_pos(r);
+        int f = t - PUT_AT;
+        if (put_ev[0] == f && r->sw[SW_A] >= 0) { sw_set(r, SW_A, 1); printf("put file: SW_A %d on" "\n", r->sw[SW_A]); }
+        if (put_ev[1] == f && r->sw[SW_B] >= 0) { sw_set(r, SW_B, 1); printf("put file: SW_B %d on" "\n", r->sw[SW_B]); }
+        if (put_ev[15] == f && r->sw[SW_APPEAR] >= 0) { sw_set(r, SW_APPEAR, 1); printf("put file: appear switch %d on" "\n", r->sw[SW_APPEAR]); }
+        if (put_ev[18] == f) { game_test_spin_now(); printf("put file: spin, %d from the row" "\n", (int)vlen(vsub(mario->pos, p))); }
+        if (put_ev[4] == f) printf("put file: explosion, broke %d" "\n", (tbox_hit(p, 250.0f, 0), explosion_breaks(p, 250.0f)));
+        if (put_ev[9] == f) printf("put file: shell, cage hit %d" "\n", (tbox_hit(p, 60.0f, 1), cage_jet_hit(p, 60.0f)));
+        if (put_ev[6] == f) { tbox_hit(p, 60.0f, 2); printf("put file: golden shell" "\n"); }
+        if (f % 60 == 0) printf("put file f %d: row %d dead %d shown %d turn %d step %d" "\n", f, row, row_dead[row], row_shown(row), row_turn[row], row_step[row]);
+    }
+#endif
 #ifdef PUT_HOLD /* -DPUT_HOLD: held where he was put (an area he would fall out of) */
     { static V3 at; if (t == PUT_AT) at = mario->pos; else if (row >= 0 && t > PUT_AT) mario->pos = at; }
 #endif
