@@ -11,6 +11,15 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Bowser's grand star fanfares, part of #15 (feat/15-koopa-grand-star-bgm, 2026-11-20; **not run in PCSX2**: build,
+  memcheck, host tests). An audit of Petari's BGM calls by id against engine/src: every boss's startBossBGM /
+  stopStageBGM / startAfterBossBGM / setStageBGMState is in (the 'Left' line of docs/sound-gaps.md is stale); the
+  only ids the engine never named were PowerStar::exeAppearDemoKoopa's. koopa.inc (the kp_star_demo count that
+  times the plate's GrandStarAppear): BGM_KOOPA_GRAND_STAR_1 as a sub BGM at step 90 (Vs1 / Vs2), in Vs3
+  BGM_KOOPA_GRAND_STAR_3 at 152 with MBGM_STAR_EXIST_2 as the stage BGM under it. ponytail: Petari starts
+  STAR_EXIST_2 30 frames before DemoKoopaGrandStarVs3's end (1119) and mutes the stage BGM through the demo
+  (moveVolumeStageBGM 0 / 1): the port's appear demo is the plain star's and has no BGM volume. To hear: a Bowser
+  fight's end. No repack (the streams are in out/music).
 - JetTurtle's trample and Drop clip, part of #649 (feat/649-jet-trample, 2026-11-20; **not run in PCSX2**: build,
   memcheck, host tests). update_jets: Mario falling on a waiting shell (mario_offence's trample on its body sensor)
   plays SE_EM_TURTLE_SHELL_TRAMPLE, bounces (doTrampleJump) and takes it (tryTrampleAttack's tryGetItem); a rush
