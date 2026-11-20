@@ -58,7 +58,7 @@
 # statue: with packs, an explosion at each standing KoopaStatue in turn from frame 200 (-DSTATUE_TEST)
 # fat: with packs, star pieces shot at a TicoFat until it is full (-DFAT_TEST)
 # tako: with packs, HoneyBeeKingdom 1: TakoHei / KoteBug nerves (-DTAKO_TEST)
-# walker: with packs, Mario by a Kuribo, Takobo, Karikari, Butterfly in turn (-DWALKER_TEST)
+# walker: with packs, Mario by a Kuribo, Takobo, Karikari, Butterfly in turn (-DWALKER_TEST); XF=-DUZL_TEST (IceVolcanoGalaxy): by the UnizoLauncher
 # talk: with packs, Mario before the first SignBoard, then the first Tico: A opens their talk, A turns its pages (-DTALK_TEST;
 #   XF=-DTALK_CLS=3: the first Kinopio instead, its appear switch on, Mario put before it)
 #   XF="-DTALK_CLS=3 -DREACT_TEST": no talk, NPCActor's reactions on that talker: a trample, a spin, the pointer, a star piece
@@ -114,7 +114,7 @@
 # flow: with packs, Mario put on the moving pieces of the first StarPieceFlow in turn (-DFLOW_TEST)
 # karikari: with packs, Mario held by Karikari (they cling, bite), then a hip drop throws them off (-DKARIKARI_TEST)
 # crater: with packs, Mario dropped into a Gateway crater over its invisible WarpPod, taken to the other one (-DCRATER_TEST)
-# pullback: with packs, Mario dropped into the Gateway's pit over its PullBackCylinder (-DPULLBACK_TEST)
+# pullback: with packs, Mario dropped into the Gateway's pit over its PullBackCylinder (-DPULLBACK_TEST); XF=-DPWR_TEST: doPointWarpRecovery from 1500 up instead
 # mkoopa: with packs (Factory 1), Mario 600 before a MechanicKoopaMini (Find, Pursue, fire), a stomp, a spin, a hip drop (-DMKOOPA_TEST)
 # killer: with packs, Mario put 1500 in front of the first HomingKiller launcher, then left there (-DKILLER_TEST)
 # meteor: with packs, Mario held half way down the first MeteorStrike's rail (-DMETEOR_TEST)
