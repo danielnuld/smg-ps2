@@ -56,6 +56,20 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   MeteorStrikeEnvironment out of the screen is killed (exeMove). ElectricRail's demo Disappear plays
   SE_OJ_ELEC_RAIL_VANISH (still gone at once: no 20-frame shrink). Test: `meteor`. Left of #653: the broken model
   (MeteorStrikeBreak's Break clip), the shadow's growth, ArrowSwitch's lock and push.
+- The placed BenefitItemObjs after Petari, #652 (feat/652-benefit-item, 2026-11-19): `benefit_update` gains what
+  the audit listed: appear() by arg1 & 15 (0 with arg2: PreEscape; 2 / 3: appearThrowUp, the new Shoot nerve, row_turn
+  5; SE_SY_ITEM_APPEAR; arg1 & 0x80 AppearPicture), SE_OJ_KINOKO_1UP_GROW, Escape's RUN_START / the RUN level sound /
+  Move effect, arg2 2 fleeing Mario, an item on a rail following it, the fire floor / death area kill (Vanish), the
+  600-frame vanish as makeActorDead (no dead switch; the item also came back into view until the next rebind), the
+  Wait turn only with _DF (arg0, or out by its switch) and Escape's with arg6 & 4, LifeUp / Invincible dead under
+  the Dark comet, BenefitItemInvincible's own bouncing Escape and appearThrowUp, the Glow effect while out (`bi_fx`:
+  runEfx's names). tools/jpa.py NAMED KinokoOneUp / BenefitItemObj: the Get / Vanish / Glow / Move effects were asked
+  for by those names and never packed (**repack** resident.bin). The step counter no longer wraps to 0 after 18
+  minutes (appear() ran again). No new test: `item` (BattleShipGalaxy/2) for the Glow and the take; the rows by
+  args: 1-ups that run are in MysteryGravityRoomZone / SnowCapsuleZone / VolcanoPlanetZone, thrown-up LifeUps in
+  HellMeteoZone / KoopaBattleVs2Galaxy, the Invincible's bounce in TeresaHouseZone. Left out: arg5 1's appear camera
+  demo (出現, a dozen rows), the rail's arg0 speed, an item with arg0 shown before its appear switch, ExplainOneUp is
+  there already (io_entry).
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /
