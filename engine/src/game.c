@@ -50392,7 +50392,8 @@ static void put_test(void)
 /* plain XF="-DEA5_TEST -DSE_LOG", host:put.txt (one ELF, a line a run): "fire <WALK_ kind>": Mario 200 off the first
  * live walker of that kind, a fire ball dropped on it every 150 frames; "piece <Class> <up>": Mario 500 off that
  * class's first instance (StinkBugParent / OtaRock: its body), a star piece put <up> over it every 150 frames;
- * "at <Class> <up>": Mario put <up> over its first row and left there (the placed FireBubble) */
+ * "at <Class> <up>": Mario put <up> over its first row and left there; "hold <Class> <up>": kept there, the
+ * camera on the row (the placed FireBubble) */
 static void ea5_test(void)
 {
     static char what[8], cls[40];
@@ -50424,8 +50425,9 @@ static void ea5_test(void)
     for (u32 i = 0; ty >= 0 && i < sc->nobjs && row < 0; i++) if ((int)sc->objs[i].type == ty && row_shown((int)i)) row = (int)i;
     if (row < 0) { if (t % 60 == 0) printf("ea5 test f %d: no shown %s%c", t, cls, 10); return; }
     V3 p = row_pos(&sc->objs[row]), up = up_at(p, mario->up);
-    if (!strcmp(what, "at")) {
-        if (t == 120) { mario->up = up; mario->pos = vadd(p, vmul(up, (float)arg)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+    if (!strcmp(what, "at") || !strcmp(what, "hold")) { /* hold: kept there every frame, the camera on the row from its side */
+        if (what[0] == 'h') { V3 side = vnorm(vtangent(v3(0.3f, 0.2f, 0.9f), up)); camera_set_override(1, vadd(vadd(p, vmul(up, 500.0f)), vmul(side, 1100.0f)), p, up, 45.0f); }
+        if (t == 120 || what[0] == 'h') { mario->up = up; mario->pos = vadd(p, vmul(up, (float)arg)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
         if (t % 30 == 0) printf("ea5 test f %d: %s row %d, mario %.0f off, life %d%c", t, cls, row, vlen(vsub(mario->pos, p)), life, 10);
         return;
     }
