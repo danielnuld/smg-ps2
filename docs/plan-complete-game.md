@@ -179,8 +179,8 @@ No interim ISOs: Daniel tests at the end.
   second loop mixed in), out/music/<stream>[@k].pcm + engine/src/mbgm_tab.h; game.c bgm_state (setStageBGMState) swaps
   file at the same place; RunawayRabbitCollect's states 2 / 3 / 1. Run tools/music.py before tools/mbgm.py (it
   writes the same stems). [x] setStageBGMState on the bosses (Koopa, Polta, SkeletalFishBoss, TripodBoss),
-  TeresaRacer (race.inc), SpringJetWater, AudBgmConductor (the pinch BGM). [ ] ChangeBgmCube, BgmProhibitArea,
-  SphereSelector, FileSelector: no bgm_state call found (2026-11-18). [ ] by ear: the sequence /
+  TeresaRacer (race.inc), SpringJetWater, AudBgmConductor (the pinch BGM). [x] ChangeBgmCube, BgmProhibitArea, the dome's selector, the file select: found in main 2026-11-20
+  (update_bgm_cubes, game.c dm.hd's states, menu.c game_bgm_state). [ ] by ear: the sequence /
   stream balance (items' volumes / 255) and the 4-frame dip at a state change.
 - [x] MarioEffect: cSmokeTable whole (20 entries, 7 materials x 4 variants, intervals, joints, wall forms, water
   only), getFloorMaterialIndex, cMaterialEffectTable (hip drop / bee wind / spin / stage-in by material),
