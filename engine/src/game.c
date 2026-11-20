@@ -1234,6 +1234,7 @@ static int nebs; static const Model *m_ebeam; static int eb_patrol(int row); sta
 static int nmhills; static const Model *m_mhole, *m_mhill[3]; static void mhill_alloc(void);
 static void sbm_place(Inst *in), sbm_joints(Inst *in);
 static int pole_try(Player *m), pole_hold(Player *m);
+static void pole_hit(void), pole_demo_appear(int row); static float pole_reach(void); static V3 pole_body(void);
 static int pole_ride = -1; /* the Pole Mario holds (poles), -1 none */
 static const Model *m_ota, *m_otafoot, *m_coco, *m_fireball2, *m_firebubble, *m_otamagma, *m_otalfoot, *m_otabloom;
 /* OtaKingMagma's clip (startBckThisAndBloomModel); one-shots go back to Wait (Down: EndWait) at their end */
@@ -20149,6 +20150,7 @@ static int mario_attack(int msg, V3 from)
     Player *m = mario;
     if (player_mode == PM_TERESA) { if (msg == ATK_HEATBEAM) { set_player_mode(PM_NORMAL, 1); return 1; } return 0; }
     if (tmk_riding()) return tmk_enemy_attack(msg, from); /* _934: sendArbitraryMsg to the rush host (Tamakoro) */
+    pole_hit(); /* Pole::receiveMsgEnemyAttack on its bind sensor: endBindAndPlayerDamageMsg, then the damage below */
     if (ml_bound()) { /* MarioLauncher::receiveMsgEnemyAttack on its Shell sensor (valid in flight): doLanding(msg) */
         if (!ml_flying()) return 0;
         ml_landing(1);
@@ -26570,11 +26572,15 @@ static int vine_hold(Player *m)
  * TreeClimb at 1.75) or slides down (0.3 a frame to 15, turning 0.8 x speed; Square 0.5 to 18), aside turns (2.5 x
  * stick; Square TurnL / TurnR by 90); at the top a handstand (TreeHandstand*); A jumps off (10 out, 25 up, WallJump /
  * TreeHandStandJump); at 120 from its foot (Square 50) he lets go standing 30 off it. Mario's frame its axes turned
- * by its rotation y. ponytail: no DemoAppear (demo casts), no push sensor, no enemy hit releasing him, its top joint
- * not moved (the model drawn as placed), NoModel ones have no collision */
+ * by its rotation y. A demo cast's appear (dx_cast_hook): DemoAppear, 60 frames: not held, its top rising from its foot
+ * (updateTopPos; SE_OJ_LV_POLE_APPEAR while a demo runs), then Free. Its push sensor (30 at its point) pushes Mario on
+ * the ground unless FreeInvalid; an enemy's attack on him while he holds it lets him go (FreeInvalid) and he takes
+ * it; its ride sensor (100, 50 up its point) gets the items while he holds it (collect).
+ * ponytail: its top joint not moved (the model drawn as placed; in DemoAppear its instance scaled along its up, its
+ * collision left on), NoModel ones have no collision, no isMsgRushCancel */
 #define MAX_POLES 64
 enum { PO_FREE, PO_FREEINVALID, PO_START, PO_STARTFAST, PO_WAIT, PO_TURNL, PO_TURNR, PO_TURNEND, PO_CLIMB, PO_FALL,
-       PO_HSSTART, PO_HSWAIT, PO_HSEND, PO_HSTURN };
+       PO_HSSTART, PO_HSWAIT, PO_HSEND, PO_HSTURN, PO_DEMOAPPEAR };
 static struct { int row, nrv, step, square, nohs, invert; V3 base, top, side, up, front, pos; float height, coord, speed, roty; u32 lv; } poles[MAX_POLES];
 static int npoles;
 
@@ -26807,6 +26813,26 @@ static int pole_hold(Player *m)
     return 1;
 }
 
+static void pole_hit(void) /* receiveMsgEnemyAttack with a rider: endActorCamera, endBindAndPlayerDamageMsg, FreeInvalid */
+{
+    if (pole_ride >= 0) { printf("pole %d: an enemy's attack lets him go%c", poles[pole_ride].row, 10); pole_release(pole_ride, PO_FREEINVALID); }
+}
+static float pole_reach(void) { return pole_ride >= 0 ? 100.0f + 55.0f : 0.0f; } /* its ride sensor's tryGetItem (a coin's 55) */
+static V3 pole_body(void) { return vadd(poles[pole_ride].pos, vmul(poles[pole_ride].up, 50.0f)); } /* sSensorOffsetY */
+static void pole_demo_appear(int row) /* Pole::appear (a demo cast's appear action): DemoAppear */
+{
+    for (int k = 0; k < npoles; k++)
+        if (poles[k].row == row && k != pole_ride) { pole_set(k, PO_DEMOAPPEAR); printf("pole %d: demo appear%c", row, 10); }
+}
+static void pole_top(int k, float top) /* updateTopPos; the instance drawn that high (ponytail: scaled, not its top joint) */
+{
+    typeof(&poles[0]) o = &poles[k];
+    const Row *r = &sc->objs[o->row];
+    o->top = vadd(o->base, vmul(o->up, top + (o->square ? 100.0f : 0.0f)));
+    float rate = o->height > 0.0f ? top / o->height : 1.0f, s[3] = {r->scale[0], r->scale[1] * (rate < 0.001f ? 0.001f : rate), r->scale[2]};
+    for (int i = 0; i < ninsts; i++)
+        if (insts[i].row == o->row && insts[i].md && !insts[i].invisible) mat_translate_rot_scale(insts[i].m, r->pos, r->rot, s);
+}
 static void update_poles(void) /* Free / FreeInvalid: its point follows Mario's centre along it */
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -26814,12 +26840,27 @@ static void update_poles(void) /* Free / FreeInvalid: its point follows Mario's 
         typeof(&poles[0]) o = &poles[k];
         if (k == pole_ride) continue;
         o->step++;
+#ifdef POLE_APPEAR_TEST /* plain build XF=-DPOLE_APPEAR_TEST: every pole appears as a demo cast would at frame 300 */
+        if (game_frame == 300) pole_demo_appear(o->row);
+#endif
+        if (o->nrv == PO_DEMOAPPEAR) { /* exeDemoAppear: sStepDemoAppear 60 */
+            if (o->step < 60) {
+                pole_top(k, o->height * (float)(o->step < 0 ? 0 : o->step) / 60.0f);
+                if (dx.on) o->lv = se_level(SE_OJ_LV_POLE_APPEAR, &o->base.x, o->lv); /* isDemoActive */
+                continue;
+            }
+            pole_top(k, o->height);
+            printf("pole %d: appeared%c", o->row, 10);
+            pole_set(k, PO_FREE);
+            continue;
+        }
         V3 d = vsub(o->top, o->base);
         float l2 = vdot(d, d), t = l2 > 0 ? vdot(vsub(c, o->base), d) / l2 : 0.0f; /* calcPerpendicFootToLineInside */
         o->pos = vadd(o->base, vmul(d, t < 0 ? 0 : t > 1 ? 1 : t));
         if (o->nrv == PO_FREEINVALID && (mario->grounded || vlen(vsub(o->pos, mario->pos)) > 300.0f || o->step > 45))
             pole_set(k, PO_FREE); /* sPlayerDistanceToValid, sStepInvalid */
         else if (o->nrv != PO_FREEINVALID) o->nrv = PO_FREE;
+        if (o->nrv == PO_FREE && mario->grounded && row_shown(o->row)) mario_push_out(o->pos, 30.0f); /* attackSensor: its push sensor, isOnGroundPlayer */
     }
 }
 
@@ -49008,6 +49049,7 @@ static void dx_cast_hook(int row, int type, int part)
     if (!strcmp(cls, "KoopaJrShip")) { kj_cast_hook(row, type, part); return; }
     if (!strcmp(cls, "WaterRoad")) { wrd_cast_hook(type); return; }
     if (!strcmp(cls, "DemoKoopaJrShip")) { dkj_cast_hook(row, type, part); return; }
+    if (type == 0 && pole_class(cls)) { pole_demo_appear(row); return; } /* Pole::appear */
     if (type == 0 && !strcmp(cls, "StarReturnDemoStarter")) { srd_appear(row); return; }
     if (type == 0 && !strcmp(cls, "GrandStarReturnDemoStarter")) { gsr_appear(row); return; }
     if (type == 2 && !strcmp(cls, "HoneyQueen")) { hq_functor(row, part); return; }
@@ -51569,6 +51611,7 @@ static void collect(Pickup *p, int n, float reach, float r, int *counter, int fx
     if (tmk_reach() > reach) { reach = tmk_reach(); c = tmk_body(); } /* on a Tamakoro: its Body sensor's tryGetItem */
     if (sr_reach() > reach) { reach = sr_reach(); c = sr_body(); } /* on a SurfRay: its ride sensor's tryGetItem */
     if (swr_reach() > reach) { reach = swr_reach(); c = swr_body(); } /* on a SwingRope: its ride sensor's tryGetItem */
+    if (pole_reach() > reach) { reach = pole_reach(); c = pole_body(); } /* on a Pole: its ride sensor's tryGetItem */
     for (int i = 0; i < n; i++)
         if (pickup_on(&p[i], 1) && (vlen(vsub(p[i].pos, c)) < reach || plane_get(p[i].pos, r))) {
             p[i].alive = PICK_GONE;
