@@ -44479,7 +44479,7 @@ static void lbc_control(Inst *in)
     mat_identity(m);
     m[12] = gnd.x; m[13] = gnd.y; m[14] = gnd.z;
     fx_named("LavaBreakColumn", "LavaColumn", m, NULL, NULL);
-    se_start(SE_OJ_LAVA_COLUMN_FALL_ED, &gnd.x);
+    se_start(SE_OJ_LAVA_COLUMN_FALL_ED, &in->m[12]); /* startSound(this): at the actor, not at mEffectPos (5000 under it: out of hearing) */
     g->i = 1;
     printf("lava break column %d: fallen%c", in->row, 10);
 }
