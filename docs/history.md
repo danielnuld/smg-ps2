@@ -11,6 +11,12 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Bowser's fanfare under the appear demo's muted BGM (fix/15-koopa-fanfare-volume, 2026-11-20; **not run in
+  PCSX2**). The note below was wrong about the volume: audio_move_volume (moveVolumeStageBGM / SubBGM) is ported
+  and star_demo_update sets it to 0 for the appear demo's 290 frames, so the fanfare of #817, on the same one
+  stream, would have been silent until then. koopa.inc sets the volume back to 1 as the fanfare starts (in Petari
+  a sub BGM started after the move is a new sound at its own volume). docs/sound-gaps.md's hand-written BGM lines
+  (tools/sndgaps.py) and plan-complete-game.md's BGM box rewritten from the audit: nothing left by id.
 - Bowser's grand star fanfares, part of #15 (feat/15-koopa-grand-star-bgm, 2026-11-20; **not run in PCSX2**: build,
   memcheck, host tests). An audit of Petari's BGM calls by id against engine/src: every boss's startBossBGM /
   stopStageBGM / startAfterBossBGM / setStageBGMState is in (the 'Left' line of docs/sound-gaps.md is stale); the

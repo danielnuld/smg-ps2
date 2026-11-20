@@ -383,9 +383,12 @@ static void kp_plates_update(void) /* KoopaBattleMapDamagePlate: Break 180 (burn
     if (kp_star_demo >= 0 && ++kp_star_demo == (kp.vs == 3 ? 151 : 90)) kp_plate_fx(kp.vs == 3 ? 0 : 1, "GrandStarAppear", NULL); /* exeDemoGrandStarAppear: mDamagePlate (_DD, Vs3 Lv3: the first) */
     /* PowerStar::exeAppearDemoKoopa's music: BGM_KOOPA_GRAND_STAR_1 at step 90, in KoopaBattleVs3Galaxy
      * BGM_KOOPA_GRAND_STAR_3 at 152 and MBGM_STAR_EXIST_2 30 frames before DemoKoopaGrandStarVs3's end (1119).
-     * ponytail: the port's appear demo is the plain star's, not that clip, and the stage BGM is not muted under it
-     * (moveVolumeStageBGM): STAR_EXIST_2 is started under the fanfare, which goes back to it when it ends */
+     * The appear demo has the BGM's volume at 0 (star_demo_update: moveVolumeStageBGM / SubBGM(0, 5)); a sub BGM
+     * started then is a new sound at its own volume, so the one stream's volume goes back to 1 for it.
+     * ponytail: the port's appear demo is the plain star's, not that clip: STAR_EXIST_2 is started under the
+     * fanfare, which goes back to it when it ends */
     if (kp_star_demo == (kp.vs == 3 ? 152 : 90) && !star_demo && !miss_running()) {
+        audio_move_volume(1.0f, 0);
         bgm_sub(kp.vs == 3 ? "BGM_KOOPA_GRAND_STAR_3" : "BGM_KOOPA_GRAND_STAR_1");
         if (kp.vs == 3) bgm_start("MBGM_STAR_EXIST_2"); /* (bgm_play: under the sub while it plays) */
     }
