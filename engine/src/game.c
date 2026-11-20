@@ -5371,6 +5371,9 @@ static int area_rail_vel(int attr, int inst, V3 pos, int what, V3 *v)
 {
     int fc = attr & 0x3F;
     *v = v3(0, 0, 0);
+#ifdef ARV_LOG /* XF=-DARV_LOG: who stands on an AreaMove / RailMove floor (what 1 a CocoNut, 1 / 2 on codes 28 / 27 Mario, 3 a walker), every 30 frames */
+    if ((fc == 28 || fc == 27) && game_frame % 30 == 0) printf("area rail vel f %u: code %d what %d at (%d %d %d), area %d%c", game_frame, fc, what, (int)pos.x, (int)pos.y, (int)pos.z, area_obj("AreaMoveSphere", pos), 10);
+#endif
     if ((what & 1) && fc == 28) {
         int a = area_obj("AreaMoveSphere", pos);
         if (a >= 0) {
@@ -7371,6 +7374,22 @@ int game_test_jumpstand(int hip)
     return -1;
 }
 
+/* Test builds (JUMPSTAND_TEST, t frames from 600 after the first drop): Mario put 700 over the first JumpStand and 150
+ * off its axis, a spin (square at 5) and the hip drop (R1 at 14): the spin hip drop's homing (m_hip_homing) logged */
+void game_test_jumpstand_homing(int t)
+{
+    for (int i = 0; i < ninsts; i++) {
+        if (!insts[i].jstand) continue;
+        V3 up = vnorm(v3(insts[i].m[4], insts[i].m[5], insts[i].m[6])), x = vnorm(v3(insts[i].m[0], insts[i].m[1], insts[i].m[2]));
+        V3 base = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]), d = vsub(mario->pos, base);
+        if (t == 0) { mario->pos = vadd(vadd(base, vmul(up, 700.0f)), vmul(x, 150.0f)); mario->up = up; mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0; }
+        pad_force = t >= 5 && t < 7 ? PAD_SQUARE : t >= 14 && t < 16 ? PAD_R1 : 0;
+        if (t % 4 == 0) printf("jumpstand homing t %d: %.0f off its axis, %.0f over it, hip %d homing %d jumping %d clip %s%c", t, vlen(vtangent(d, up)), vdot(d, up), mario->hip, mario->hip_homing,
+                               mario->jumping, mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-", 10);
+        return;
+    }
+}
+
 static int warp_pair(int row);
 static V3 row_axis_y(const Row *r);
 static void wp_activate(int row);
@@ -7427,6 +7446,30 @@ int game_test_kiraira(void)
             return -2;
         }
     return -1;
+}
+
+/* Test builds (KIRAIRA_TEST), t frames from Mario's first free frame: held 800 off the first Kiraira (it turns to him
+ * and stares), put into it at 300 (Explode), held 800 off again (Dead 300, RecoverSign 120, Recover 60), a star piece
+ * on it at 1000, a thrown shell's hit at 1700 (forced: the Kirairas within 600 + 120 BeExploded); the camera 900 off
+ * it, its nerve logged at each change */
+int game_test_kiraira_steps(int t)
+{
+    static int last = -1;
+    for (int i = 0; i < ninsts; i++) {
+        if (!insts[i].kiraira) continue;
+        V3 up, p = kiraira_pos(&insts[i], &up), side = vnorm(vtangent(v3(1, 0, 0), up));
+        if (vlen(side) < 0.5f) side = vnorm(vtangent(v3(0, 0, 1), up));
+        test_nolost = 1; if (life < 3) life = 3;
+        mario->pos = vsub(vadd(p, vmul(side, t >= 300 && t < 303 ? 0.0f : 800.0f)), vmul(mario->up, HIT_BODY_H));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        if (t == 1) camera_start_pos_end();
+        camera_set_override(1, vadd(vadd(p, vmul(side, 400.0f)), vmul(up, 900.0f)), p, side, 45.0f);
+        if (t == 1000) { shots[0].pos = p; shots[0].vel = v3(0, 0, 0); shots[0].t = 1; printf("kiraira test t %d: a star piece on row %d%c", t, insts[i].row, 10); }
+        if (t == 1700) printf("kiraira test t %d: a shell at row %d: %d%c", t, insts[i].row, kiraira_shot(p, 60.0f, 1), 10);
+        if (row_turn[insts[i].row] != last) { last = row_turn[insts[i].row]; printf("kiraira test t %d: row %d nerve %d (flags %d)%c", t, insts[i].row, last & 7, last >> 3, 10); }
+        return insts[i].row;
+    }
+    return game_test_kiraira(); /* not bound yet: over its row */
 }
 
 int game_test_meteor(void)
@@ -11769,6 +11812,16 @@ static void update_dino(void)
     if (battle) {
         /* tryFind: isInSightConePlayer 1000 / 80 (Lv2 1300 / 90) */
         int sees = !egg && dm < (lv2 ? 1300.0f : 1000.0f) && face > cosf((lv2 ? 90.0f : 80.0f) * 0.0174533f);
+#ifdef DINO_STAR /* Vs2 (dino2_nerve): a star piece on its body every 240 frames, the camera 1200 off its front for the 60 after (the scale's wobble) */
+        if (dino.vs == 2) {
+            static int shot_at = -1000;
+            if (game_frame % 240 == 0) { int r = dino_shot(body); printf("dino test: star piece %d (seq %d nerve %d)\n", r, dino.seq, dino.nrv); if (r) shot_at = (int)game_frame; }
+            if ((int)game_frame - shot_at < 60) {
+                camera_set_override(1, vadd(vadd(dino.pos, vmul(dino.f, 1200.0f)), vmul(dino.up, 500.0f)), body, dino.up, 45.0f);
+                if (((int)game_frame - shot_at) % 4 == 0) printf("dino test: scale nerve %d step %d y %.3f\n", dino.asc_n, dino.asc_t, dino.asc_y);
+            } else if ((int)game_frame - shot_at == 60) camera_set_override(0, dino.pos, dino.pos, dino.up, 45.0f);
+        }
+#endif
         if (dino.vs == 2 && dino.nrv != DN_DAMAGE) accel = dino2_nerve(egg);
         else switch (dino.nrv) {
         case DN_START: /* updateStart: 60 frames, then Chase */
@@ -15716,6 +15769,7 @@ static int mg_hitall(Kuribo *k);
 static void bh_chain(Kuribo *k);
 static int jf_knock(Kuribo *k, V3 from);
 static int kan_fire(Kuribo *k, V3 from);
+static int walker_hitall_rest(Kuribo *e, V3 from);
 static void walker_inhale(Kuribo *e);
 static void fireball_hit_walkers(int b)
 {
@@ -15755,6 +15809,7 @@ static void fireball_hit_walkers(int b)
             if (e->kind == WALK_KMINI) e->item = 1;
             fireballs[b].t = 0; return;
         }
+        { int r = walker_hitall_rest(e, fireballs[b].pos); if (r > 0) { fireballs[b].t = 0; return; } if (!r) continue; } /* Kabokuri, NokonokoLand, KuriboChief, Kameck, BossBegoman; those that answer neither */
         e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up);
         pop_coins(e->pos, e->up, 1);
         printf("fire ball burns walker row %d" "\n", e->row);
@@ -15986,6 +16041,42 @@ static void jet_bound(void) /* JetTurtle::bound: _9C off the faces it binds (sBo
     if (jet.wl && (s = vdot(jet.d9c, jet.wn)) < 0.0f) jet.d9c = vsub(vsub(jet.d9c, vmul(jet.wn, s)), vmul(jet.wn, s * 0.9f));
     if (jet.rf && (s = vdot(jet.d9c, jet.rn)) < 0.0f) jet.d9c = vsub(vsub(jet.d9c, vmul(jet.rn, s)), vmul(jet.rn, s * 0.8f));
 }
+/* ACTMES_JET_TURTLE_ATTACK at a walker in the shell's reach (update_jets): sendArbitraryMsg's answer */
+static int jet_hit_walker(Kuribo *e, V3 p, const Inst *in)
+{
+    int took = 1;
+    if (e->kind == WALK_PETARI) { if (petari_solid(e)) petari_blow(e, p, PT_KICKOUT); else took = 0; } /* KickOut */
+    else if (e->kind == WALK_KAMECK) km_down(e, p); /* Kameck: requestDown */
+    else if (e->kind == WALK_JELEC) je_knock(e); /* JellyfishElectric: knockOut */
+    else if (e->kind == WALK_NOKO) { took = noko_turtle(e, p, in->hvel); if (took) printf("jet turtle row %d hits noko row %d" "\n", in->row, e->row); }
+    else if (e->kind == WALK_UNIZO) { if (unizo_breaking(e)) took = 0; else unizo_break(e); } /* isMsgJetTurtleAttack: doBreak */
+    else if (e->kind == WALK_GESSO) { if (e->nrv == GE_PUNCHDOWN) took = 0; else ge_knock(e, p); } /* isMsgPlayerHitAll: knockOut */
+    else if (e->kind == WALK_POIHANA) { if (!poihana_shock(e)) took = 0; else scene_stop = 3; } /* tryShock, stopSceneForDefaultHit(3) */
+    else if (e->kind == WALK_SNAKEHEAD) { if (e->phase || e->nrv == SN_TURTLEDOWN) took = 0; else w_nrv(e, SN_TURTLEDOWN); } /* TurtleDown */
+    else if (e->kind == WALK_STINKBUG || e->kind == WALK_TERESA || e->kind == WALK_MERAMERA || e->kind == WALK_MKOOPA || e->kind == WALK_MERAKING || e->kind == WALK_TERESAW || e->kind == WALK_METBO || e->kind == WALK_BOMBHEI || e->kind == WALK_STRSPIDER) took = 0; /* (TeresaWater, Metbo, BombHei, StringSpider neither) */ /* StinkBugSmall, Teresa, Meramera, MechanicKoopaMini, IceMerameraKing: no isMsgJetTurtleAttack */
+    else if (e->kind == WALK_KARON) took = kr_jet(e); /* isMsgJetTurtleAttack: Broken */
+    else if (e->kind == WALK_KARIKARI) took = kari_hitall(e, p); /* a HitAll: tryBlowOut */
+    else if (e->kind == WALK_TAKOBO) took = tk_punch(e, p, 1); /* a HitAll: HitPunch */
+    else if (e->kind == WALK_BASABASA) took = bb_punch(e, p, 1); /* a HitAll: PunchDown */
+    else if (e->kind == WALK_PACKUN) took = packun_hit(e, p, 1); /* a HitAll: stopSceneForDefaultHit(5), punchDown */
+    else if (e->kind == WALK_KOTEBUG) took = kb_hitall(e, p); /* a HitAll: Blow overturned, else setOverturnFall */
+    else if (e->kind == WALK_MOGU) took = mg_hitall(e); /* isMsgJetTurtleAttack: tryPunchHitted */
+    else if (e->kind == WALK_JELLYFISH) took = jf_knock(e, p); /* a HitAll: knockOut */
+    else if (e->kind == WALK_KANINA) took = kan_fire(e, p); /* isMsgJetTurtleAttack: receiveFireBall */
+    else if (e->kind == WALK_SPIDER) took = js_blow(e, p); /* a HitAll: HitBlow */
+    else if (e->kind == WALK_KURIBO || e->kind == WALK_KMINI || e->kind == WALK_TAKOHEI) { /* isMsgJetTurtleAttack, a HitAll: requestBlowDown (KuriboMini: a coin), TakoHei's requestPunch */
+        took = walker_blow(e, p) > 0;
+        if (took && e->kind == WALK_KMINI) e->item = 1;
+    }
+    else if ((took = walker_hitall_rest(e, p)) >= 0) { } /* Kabokuri, KuriboChief, BossBegoman; BombTeresa and DharmaSambo do not answer */
+    else {
+        took = 1;
+        e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up);
+        pop_coins(e->pos, e->up, 1);
+        printf("jet turtle row %d blows walker row %d" "\n", in->row, e->row);
+    }
+    return took;
+}
 static void update_jets(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -16147,36 +16238,7 @@ static void update_jets(void)
                 if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY ||
                     vlen(vsub(p, vadd(e->pos, vmul(e->up, 60.0f)))) > 60.0f + 80.0f) continue;
                 if (e->kind == WALK_BEGOLAUNCH) continue; /* (no sensor) */
-                int took = 1; /* sendArbitraryMsg's answer */
-                if (e->kind == WALK_PETARI) { if (petari_solid(e)) petari_blow(e, p, PT_KICKOUT); else took = 0; } /* KickOut */
-                else if (e->kind == WALK_KAMECK) km_down(e, p); /* Kameck: requestDown */
-                else if (e->kind == WALK_JELEC) je_knock(e); /* JellyfishElectric: knockOut */
-                else if (e->kind == WALK_NOKO) { took = noko_turtle(e, p, in->hvel); if (took) printf("jet turtle row %d hits noko row %d" "\n", in->row, e->row); }
-                else if (e->kind == WALK_UNIZO) { if (unizo_breaking(e)) took = 0; else unizo_break(e); } /* isMsgJetTurtleAttack: doBreak */
-                else if (e->kind == WALK_GESSO) { if (e->nrv == GE_PUNCHDOWN) took = 0; else ge_knock(e, p); } /* isMsgPlayerHitAll: knockOut */
-                else if (e->kind == WALK_POIHANA) { if (!poihana_shock(e)) took = 0; else scene_stop = 3; } /* tryShock, stopSceneForDefaultHit(3) */
-                else if (e->kind == WALK_SNAKEHEAD) { if (e->phase || e->nrv == SN_TURTLEDOWN) took = 0; else w_nrv(e, SN_TURTLEDOWN); } /* TurtleDown */
-                else if (e->kind == WALK_STINKBUG || e->kind == WALK_TERESA || e->kind == WALK_MERAMERA || e->kind == WALK_MKOOPA || e->kind == WALK_MERAKING || e->kind == WALK_TERESAW || e->kind == WALK_METBO || e->kind == WALK_BOMBHEI || e->kind == WALK_STRSPIDER) took = 0; /* (TeresaWater, Metbo, BombHei, StringSpider neither) */ /* StinkBugSmall, Teresa, Meramera, MechanicKoopaMini, IceMerameraKing: no isMsgJetTurtleAttack */
-                else if (e->kind == WALK_KARON) took = kr_jet(e); /* isMsgJetTurtleAttack: Broken */
-                else if (e->kind == WALK_KARIKARI) took = kari_hitall(e, p); /* a HitAll: tryBlowOut */
-                else if (e->kind == WALK_TAKOBO) took = tk_punch(e, p, 1); /* a HitAll: HitPunch */
-                else if (e->kind == WALK_BASABASA) took = bb_punch(e, p, 1); /* a HitAll: PunchDown */
-                else if (e->kind == WALK_PACKUN) took = packun_hit(e, p, 1); /* a HitAll: stopSceneForDefaultHit(5), punchDown */
-                else if (e->kind == WALK_KOTEBUG) took = kb_hitall(e, p); /* a HitAll: Blow overturned, else setOverturnFall */
-                else if (e->kind == WALK_MOGU) took = mg_hitall(e); /* isMsgJetTurtleAttack: tryPunchHitted */
-                else if (e->kind == WALK_JELLYFISH) took = jf_knock(e, p); /* a HitAll: knockOut */
-                else if (e->kind == WALK_KANINA) took = kan_fire(e, p); /* isMsgJetTurtleAttack: receiveFireBall */
-                else if (e->kind == WALK_SPIDER) took = js_blow(e, p); /* a HitAll: HitBlow */
-                else if (e->kind == WALK_KURIBO || e->kind == WALK_KMINI || e->kind == WALK_TAKOHEI) { /* isMsgJetTurtleAttack, a HitAll: requestBlowDown (KuriboMini: a coin), TakoHei's requestPunch */
-                    took = walker_blow(e, p) > 0;
-                    if (took && e->kind == WALK_KMINI) e->item = 1;
-                }
-                else {
-                    e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up);
-                    pop_coins(e->pos, e->up, 1);
-                    printf("jet turtle row %d blows walker row %d" "\n", in->row, e->row);
-                }
-                if (took) { camera_shake(SHAKE_WEAK); gone = 1; break; } /* shakeCameraWeak, reset(0) */
+                if (jet_hit_walker(e, p, in)) { camera_shake(SHAKE_WEAK); gone = 1; break; } /* shakeCameraWeak, reset(0) */
             }
             if (gone) { jet.inst = -1; jet.phase = 0; jet.oriented = 0; jet_reset(in, reason); continue; } /* (a NokonokoLand's: hidden, its Koopa back) */
             jet_place(in);
@@ -34376,6 +34438,15 @@ static int kb_next_point(const unsigned char *e, float c, int dir, float *pc, in
     }
     return best;
 }
+static int kabo_break(Kuribo *k) /* requestHipDropped / requestHitAttacked (isEnableTrampled: every nerve kept here): Break (the ponytail above) */
+{
+    const Row *r = &sc->objs[k->row];
+    w_se(k, SE_EM_KABOKURI_BREAK_PUMP); /* exeBreak */
+    pop_coins(k->pos, k->qy, 1);
+    if (r->sw[SW_DEAD] >= 0) sw_set((Row *)r, SW_DEAD, 1);
+    k->state = KURIBO_DEAD; row_kill(k->row);
+    return 1;
+}
 static void kabo_update(Kuribo *k)
 {
     const Row *r = &sc->objs[k->row];
@@ -34447,10 +34518,7 @@ static void kabo_update(Kuribo *k)
     int msg = mario_offence(k, body, 100.0f * sy, k->grav);
     if (msg == MSG_HIPDROP || msg == MSG_HITALL) { /* requestHipDropped / requestHitAttacked: Break */
         if (msg == MSG_HIPDROP) w_se(k, SE_EM_STOMPED_S); else m_punch(k, body, 0);
-        w_se(k, SE_EM_KABOKURI_BREAK_PUMP); /* exeBreak */
-        pop_coins(k->pos, k->qy, 1);
-        if (r->sw[SW_DEAD] >= 0) sw_set((Row *)r, SW_DEAD, 1);
-        k->state = KURIBO_DEAD; row_kill(k->row);
+        kabo_break(k);
         return;
     }
     if (msg == MSG_TRAMPLE) { w_nrv(k, KB_TRAMPLED); mario_trample(); return; }
@@ -34698,6 +34766,10 @@ static void bomb_update(Kuribo *k)
             if (++t == 100 && k->nrv != BH_EXPLODE) { w_nrv(k, BH_SPINHIT); bh_light(k); st = ++k->step; }
             if ((k->nrv == BH_PHYSICS || k->nrv == BH_STOP) && bh_held < 0 && !took) { mario->pos = k->pos; mario->hvel = v3(0, 0, 0); }
             if (k->nrv == BH_TAKEN && ++took == 90) mario->spin_timer = SPIN_TIME - 1;
+            if (k->nrv == BH_TAKEN) { /* the camera 350 off his right front, on his chest: the bomb at his hand */
+                V3 side = vnorm(vcross(mario->up, mario->face));
+                camera_set_override(1, vadd(vadd(mario->pos, vmul(vnorm(vadd(mario->face, side)), 350.0f)), vmul(mario->up, 120.0f)), vadd(mario->pos, vmul(mario->up, 80.0f)), mario->up, 45.0f);
+            } else if (took) camera_set_override(0, mario->pos, mario->pos, mario->up, 45.0f);
         }
     }
 #endif
@@ -43392,6 +43464,8 @@ void game_test_tornado(int frame)
         printf("tornado test f %d: ride %d tornado %d/%d tor vis %d shown %d clip %s frame %.0f, Mario %s\n", frame, ss_ride,
                mario->tornado, mario->tornado_t, tor.vis, tor.shown, tor.clip ? tor.clip + 13 : "-", tor.a ? tor.a->frame : -1.0f,
                tornado_hides_mario() ? "hidden" : "drawn");
+    pad_force_stick = mario->tornado != 0; pad_force_lx = 0.67f; pad_force_ly = 0.0f; /* the stick held aside in the tornado jump: calcTornadoTilt */
+    if (mario->tornado && frame % 10 == 0) printf("tornado test f %d: tilt %.1f degrees off his up, stick %.2f%c", frame, acosf(vdot(m_v54C, mario->up)) * 57.29578f, m_sz, 10);
 }
 static void draw_storm_traps(void)
 {
@@ -57578,6 +57652,32 @@ static void km_down(Kuribo *k, V3 from) /* requestDown: setVelocityBlowAttack(25
     k->vel = vsub(vmul(d, 25.0f), vmul(k->grav, 25.0f));
     w_nrv(k, KM_DOWN);
 }
+/* isMsgPlayerHitAll from a fire ball or a thrown shell (fireball_hit_walkers, jet_hit_walker) for the kinds with no
+ * case of their own there: 1 taken, 0 not, -1 not one of these kinds. Kabokuri requestHitAttacked; NokonokoLand
+ * receivePunch (its body, walking or rattling); KuriboChief requestBlowDown once it can be kicked, else requestStagger
+ * (ponytail: its Punch sensor not told from its body here); Kameck requestDown; BossBegoman Blow unless its head's
+ * edge is out; BombTeresa, JellyfishElectric, DharmaSambo and BegomanBabyLauncher answer neither */
+static int walker_hitall_rest(Kuribo *e, V3 from)
+{
+    switch (e->kind) {
+    case WALK_KABOKURI: return kabo_break(e);
+    case WALK_NOKO: {
+        if (e->phase || !nk_body_on(e) || !(nk_walk(e) || nk_rattle(e))) return 0;
+        V3 body = w_joint(e, brk_model(e->row, "NokonokoLand", 0), 2, v3(0, 0, 30));
+        hit_mark_between(walker_cls(e), body, 120.0f, from, 80.0f); /* emitEffectHit at calcPosBetweenSensors */
+        nk_set(e, NK_SHELLSTARTPUNCH);
+        return 1;
+    }
+    case WALK_KCHIEF: return kc_kick(e) ? kc_blowdown(e, from) : kc_stagger(e, from);
+    case WALK_KAMECK: if (!km_down_ok(e)) return 0; km_down(e, from); return 1;
+    case WALK_BBEGO:
+        if (bb_hurt(e) || (e->nrv == BBG_TRAMPLEREACTION && e->step <= 30) || hd_edge_out()) return 0;
+        bg_blow(e, from, 40.0f, 40.0f); w_nrv(e, BBG_BLOW); /* calcBlowReaction(hBlowVel, hBlowVerticalVel) */
+        return 1;
+    case WALK_BOMBTERESA: case WALK_JELEC: case WALK_DHARMA: case WALK_BEGOLAUNCH: return 0;
+    }
+    return -1;
+}
 static int km_guard(Kuribo *k, V3 shot_vel) /* requestGuard (isMsgStarPieceReflect) */
 {
     if (!km_guard_ok(k)) return 0;
@@ -62411,6 +62511,9 @@ void game_test_ice(unsigned frame)
     pad_force_stick = (frame >= 500 && frame < 700) || (frame >= 760 && frame < 900);
     pad_force_stick &= !(frame >= 600 && frame < 604); /* (through neutral, as a thumb turns it back) */
     pad_force_lx = 0; pad_force_ly = frame < 600 ? 1.0f : frame < 700 ? -1.0f : (frame / 30) % 2 ? 1.0f : -1.0f;
+#ifdef WADE_TEST /* (with the wade test: a jump in the second run, its take-off's and landing's water sounds) */
+    pad_force = frame >= 800 && frame < 803 ? PAD_CROSS : 0;
+#endif
     if (frame >= 490 && frame < 920 && frame % 5 == 0)
         printf("ice test f %u: slip %d task %d turn_slip %d brake %d corr %.2f flip %d stand %d walk %.2f anim %s fx %d\n", frame,
                mario->slip_floor, mario->slip_task, mario->turn_slip, mario->turn_brake, mario->corr, mario->corr_flip,
@@ -62616,5 +62719,52 @@ void game_test_npc_look(unsigned frame)
         }
         return;
     }
+}
+#endif
+#ifdef ATK_TEST
+/* XF=-DATK_TEST (plain; any galaxy through boot.txt): the walkers' answers to the player's attacks. From frame 600
+ * each kind alive in the scene in turn (XF=-DATK_KINDS=<bit mask> picks them), ATK_SLOT frames each: Mario held 600
+ * before its first live one and the camera on it; a star piece on it at 100 and at 160, a fire ball's hit
+ * (fireball_hit_walkers) at 260, a thrown shell's (jet_hit_walker) at 420; its nerve logged. XF=-DATK_ORDER=1: the
+ * shell at 260 and the fire ball at 420 (what the first one killed is not there for the second) */
+#ifndef ATK_KINDS
+#define ATK_KINDS (~0ull)
+#endif
+#ifndef ATK_ORDER
+#define ATK_ORDER 0
+#endif
+#define ATK_SLOT 600
+void game_test_atk(unsigned frame)
+{
+    static int kind = -1, row = -1, nrv = -1, alive;
+    static unsigned t0;
+    static Inst none;
+    if (frame < 600 || kind >= WALK_KINDS) return;
+    test_noclip = 1; test_nolost = 1;
+    if (life < 3) life = 3; /* (a miss starts the scene over) */
+    if (kind < 0 || frame - t0 >= ATK_SLOT) {
+        for (kind++; kind < WALK_KINDS; kind++) if (((unsigned long long)(ATK_KINDS) >> kind & 1) && game_kind_alive(kind)) break;
+        if (kind >= WALK_KINDS) { camera_set_override(0, mario->pos, mario->pos, mario->up, 45.0f); printf("atk test f %u: done%c", frame, 10); return; }
+        t0 = frame; row = -1; alive = game_kind_alive(kind);
+        printf("atk test f %u: kind %d, %d alive%c", frame, kind, alive, 10);
+    }
+    unsigned t = frame - t0;
+    Kuribo *e = NULL;
+    for (int i = 0; i < nkuribo && !e; i++) if (kuribo[i].kind == kind && kuribo[i].state != KURIBO_DEAD) e = &kuribo[i];
+    if (game_kind_alive(kind) != alive) { alive = game_kind_alive(kind); printf("atk test f %u: kind %d, %d alive now (row %d gone), coins %d pieces out %d%c", frame, kind, alive, row, game_coins(), game_pieces_out(), 10); }
+    if (!e) return;
+    V3 body = vadd(e->pos, vmul(e->up, 50.0f)), f = vnorm(vtangent(e->qz, e->up));
+    if (vlen(f) < 0.5f) f = vnorm(vtangent(v3(1, 0, 0), e->up));
+    game_test_enemy(kind, 0, 9);
+    camera_set_override(1, vadd(vadd(e->pos, vmul(f, 450.0f)), vmul(e->up, 200.0f)), body, e->up, 45.0f);
+    const char *what = NULL;
+    if (t == 100 || t == 160) { shots[0].pos = body; shots[0].vel = v3(0, 0, 0); shots[0].t = 1; what = "a star piece"; }
+    if (t == (ATK_ORDER ? 420 : 260)) { fireballs[0].pos = vadd(e->pos, vmul(e->up, 60.0f)); fireballs[0].vel = v3(0, 0, 0); fireballs[0].t = 1; fireball_hit_walkers(0); what = fireballs[0].t ? "a fire ball (not taken)" : "a fire ball (taken)"; fireballs[0].t = 0; }
+    if (t == (ATK_ORDER ? 260 : 420)) what = e->kind == WALK_BUTTERFLY || e->kind == WALK_BEGOLAUNCH || !row_shown(e->row) ? "a shell (no sensor)" : /* (update_jets' own tests) */
+                                             jet_hit_walker(e, vadd(e->pos, vmul(e->up, 60.0f)), &none) ? "a shell (taken)" : "a shell (not taken)";
+    if (what || e->row != row || e->nrv != nrv || t % 60 == 0)
+        printf("atk test f %u (t %u): kind %d row %d%s%s state %d nrv %d step %d act %s asc %d item %d, coins %d pieces out %d%c", frame, t, kind, e->row, what ? ": " : "", what ? what : "",
+               e->state, e->nrv, e->step, e->act, e->an, e->item, game_coins(), game_pieces_out(), 10);
+    row = e->row; nrv = e->nrv;
 }
 #endif

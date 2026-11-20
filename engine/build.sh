@@ -46,6 +46,8 @@
 # morph: with packs, the first MorphItemObjNeo's box spun open, the item taken, a bee's flight (-DMORPH_TEST)
 # bee: with packs, Bee Mario jumps and flies with A held until his flight runs out (-DBEE_TEST)
 # fire: with packs, Fire Mario spinning fire balls at a walker (-DFIRE_TEST)
+# XF=-DATK_TEST (plain, any galaxy through out/boot.txt): a star piece, a fire ball and a thrown shell at each walker kind
+#   of the scene in turn, 600 frames a kind (game_test_atk; XF=-DATK_KINDS=<bit mask>, -DASC_TEST: the scale's log)
 # ghost: with packs (HoneyBeeKingdomGalaxy/4 ...), the race's appear switch on once Mario is free: GhostPlayer's start demo, count, race (-DGHOST_TEST)
 # hanachan: with packs, Mario tramples the first Hanachan (200: it gets angry), spins at it (760: over), tramples it over (860: dead) (-DHANACHAN_TEST)
 # strspider: with packs, Mario held under the first StringSpider (200: it comes down), spinning by it twice (400, 440: blown), under and onto the next (600, 800: trampled) (-DSTRSPIDER_TEST)
@@ -119,7 +121,7 @@
 # killer: with packs, Mario put 1500 in front of the first HomingKiller launcher, then left there (-DKILLER_TEST)
 # meteor: with packs, Mario held half way down the first MeteorStrike's rail (-DMETEOR_TEST)
 # takobo: with packs, Mario held by a Takobo (it punches), then stomps one and spins another (-DTAKOBO_TEST)
-# kiraira: with packs, Mario put into the first Kiraira every 60 frames from 120 (-DKIRAIRA_TEST)
+# kiraira: with packs, Mario held 800 off the first Kiraira (it stares), put into it (300), a star piece (1000), a shell (1700) (-DKIRAIRA_TEST)
 # tsuki: with packs, Mario put on the first Tsukidashikun at frame 120, its rail coordinate logged (-DTSUKI_TEST)
 # warppod: with packs, Mario put into the first paired WarpPod at frames 120 and 700 (-DWARPPOD_TEST)
 # jumpstand: with packs, Mario dropped on the first JumpStand at frame 120, in a hip drop at 400 (-DJUMPSTAND_TEST)

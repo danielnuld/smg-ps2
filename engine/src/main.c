@@ -1881,6 +1881,7 @@ int main(void)
             if (at && frame == at + 300)
                 printf("jumpstand test f %u: Mario dropped on row %d (hip drop)\n", frame, game_test_jumpstand(1));
             if (at && at == frame) printf("jumpstand test f %u: Mario dropped\n", frame);
+            if (at && frame >= at + 600 && frame < at + 760) { extern void game_test_jumpstand_homing(int); game_test_jumpstand_homing((int)(frame - at - 600)); } /* then a spin hip drop beside it: the homing */
         }
         if (frame > 120 && frame < 1500 && frame % 10 == 0) {
             char d[128];
@@ -1912,8 +1913,11 @@ int main(void)
         }
 #endif
 #ifdef KIRAIRA_TEST
-        if (frame >= 120 && frame % 60 == 0)
-            printf("kiraira test f %u: Mario into row %d, life %d\n", frame, game_test_kiraira(), game_life());
+        { /* from Mario's first free frame (the flight in keeps the start camera, and the sounds' listener, far away) */
+            static u32 f0; extern int game_test_kiraira_steps(int);
+            if (!f0 && frame >= 120 && game_test_free()) f0 = frame;
+            if (f0) game_test_kiraira_steps((int)(frame - f0));
+        }
 #endif
 #ifdef METEOR_TEST
         if (frame >= 120 && frame < 1500 && frame % 10 == 0) {
@@ -1978,6 +1982,9 @@ int main(void)
 #else
         if (asc_kind >= 0 && frame >= 300 && frame % 120 == 0 && asc_shots < 2) { int r = game_test_shoot(asc_kind); if (r >= 0) asc_shots++; printf("asc test f %u: shot at row %d\n", frame, r); }
 #endif
+#endif
+#ifdef ATK_TEST /* XF=-DATK_TEST: a star piece, a fire ball and a thrown shell at each walker kind of the scene (game_test_atk) */
+        { extern void game_test_atk(unsigned); game_test_atk(frame); }
 #endif
 #ifdef TSPOT_TEST
         if (frame >= 120 && frame < 300) game_test_tspot_near(); /* the camera settles */
