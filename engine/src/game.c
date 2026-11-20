@@ -416,7 +416,7 @@ typedef struct {
     u8 stage;        /* its stage_se row + 1 (StageEffectDataTable.cpp's SEs by object name), 0 none */
     int press;       /* RailMoveObjPress (RGTowerPressGroundA, ReverseGravityRoomPressGroundA / B): ATYPE_MAP_OBJ_PRESS */
     int talkcls;     /* SignBoard 1, Tico 2, Kinopio 3, ..., TicoStarRing 7, TicoComet 8, HoneyBee 10, TicoShop 11: update_talkers */
-    int clipcls;     /* its Petari clipping ported (obj_clipped): NPCActor's default 1, SuperSpinDriver 2; 0 never clipped */
+    int clipcls;     /* its Petari clipping ported (obj_clipped): NPCActor's default 1, SuperSpinDriver 2, LiveActor's default without a LodCtrl 3 (Banekiti); 0 never clipped */
     u32 lv[2];       /* its level sounds' handles (Tico's wait / float) */
     const Model *md_bloom; /* its "<model>Bloom" model (PlanetMap::initBloomModel, createModelObjBloomModel) or NULL */
     int otamagma;    /* OtaKingMagma's collision (initCollisionParts "OtaKingMagma"): drawn with OtaKing (ota) */
@@ -6191,7 +6191,8 @@ static void class_make(ClassInfo *ci, const char *name)
                strcmp(name, "FineAir") == 0 ? 3 : 0;
     ci->gap = gap_class(name);
     ci->clipcls = strcmp(name, "Tico") == 0 || strcmp(name, "TicoBaby") == 0 || lg_cls(name) ? 1 : /* NameObjFactory: Tico, LuigiNPC */
-                  strcmp(name, "SuperSpinDriver") == 0 || strcmp(name, "SuperSpinDriverPink") == 0 || strcmp(name, "SuperSpinDriverGreen") == 0 ? 2 : 0;
+                  strcmp(name, "SuperSpinDriver") == 0 || strcmp(name, "SuperSpinDriverPink") == 0 || strcmp(name, "SuperSpinDriverGreen") == 0 ? 2 :
+                  strcmp(name, "Banekiti") == 0 ? 3 : 0; /* Banekiti::init sets no clipping: LiveActor's (its 2D camera is 10000 away, beyond update_obj_anims' 8000) */
 }
 static const ClassInfo *class_of(int t, const char *name)
 {
@@ -56131,7 +56132,7 @@ static void launch_clip(Launch *L, const Row *r)
  * their far level, or of level 0 (no far clipping) while a ViewGroupCtrlCube of their view group holds Mario (vg_of) */
 static int obj_clipped(const Inst *in)
 {
-    if (in->clipcls == 1) { /* NPCActor::initialize (NPCActor.cpp:324) sets none: LiveActor's ClippingActorInfo
+    if (in->clipcls == 1 || in->clipcls == 3) { /* NPCActor::initialize (NPCActor.cpp:324) sets none: LiveActor's ClippingActorInfo
                              * (ClippingActorInfo.cpp:7-16), a sphere of 300 about mPosition, far level 6 (10000) */
         float p[3] = {in->m[12], in->m[13], in->m[14]};
         return render_clip_judge(p, 300.0f, vg_of(in->row) & VG_IN ? 1e9f : 10000.0f); /* (its view group's cube: level 0) */
@@ -56160,7 +56161,7 @@ static void update_obj_anims(void)
         }
         if (!in->anim_want || !in->md || in->bridge) continue; /* (a PhantomShipBridge has its own) */
         float d = vlen(vsub(v3(in->m[12], in->m[13], in->m[14]), cam_pos));
-        if (d >= 8000.0f) continue;
+        if (d >= 8000.0f && (!in->clipcls || obj_clipped(in))) continue; /* (or not clipped, its clipping ported) */
         if ((in->anim = obj_anim(in->row, in->md, sc->types + 32 * sc->objs[in->row].type))) { in->anim_want = 0; continue; }
         if (game_frame % 30) continue;
         /* the pool full: every 30 frames the farthest instance holding a pose gives it up for this one when it is at
@@ -56180,10 +56181,11 @@ static void update_obj_anims(void)
     for (int i = 0; i < ninsts; i++)
         if (insts[i].anim) {
             int near = vlen(vsub(v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]), cam_pos)) < 8000.0f;
-            if (near) for (int k = 0; k < MAX_OBJ_ANIM; k++) if (oanim[k].a == insts[i].anim) oanim[k].last = game_frame;
+            int live = insts[i].clipcls ? !obj_clipped(&insts[i]) : near;
+            if (near || live) for (int k = 0; k < MAX_OBJ_ANIM; k++) if (oanim[k].a == insts[i].anim) oanim[k].last = game_frame;
             /* a class with its clipping ported moves while not clipped (startClipped: no movement, no calcAnim), the
              * rest within 8000 of the camera */
-            if (insts[i].clipcls ? obj_clipped(&insts[i]) : !near) continue;
+            if (!live) continue;
             if (!dx_row_moves(insts[i].row)) continue; /* the scene stopped by a demo: its casts alone animate (movement off: no calcAnim) */
             if (insts[i].punch) { anim_pose(insts[i].anim); punch_ball(&insts[i], insts[i].anim); anim_skin(insts[i].anim); continue; }
             if (insts[i].sbeamer) { anim_pose(insts[i].anim); sbm_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
