@@ -37,6 +37,21 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   galaxy). Test: `pullback` with `XF=-DPWR_TEST` (HeavensDoorGalaxy/1: he is put 1500 up and 1000 ahead and
   doRecovery called; "pwr test" lines, "point warp recovery: done"). Left out: 引き戻し浮遊's volume by the flight's
   middle (full volume), MarioActor::_A6E and the binder off (_F44), _934 / _EA4.
+- SpaceShipStep after Petari, part of #15 (feat/15-space-ship-step, 2026-11-19; written without the emulator: **not
+  run in PCSX2** until its PR says so): the six steps of VsHugeBattleShipLv2Zone were still models whose rail mover
+  ran from the start. statics.inc `st_sstep` (ST_SSTEP): Wait until Mario stands on it, MoveSign (OnMario,
+  SE_OJ_SPACE_SHIP_STEP_ST), Move (its rail mover from here: `st_sstep_rail` in st_rail_go;
+  SE_OJ_LV_SPACE_SHIP_STEP_MV), Break at an explosion (`st_sstep_blast` from explosion_breaks: its Break clip,
+  ..._BREAK, ..._ED), and updateResetToInitPosCheck (out of the view 240 frames: back to its first place, Appear and
+  ..._RESET when seen with Mario within 3000). tools/slice.py SKINNED_OBJ SpaceShipStep (**repack** the galaxy with
+  VsHugeBattleShipLv2Zone: CannonFleetGalaxy). Its five sounds were the class's whole line in docs/sound-gaps.md.
+  Run in PCSX2 (2026-11-19 evening, overlay CannonFleetGalaxy/2, plain `XF="-DPUT_TEST=SpaceShipStep -DST_SSTEP_TEST
+  -DSE_LOG"`): it stayed in MoveSign for ever: st_objs_update steps `g->st` itself, so `int st = g->st++` stepped twice
+  and a nerve set inside the class never showed step 0 (no clip, no SE). Now `int st = g->st` and `g->st = -1` at a
+  change, as the older classes. After that: Wait, Mario on it: SE_OJ_SPACE_SHIP_STEP_ST, Move (its rail coordinate
+  grows 5 a frame, the level SE), the test's explosion at step 300 of Move: `space ship step 153: break` with ..._BREAK
+  and ..._ED, the camera turned away: `back at its first place, nerve 2` 240 frames later. The SEs log as `se?` (not
+  in the scenario's sound pack until the repack). Not seen: the Appear effect of a reset in view.
 - TrickRabbitFreeRunCollect, part of #732 (feat/trick-rabbit-collect-class, 2026-11-19): SnowCapsuleGalaxy's only
   star had no class. trick.inc `snc_*` (NPC/TrickRabbitSnowCollect.cpp: Wait, the start wipe and talk, WaitHideSnow,
   Start with the timer and its counter sounds, the failed and the success demos, TakeOutStar, AppearPowerStar) and
