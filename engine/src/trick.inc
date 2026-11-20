@@ -623,8 +623,7 @@ static void trm_update(void)
  * third rabbit's and the star model's TakeOutStarTrickRabbit) -> AppearPowerStar (the star out of the model,
  * startAfterBossBGM; at the appear demo's end the camera and the demo end) -> End.
  * ponytail: the i-th rabbit's 隠れ位置 is the i-th one of the GPOS chunk (the placement lists them by ChildObjId 0 .. 2
- * = the children's l_id: the chunk keeps no link); BombTimerLayout is not on main yet (PR #733): the count runs here
- * and nothing is drawn; no AppearSmoke effect, SpotMarkLight, foot prints (SW_B: clearFootPrint), Light effect; a
+ * = the children's l_id: the chunk keeps no link); no AppearSmoke effect, SpotMarkLight, foot prints (SW_B: clearFootPrint), Light effect; a
  * star piece on a rabbit that is not running away makes no hit sound; the star's demo is the port's own after the
  * success demo (appearPowerStarContinueCurrentDemo) */
 #define SNC_MAX 4
@@ -634,7 +633,7 @@ enum { SNC_TRYDEMO, SNC_WAIT, SNC_STARTWIPEOUT, SNC_STARTWIPEIN, SNC_STARTTALK, 
 static struct {
     int on, row, n, talk;
     int nrv, step;
-    int limit, rest, timing;      /* mTimeLimit (seconds); BombTimerLayout: its rest time, alive */
+    int limit;                    /* mTimeLimit (seconds); mTimerLayout: menu.c menu_bomb_timer_* */
     int demo, star;               /* mIsDemo; 0, 1 its star asked for, 2 the appear demo seen, 3 over */
     const char *want; int next;   /* requestStartDemoMarioPuppetableWithoutCinemaFrame: the demo asked, its nerve */
     Trk *r;                       /* mRabbit (game_init: row_table) */
@@ -706,6 +705,8 @@ static void snr_update(int i)
         break;
     case SNR_APPEAR:
         if (st == 0) {
+            Inst *in = gw_inst(k->row);
+            if (in) printf("snow rabbit row %d: AppearSmoke %d\n", k->row, fx_named("TrickRabbit", "AppearSmoke", in->m, NULL, NULL)); /* emitEffect */
             gw_ract(r, "Jump");
             k->vel = vadd(vmul(k->grav, -25.0f), vmul(k->front, 20.0f)); /* setVelocityJump(25), addVelocityMoveToDirection(mFrontVec, 20) */
             w_se(k, SE_SM_RABBIT_APPEAR); se_start(SE_SM_RUNAWAY_RABBIT_APP_ME, NULL);
@@ -801,6 +802,7 @@ static void snc_talk_place(void) /* its talk at mBaseMtx */
 static void snc_nerve(void)
 {
     int st = ++snc.step;
+    if (!pd.name && !dx_busy()) menu_bomb_timer_update(); /* mTimerLayout's movement: none in a demo (only the demo's own actors move) */
     switch (snc.nrv) {
     case SNC_TRYDEMO:
         if (pd_try_start(snc.want, snc.row)) snc_set(snc.next);
@@ -845,18 +847,17 @@ static void snc_nerve(void)
     case SNC_START:
         if (st == 0) {
             bgm_start("MBGM_GALAXY_02_CHASE"); /* startEventBGM(1): EventBgmID_Chase */
-            snc.rest = snc.limit * 60; snc.timing = 1; /* setTimeLimit, mDangerTransFrame 20 * 60, appear */
+            menu_bomb_timer_limit(snc.limit * 60); menu_bomb_timer_danger(20 * 60); menu_bomb_timer_appear();
         }
-        if (snc.rest > 0 && !pd.name && !dx_busy()) snc.rest--; /* BombTimerLayout::update */
         if (life > 0 && !pd.name) { /* !isPlayerDead && !isPlayerConfrontDeath */
-            int rest = snc.rest;
+            int rest = menu_bomb_timer_rest();
             if (rest == 0) se_start(SE_SY_E3_TIMER_TIME_UP, NULL);
             else if (rest % 60) ;
             else if (rest <= 120) se_start(SE_SY_E3_TIMER_COUNT_4, NULL);
             else if (rest <= 360) se_start(SE_SY_E3_TIMER_COUNT_2, NULL);
             else if (rest <= 1200) se_start(SE_SY_E3_TIMER_COUNT_1, NULL);
         }
-        if (snc.rest == 0 && !snc.demo) { /* isReadyToTimeUp: startFailedDemo */
+        if (menu_bomb_timer_up() && !snc.demo) { /* isReadyToTimeUp: startFailedDemo */
             snc.demo = 1;
             snc_request("雪ウサギ集め失敗", SNC_FAILEDWIPEOUT);
         }
@@ -866,7 +867,7 @@ static void snc_nerve(void)
         if (menu_wipe_active()) break;
         change_item_status(8); /* curePlayerElementMode */
         drop_damage();
-        snc.timing = 0; /* mTimerLayout->kill() */
+        menu_bomb_timer_kill();
         snc_set(SNC_FAILEDWIPEIN);
         break;
     case SNC_FAILEDWIPEIN:
@@ -901,7 +902,7 @@ static void snc_nerve(void)
         break;
     case SNC_SUCCESSWIPEIN:
         if (st == 0) {
-            snc.timing = 0;
+            menu_bomb_timer_kill();
             mario_play("battlewait", 1.0f, 1);
             snc_camera();
             bgm_return();
@@ -1147,13 +1148,14 @@ static void trk_test(void)
                             (int)sc->objs[k->row].pos[0], (int)sc->objs[k->row].pos[1], (int)sc->objs[k->row].pos[2]);
 }
 /* XF=-DTRICK_TEST (plain, SnowCapsuleGalaxy/1): Mario put at マリオ位置 (the start event), A through the talks; in the
- * hunt each rabbit in turn (700 steps apart): its SW_A on (without one Mario dropped onto its snow, at 300 forced out),
+ * hunt each rabbit in turn (700 steps apart): its SW_A on (without one Mario put on its snow, spinning; at 300 forced out),
  * a star piece at it at 400, Mario onto it from 550 (the catch). XF=-DTRICK_TEST=2: nothing caught, the time up after
  * 10 s (the failed demo) */
 static void snc_test(void)
 {
-    static int t, go;
+    static int t, go, var = -1; /* (the variant: host:tv.txt's digit when there is one, so one ELF runs both) */
     if (!snc.on || in_opening || mario->launch >= 0) return;
+    if (var < 0) { FILE *tf = fopen("host:tv.txt", "rb"); int c = tf ? fgetc(tf) : -1; if (tf) fclose(tf); var = c >= '1' && c <= '9' ? c - '0' : TRICK_TEST + 0; printf("trick test: variant %d%c", var, 10); }
     t++;
     pad_force = 0;
     if (snc.nrv == SNC_WAIT && t > 60 && t % 120 == 61) {
@@ -1164,23 +1166,21 @@ static void snc_test(void)
     for (int i = 0; i < snc.n; i++) if (snc.r[i].r.k.nrv == SNR_CAUGHT && t % 45 < 5) pad_force = PAD_CROSS;
     if (snc.nrv == SNC_START) {
         go++;
-#if TRICK_TEST == 2
-        if (go == 1) snc.rest = 600;
-#else
-        for (int i = 0; i < snc.n; i++) {
+        if (var == 2 && go == 2) menu_bomb_timer_limit(600); /* (after Start's first step set it) */
+        for (int i = 0; var != 2 && i < snc.n; i++) {
             Kuribo *k = &snc.r[i].r.k;
             const Row *row = &sc->objs[k->row];
             int at = go - 700 * i;
             if (at == 60 && row->sw[SW_A] >= 0) sw_set(row, SW_A, 1);
-            if (row->sw[SW_A] < 0 && at >= 60 && at < 300 && at % 30 == 0 && k->nrv == SNR_HIDESNOW) { m_set_trans(vadd(k->pos, vmul(k->qy, 150.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+            if (row->sw[SW_A] < 0 && at == 60 && k->nrv == SNR_HIDESNOW) { m_set_trans(vadd(k->pos, vmul(k->qy, 10.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+            if (row->sw[SW_A] < 0 && at > 90 && at < 300 && at % 40 < 3 && k->nrv == SNR_HIDESNOW) pad_force = PAD_SQUARE; /* his spin clears the snow over it */
             if (at == 300 && k->nrv == SNR_HIDESNOW) printf("trick test: rabbit %d forced out (%d)\n", i, snc_snow_found(k->row, NULL));
             if (at == 400 && k->nrv == SNR_RUNAWAY) { V3 sp = vadd(k->pos, vmul(k->qy, 50.0f)); shots[0].pos = vadd(sp, vmul(k->front, 200.0f)); shots[0].vel = vmul(k->front, -40.0f); shots[0].t = 1; shots[0].col = 0; }
             if (at >= 550 && at < 700 && at % 30 == 0 && (k->nrv == SNR_RUNAWAY || k->nrv == SNR_BLOW)) { m_set_trans(vadd(k->pos, vmul(k->qy, 10.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
         }
-#endif
     }
     if (t % 61 == 0) {
-        printf("trick test t %d go %d: collect %d step %d, rest %d, star %d, demo %s, Mario %d %d %d grounded %d;", t, go, snc.nrv, snc.step, snc.rest, snc.star, pd.name ? pd.name : "-",
+        printf("trick test t %d go %d: collect %d step %d, rest %d, star %d, demo %s, Mario %d %d %d grounded %d;", t, go, snc.nrv, snc.step, menu_bomb_timer_rest(), snc.star, pd.name ? pd.name : "-",
                (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z, mario->grounded);
         for (int i = 0; i < snc.n; i++) {
             const Kuribo *k = &snc.r[i].r.k;
