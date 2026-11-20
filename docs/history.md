@@ -11,6 +11,17 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- The Observatory's revival and count down plate sounds, part of #650 and #15 (feat/650-astro-revival-se,
+  2026-11-20; **not run in PCSX2**: build, memcheck, host tests). AstroMapObj::startDemo as a cast functor
+  (dx_cast_hook type 2 -> astro_cast_hook): an AstroStarPlate of the dome being opened, AstroRotateStepA / B when
+  their grand star count is the opened domes + 1, run exeRevival's sounds in update_astro_objs:
+  SE_OJ_ASTRO_PLATE_REVIVAL / SE_OJ_ASTRO_STEP_REVIVAL at its start, the steps' engine level SE, the plate's
+  SE_AT_LV_ASTRO_PATH_APPEAR after step 90, until isEndRevival. AstroCountDownPlate: SE_OJ_LV_CDN_PLATE_LIGHT while
+  lit (Alive: 5 domes; or from ロゼッタカウントダウン開始デモ's Revival), SE_OJ_CDN_PLATE_ONE_TO_ZERO at ロゼッタ最終決戦デモ.
+  ponytail: sounds alone (no Revival clips, Light effect or digits); isEndRevival is the Revival BCK's frame count
+  read off the disc (plates by dome 209, 419, 269, 269, 389, 599; steps 179). Not checked: that the plates and steps
+  are casts with a functor action in the grand star return sheets (AstroCore's works the same way). To run: a
+  grand star's return to the Observatory with XF=-DSE_LOG. docs/sound-gaps.md not regenerated. No repack.
 - BigFan's clipping (fix/811-bigfan-clip, 2026-11-20; **not run in PCSX2**: build, memcheck, host tests). The
   same cause as Banekiti's (#809): TeresaMario2DGalaxy's seven BigFanNoLeg are 10000 from its camera, beyond
   update_obj_anims' 8000, so their Wait / Appear never played (the wind model, posed by draw_bigfan_winds, did).
