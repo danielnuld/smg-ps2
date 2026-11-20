@@ -23971,6 +23971,12 @@ static V3 m_last_safety(void) /* getLastSafetyTrans */
     float cm[16], k;
     return tri_part(&safe.t, cm, &k) && !memcmp(cm, safe.m, 64) ? safe.p : safe.p814;
 }
+static V3 m_last_safety_n(const Player *m) /* its pNormal: the place's ground normal, else his up (-getAirGravityVec) */
+{
+    float cm[16], k;
+    if (tri_part(&safe.t, cm, &k) && !memcmp(cm, safe.m, 64)) return tri_n(&safe.t);
+    return tri_part(&safe.t820, cm, &k) ? tri_n(&safe.t820) : m->up;
+}
 
 /* MarioRecovery: a PullBackCylinder (arg0 not 1) takes Mario back to his last safe place: up its axis at 10 a frame
  * to the place's height (or 600 over and 600 out from its base when the place is under it; 180 frames at most), then
@@ -24149,13 +24155,81 @@ static void rec_close(Player *m) /* MarioRecovery::close */
     m_anim("基本");
     printf("recovery: done at %d %d %d\n", (int)m->pos.x, (int)m->pos.y, (int)m->pos.z);
 }
-/* Mario::doRecovery: not in MarioFoo, a recovery or a warp; squat and walk stopped, the status on (_12: the cylinder's)
- * and the jump stopped. ponytail: without _12 doPointWarpRecovery (MarioWarp's mode 3: PullBackCube, a PullBackCylinder
- * with arg0 1) is not ported; MarioActor _934 / _EA4 not checked */
+/* Mario::doPointWarpRecovery and MarioWarp's mode 3 (MarioWarp.cpp:237, _45 3): in 引き戻し泡 with 引き戻し and 声慌て
+ * he waits 40 frames (_54), then flies an arc of 0.4 pi each side (calcAxis; max(radius / 25, 120) frames, sine
+ * eased) that blends into the straight way to the place as it runs out (updateJump: the rest of the frames the
+ * arc's share, followed at 0.5 up to 1); at its end the bubble bursts (引き戻し泡破裂) and he falls (落下: in a jump
+ * with no jump vector, no air walk). The global event camera 引き戻し from start to close.
+ * ponytail: 引き戻し浮遊 at full volume (its volume by the flight's middle is not made); MarioActor::_A6E (2 in the
+ * flight) and the binder off (_F44) are not kept */
+static struct { int on, rise, n, left; V3 dest, axis, centre, start; } pwr;
+static void m_point_warp_recovery(Player *m, V3 dest)
+{
+    m->hvel = v3(0, 0, 0); m->vup = 0;
+    m_stop_walk(m);
+    m_blend_mtx(16);
+    memset(&pwr, 0, sizeof pwr);
+    pwr.on = 1; pwr.dest = dest; pwr.rise = 40;
+    rec_bubble = 1; /* playEffect 引き戻し泡 */
+    mario_sound("声慌て");
+    m_anim("引き戻し");
+    m_stop_jump(m);
+    camera_event_named("引き戻し", 0); /* startGlobalEventCameraNoTarget */
+    printf("point warp recovery to %d %d %d\n", (int)dest.x, (int)dest.y, (int)dest.z);
+}
+static int pwr_update(Player *m) /* MarioWarp::update (mode 3): 1 while it runs */
+{
+    if (!pwr.on) return 0;
+    m->hvel = v3(0, 0, 0); m->vup = 0; /* clearVelocity */
+    m->spin_lock = 1; /* _2B */
+    mario_named_fx("BringBubble", &rec_bubble);
+    if (pwr.rise) {
+        mario_sound("引き戻し基本");
+        if (--pwr.rise == 0) { /* calcAxis */
+            V3 disp = vsub(pwr.dest, m->pos);
+            float dist = vlen(disp), a = 3.14159265f * 0.4f;
+            pwr.axis = vcross(disp, vmul(m->up, -1.0f));
+            pwr.axis = vlen(pwr.axis) > 1e-6f ? vnorm(pwr.axis) : v3(0, 0, 0);
+            V3 normal = vcross(pwr.axis, disp);
+            normal = vlen(normal) > 1e-6f ? vnorm(normal) : v3(0, 0, 0);
+            float r = 0.5f * dist / sinf(a), h2 = r * r - 0.25f * dist * dist;
+            pwr.centre = vadd(vadd(m->pos, vmul(disp, 0.5f)), vmul(normal, h2 > 0.0f ? sqrtf(h2) : 0.0f));
+            pwr.start = vmul(normal, -r);
+            pwr.n = (int)(r / 25.0f);
+            if (pwr.n < 120) pwr.n = 120;
+            pwr.left = pwr.n;
+        }
+        return 1;
+    }
+    if (pwr.left) { /* updateJump */
+        float a = 3.14159265f * 0.4f, ang = ((float)(pwr.n - pwr.left) - 0.5f * pwr.n) / pwr.n * 3.14159265f;
+        float p = (1.0f + sinf(ang)) * 0.5f, rem = (float)pwr.left / pwr.n, follow = (1.0f - rem) + 0.5f * rem;
+        V3 at = vadd(pwr.centre, rot_axis(pwr.start, pwr.axis, -a * (1.0f - p) + a * p));
+        at = vadd(vmul(at, rem), vmul(pwr.dest, 1.0f - rem));
+        m->pos = vadd(m->pos, vmul(vsub(at, m->pos), follow)); /* addTrans */
+    }
+    mario_sound("引き戻し基本"); mario_sound("引き戻し浮遊");
+    if (pwr.left) { pwr.left--; return 1; }
+    pwr.on = 0; /* close */
+    m->s420 = 16;
+    m_clip_stop();
+    mario_sound("引き戻し泡破裂");
+    rec_bubble = 0; mario_named_fx("BringBubbleBreak", NULL); /* stopEffectForce 引き戻し泡, playEffect 引き戻し泡破裂 */
+    camera_event_end_now(-1); /* endGlobalEventCamera(引き戻し, -1, true) */
+    m->grounded = 0; m->jumping = 1; m->spin_lock = 1; m->air_spin = 0; /* _1, jumping, _2B, _402 */
+    m_set_jv(m, v3(0, 0, 0));
+    m_anim("落下");
+    m->spin_kind = 0; m->jump_kind = 0; /* _42A, _430 */
+    printf("point warp recovery: done at %d %d %d\n", (int)m->pos.x, (int)m->pos.y, (int)m->pos.z);
+    return 0;
+}
+/* Mario::doRecovery: not in MarioFoo, a recovery or a warp; squat and walk stopped; with a PullBackCylinder met (_12)
+ * the status on and the jump stopped, else doPointWarpRecovery to 160 up his last safe place's normal.
+ * ponytail: MarioActor _934 / _EA4 not checked */
 static int m_do_recovery(Player *m)
 {
-    if (fo.on || rec.on || warp.from >= 0) return 0;
-    if (!rec.s12) return 0;
+    if (fo.on || rec.on || warp.from >= 0 || pwr.on || pw.on) return 0;
+    if (!rec.s12) { m_stop_walk(m); m_point_warp_recovery(m, vadd(m_last_safety(), vmul(m_last_safety_n(m), 160.0f))); return 1; }
     m_stop_walk(m);
     if (rec_start(m)) { rec.on = 1; camera_event_named("引き戻し", 0); } /* MarioRecovery::start: startGlobalEventCameraNoTarget */
     m_stop_jump(m);
@@ -24583,6 +24657,7 @@ static void update_mario_(void)
         return;
     }
     if (pw_update(m)) { if (mario_anim) anim_update(mario_anim); return; } /* MarioWarp's point warp (forceFlyPlayer) */
+    if (pwr_update(m)) { if (mario_anim) anim_update(mario_anim); return; } /* its mode 3 (doPointWarpRecovery) */
     if (sr_hold(m) || (!demo_on && warp.from < 0 && sr_try(m) && sr_hold(m))) { /* on a SurfRay (ACTMES_AUTORUSH_BEGIN; its movement on in the race's demo) */
         if (mario_anim) anim_update(mario_anim);
         return;
@@ -62498,6 +62573,16 @@ void game_test_pullback(unsigned frame)
         V3 x, z;
         row_axes(r, &x, &z);
         V3 up = vnorm(vcross(z, x)), b = row_pos(r);
+#ifdef PWR_TEST /* -DPWR_TEST with pullback: doPointWarpRecovery (no cylinder met) from 1500 up and 1000 ahead */
+        if (frame == 300) {
+            mario->pos = vadd(vadd(mario->pos, vmul(mario->up, 1500.0f)), vmul(mario->face, 1000.0f)); mario->grounded = 0;
+            rec.s12 = 0; m_do_recovery(mario);
+        }
+        if (frame >= 300 && frame <= 900 && frame % 10 == 0)
+            printf("pwr test f %u: pos %d %d %d on %d rise %d left %d/%d grounded %d anim %s\n", frame, (int)mario->pos.x,
+                   (int)mario->pos.y, (int)mario->pos.z, pwr.on, pwr.rise, pwr.left, pwr.n, mario->grounded, m_jp ? m_jp : "-");
+        return;
+#endif
         if (frame == 300) {
             V3 s = m_last_safety();
             printf("pullback test f %u: safe %d %d %d (start %d %d %d), drop over row %d\n", frame, (int)s.x, (int)s.y, (int)s.z,
