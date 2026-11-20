@@ -6397,7 +6397,7 @@ static void game_rebind_(void)
                     find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->plant = strcmp(name, "FlowerGroup") == 0 || strcmp(name, "FlowerBlueGroup") == 0 || strcmp(name, "CutBushGroup") == 0 ||
                     stone_row(r);
-        in->rotor = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->arg[4] != -1 && r->arg[4] != 0; /* -1: not a map part */
+        in->rotor = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->arg[4] != -1 && r->arg[4] != 0 && !st_ufo_move_se(name); /* -1: not a map part; a UFOBase turns itself (st_ufo) */
         in->stage = (u8)(stage_se_of(name) + 1);
         in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
                     strcmp(name, "ReverseGravityRoomPressGroundB") == 0 || in->dossun || in->onimasu ||
