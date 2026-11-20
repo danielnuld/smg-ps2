@@ -1785,14 +1785,14 @@ static int st_ufo(Inst *in, StSt *g, int i) /* 1: it was killed (the instances r
         g->on = 1; g->n = mp && (r->arg[7] >> 8 & 15) ? 1 : 0; g->st = 0;
     }
     in->rotor = 0; /* not a MapPartsRotator: exeMove turns it */
-    int st = g->st++, swb = r->sw[SW_B] < 0 || sw_on(r, SW_B);
+    int st = g->st, swb = r->sw[SW_B] < 0 || sw_on(r, SW_B); /* (st_objs_update steps g->st after the switch: a nerve change leaves -1) */
 #ifdef UFO_TEST /* plain build XF=-DUFO_TEST: its state every 120 frames; at frame 600 an explosion at each UFOBreakable */
     if (game_frame % 120 == 0) printf("ufo %d (%s): nerve %d step %d, front x1000 (%d %d %d), rail %d dir %d%c", row, n, g->n, st, (int)(g->off.x * 1000), (int)(g->off.y * 1000), (int)(g->off.z * 1000), in->railer != NULL, row_rdir[row], 10);
     if (game_frame == 600 && !strncmp(n, "UFONormal", 9)) st_ufo_blast(v3(in->m[12], in->m[13], in->m[14]), 50.0f);
 #endif
     switch (g->n) {
-    case 0: if (swb) { g->n = 2; g->st = 0; } break; /* exeWait */
-    case 1: if (mario_ground == i && swb) { g->n = 2; g->st = 0; } break; /* exeWaitForPlayerOn */
+    case 0: if (swb) { g->n = 2; g->st = -1; } break; /* exeWait */
+    case 1: if (mario_ground == i && swb) { g->n = 2; g->st = -1; } break; /* exeWaitForPlayerOn */
     case 2: /* exeMove */
         if (st == 0 && in->railer) { /* mRailMover->start() */
             if (!row_rdir[row]) {
