@@ -1568,6 +1568,7 @@ static int gw_talk_continue(int t);
 static int gw_pipe_switch(void);
 static void gw_init(void), gw_update(void), gw_draw(void);
 static void trk_init(void), trk_update(void); static int trk_star_out(int row), trk_puppet(void); /* trick.inc: TrickRabbitFreeRun */
+static int snc_moves(int row); /* TrickRabbitSnowCollect's rabbits in its demos (requestMovementOn) */
 static void pro_init(void), pro_start(void), pro_update(void), pro_draw(void); /* the new game's opening (its section) */
 static int pro_puppet(void);
 typedef struct { u16 total; u8 suspend, talk; } DxPart;           /* talk: MR::isDemoPartTalk */
@@ -26069,7 +26070,7 @@ static int w_move_limit(const Kuribo *k)
 {
     static const char *const cls[] = {"BasaBasa", "Begoman", "Hanachan", "Petari", "BombHei", "BombTeresa", "DharmaSambo",
         "IceMerameraKing", "Kanina", "Karon", "Kuribo", "KuriboChief", "KuriboMini", "MechanicKoopaMini", "Metbo", "Poihana",
-        "TakoHei", "Unizo", "RunawayRabbit", "TrickRabbit", "TrickRabbitFreeRun", "TrickRabbitSnow"};
+        "TakoHei", "Unizo", "RunawayRabbit", "TrickRabbit", "TrickRabbitFreeRun", "TrickRabbitFreeRunChild"}; /* (TrickRabbitSnow) */
     const char *n = sc->types + 32 * sc->objs[k->row].type;
     int found = 0, inst = -1;
     for (u32 i = 0; i < sizeof cls / sizeof *cls; i++) found |= !strncmp(n, cls[i], strlen(cls[i])) && (n[strlen(cls[i])] == 0 || !strcmp(cls[i], "Begoman"));
@@ -48394,7 +48395,7 @@ static int dx_row_moves(int row) /* the placement moves now */
 {
     if (boss_demo_cls() && !pd.name) return dx_cls_moves(sc->types + 32 * sc->objs[row].type);
     if (!pd.name && !dx.on && own_demo_cls()) return dx_cls_moves(sc->types + 32 * sc->objs[row].type);
-    if (pd.name) return row == pd.row || dx_always_moves(sc->types + 32 * sc->objs[row].type);
+    if (pd.name) return row == pd.row || snc_moves(row) || dx_always_moves(sc->types + 32 * sc->objs[row].type);
     if (!dx.on) return 1;
     const Demo *d = &demos[dx.cur];
     for (int i = 0; i < d->h->ngroup; i++) if (d->group[i] == row) return 1;
@@ -55218,6 +55219,7 @@ static void gw_play(int row, const char *cls, const char *clip, int interp) /* M
     char n[64];
     snprintf(n, sizeof n, "%s/%s", cls, clip);
     for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
+    if (strlen(n) > 31 && !strncmp(n, "trickrabbitfreerunchild/", 24)) memmove(n + 4, n + 23, strlen(n + 23) + 1), memcpy(n, "trfc", 4); /* slice.py clip_key */
     if (in && in->anim && !anim_start(in->anim, n, interp)) {
 #ifdef GATEWAY_TEST
         printf("gateway: no clip %s\n", n);
