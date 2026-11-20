@@ -5462,12 +5462,13 @@ static int coco_am_of(const Inst *in, int make)
     for (int i = 0; make && i < 4; i++) if (!coco_am[i].in) { coco_am[i].in = in; coco_am[i].v = v3(0, 0, 0); coco_am[i].on = 0; return i; }
     return -1;
 }
-/* SE_OJ_COCONUT_BOUND with level A (modifySe_Kawamura: volume (A / 100)^2 x 2, at most 1) */
-static void coco_bound(const Inst *in, int lv)
+/* SE_OJ_COCONUT_BOUND (on a water floor, isBindedGroundWater: ..._BOUND_WATER) with level A (modifySe_Kawamura: volume
+ * (A / 100)^2 x 2, at most 1) */
+static void coco_bound(const Inst *in, int lv, int wet)
 {
     float v = lv / 100.0f;
     v = v * v * 2.0f;
-    se_volpitch(se_start(SE_OJ_COCONUT_BOUND, &in->head.x), v > 1.0f ? 1.0f : v, 1.0f);
+    se_volpitch(se_start(wet ? SE_OJ_COCONUT_BOUND_WATER : SE_OJ_COCONUT_BOUND, &in->head.x), v > 1.0f ? 1.0f : v, 1.0f);
 }
 
 static void update_coconuts(void)
@@ -5545,17 +5546,21 @@ static void update_coconuts(void)
         basis_matrix(cm, in->head, up, in->cfront, 0);
         if (ground && in->cfall > 0) {
             int lv = (int)(100.0f * (in->cspd / 35.0f)); /* calcMoveSpeed: the sounds' level */
+            int fc = ground_attr & 0x3F, wet = fc >= 20 && fc <= 23; /* isBindedGroundWater: WaterBottomH / M / L, Wet */
             if (lv > 100) lv = 100;
             if (in->cfall > 2.5f) {
-                if (vdot(gn, up) > 0.0f) { in->cfall *= -0.5f; if (lv > 0) coco_bound(in, lv); } /* a floor: bounce */
-                if (in->cair >= 10 && in->cfall > 3.0f) fx_named("CocoNut", "LandAttrDefault", cm, NULL, NULL); /* Land */
+                if (vdot(gn, up) > 0.0f) { in->cfall *= -0.5f; if (lv > 0) coco_bound(in, lv, wet); } /* a floor: bounce */
+                if (in->cair >= 10 && in->cfall > 3.0f && !(wet && fx_named("CocoNut", "LandAttrWater", cm, NULL, NULL)))
+                    fx_named("CocoNut", "LandAttrDefault", cm, NULL, NULL); /* Land (by the floor's attribute) */
             } else in->cfall = 0;
-            fx_named("CocoNut", "RollingSmokeAttrDefault", cm, NULL, in); /* RollingSmoke */
+            if (!(wet && fx_named("CocoNut", "RollingSmokeAttrWater", cm, NULL, in)))
+                fx_named("CocoNut", "RollingSmokeAttrDefault", cm, NULL, in); /* RollingSmoke */
             in->cair = 0;
-            if (lv >= 10) { /* SE_OJ_LV_COCONUT_ROLL, level A: pitch t / 2 + 0.5, volume t^2 */
+            if (lv >= 10) { /* SE_OJ_LV_COCONUT_ROLL, level A: pitch t / 2 + 0.5, volume t^2; on a water floor
+                             * ..._ROLL_WATER: pitch t / 4 + 0.75 */
                 float t1 = lv / 100.0f;
-                in->lv[0] = se_level(SE_OJ_LV_COCONUT_ROLL, &in->head.x, in->lv[0]);
-                if (in->lv[0]) se_volpitch(in->lv[0], t1 * t1, t1 * 0.5f + 0.5f);
+                in->lv[wet] = se_level(wet ? SE_OJ_LV_COCONUT_ROLL_WATER : SE_OJ_LV_COCONUT_ROLL, &in->head.x, in->lv[wet]);
+                if (in->lv[wet]) se_volpitch(in->lv[wet], t1 * t1, wet ? t1 * 0.25f + 0.75f : t1 * 0.5f + 0.5f);
             }
             in->cspd *= 0.925f;
             { /* _14C = calcVelocityAreaMoveOnGround, _150 its 0.75 */
@@ -5570,7 +5575,7 @@ static void update_coconuts(void)
             V3 n = vnorm(vtangent(wn, up));
             in->cfront = vnorm(vsub(in->cfront, vmul(n, 2.0f * vdot(in->cfront, n))));
             in->cspd *= 0.8f;
-            coco_bound(in, (int)(100.0f * (in->cspd / 35.0f)));
+            coco_bound(in, (int)(100.0f * (in->cspd / 35.0f)), 0);
         }
         float fall = in->cfall + (in->cstrong ? 0.4f : 1.0f); /* updateGravity */
         in->cfall = fall > 25.0f ? 25.0f : fall;

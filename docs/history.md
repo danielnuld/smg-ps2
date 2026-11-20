@@ -11,6 +11,13 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Sound gaps 7, part of #15 (fix/15-sound-gaps-7, 2026-11-19; **not run in PCSX2**: build, memcheck, host tests).
+  CocoNut on a water floor (isBindedGroundWater: the ground's code WaterBottomH / M / L / Wet, collide_n's
+  ground_attr): SE_OJ_COCONUT_BOUND_WATER and SE_OJ_LV_COCONUT_ROLL_WATER (pitch t / 4 + 0.75) instead of the dry
+  ones, and the LandAttrWater / RollingSmokeAttrWater effects when the pack has them (update_coconuts).
+  docs/sound-gaps.md regenerated: 9 class names left (the Observatory's revival three and the count down plate's
+  two: #650; FileSelector's copy reject / broken file / manual windows, not ported; SlingShooter's Toad lines);
+  two more names Petari never plays (CrystalCage's S_DAMAGE, Sandstorm's BIND_END).
 - Enemy audit, fifth batch (feat/enemy-audit-5, #773, 2026-11-19, agent moves, finished by the lead; **not run in
   PCSX2** beyond what its PR says): the placed FireBubble after FireBubble.cpp (`update_fbubs`: Appear / Wait / Chase /
   Down / WaitToAppear, burns Mario, a star piece gives a coin; only OtaKing's six existed; drawn as the still model,
