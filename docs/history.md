@@ -11,6 +11,20 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- UFOBase and SimpleMapObjPush after Petari (feat/ufo-base, #788, 2026-11-19; **not run in PCSX2**, syntax check
+  only). The UFOs (UFOStrongA, UFOBattleStageC / D / E: UFOSolid; UFONormalB / D: UFOBreakable; BattleShipGalaxy,
+  CannonFleetGalaxy) were generic map parts: a MapPartsRotator about RotateAxis and a rail mover gated by SW_A / SW_B.
+  statics.inc `st_ufo`: Wait until SW_B (or none), WaitForPlayerOn with a MoveConditionType, then Move for good (the
+  mover started: `st_floater_rail` lets update_railers run it only then), the front turned RotateSpeed x 0.01 degrees
+  a frame about world -Y (the other way round than the rotator turned an upright one), the matrix from the placed up
+  and that front; UFONormalB's and UFOBattleStageD's level sounds, UFOBattleStageC's start / move / stop SEs, the
+  mover's level SE for all of them (`st_ufo_move_se`; it was UFOStrongA's only) and the end SE / rumble / shake for
+  them only (it was every class named UFO*: UFOKinoko has its own). UFOBreakable: an explosion within 100 of its
+  origin kills it (dead switch; `st_ufo_blast` from explosion_breaks). slice.py packs the MoveLimit collision
+  ("<class>#ML") for the six classes (it was UFOStrongA's): **repack BattleShipGalaxy, CannonFleetGalaxy**. No
+  LodCtrl. DangerSignBoard (SimpleMapObjPush): its body sensor, 200 at 200 up, pushes Mario (kind 115). Test: plain
+  with `XF=-DUFO_TEST` (BattleShipGalaxy/1 or /2): "ufo n (class): nerve .. front .." every 120 frames, at frame 600
+  an explosion at each UFONormal*: "ufo n: broken".
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /
