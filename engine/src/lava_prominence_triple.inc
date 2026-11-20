@@ -85,6 +85,9 @@ static void lpt_update(void)
         }
         a = fmodf(a + l->ry, 360.0f) / 57.29578f;
         V3 sp = vadd(pos, vmul(vadd(vmul(z, cosf(a)), vmul(x, sinf(a))), r->scale[1] * 1900.0f));
+#ifdef LPT_TEST /* (held on the first Triple's sensor for four frames at 1100: the fire hit) */
+        if (game_frame >= 1100 && game_frame < 1104 && (int)r->type == lpt_type[0] && l == &lpts[0]) { mario->pos = vsub(sp, vmul(mario->up, HIT_BODY_H)); mw.c = sp; printf("lpt test f %u: Mario on row %d's sensor, hurt %d life %d%c", game_frame, l->row, mario->hurt_timer, life, 10); }
+#endif
         if (vlen(vsub(mw.c, sp)) < 80.0f * r->scale[1] + HIT_BODY_R) mario_attack(ATK_FIRERUN_STRONG, sp);
 #ifdef LPT_TEST
         if (game_frame % 60 == 0) printf("lpt test f %u: row %d turn %.0f appear %d drops %d %d %d sensor %.0f off Mario%c", game_frame, l->row, l->ry, l->t, l->drop[0], l->drop[1], l->drop[2], vlen(vsub(mw.c, sp)), 10);
