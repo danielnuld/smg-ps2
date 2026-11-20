@@ -146,6 +146,7 @@ static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WA
 #define POL_GROCKS 16 /* PoltaGroundRockHolder sMaxPoltaGroundRock (polta.inc) */
 #define POL_BOMBS 6 /* Polta's BombTeresaHolder: sBombTeresaBufferSize */
 #define BB_FOLLOWERS 5 /* BossBegoman: mBabyFollowerNum 3, mSpikeFollowerNum 2 (the slots after its own) */
+#define UZL_UNIZOS 4 /* UnizoLauncher: sUnizoNumber */
 #define BL_BABIES(r) ((r)->arg[3] > 0 ? ((r)->arg[3] < 16 ? (r)->arg[3] : 16) : 1) /* BegomanBabyLauncher: arg3 babies (mBegomanCount 1) */
 static const Model *m_wnew[NEW_WALKERS];
 static int walker_new_kind(const char *cls)
@@ -3009,6 +3010,7 @@ void game_init(const Scene *s, const unsigned char *blob)
               count_type("Teresa", 0) + count_type("Butterfly", 0);
     for (int i = 0; i < NEW_WALKERS; i++) nkuribo += count_type(new_walkers[i].cls, 0);
     nkuribo += BB_FOLLOWERS * count_type("BossBegoman", 0); /* its followers (3 BegomanBaby, 2 BegomanSpike) */
+    nkuribo += UZL_UNIZOS * count_type("UnizoLauncher", 0); /* its UnizoLands */
     nkuribo += 4 * count_type("JumpGuarder", 0); /* JumpGuarder: its sBabyNum BegomanBabies */
     nkuribo += count_type("BegomanSpringHide", 0); /* BegomanSpring (mType 1): its mBaby */
     nkuribo += POL_BOMBS * count_type("Polta", 0); /* BombTeresaHolder: sBombTeresaBufferSize (polta.inc) */
@@ -3142,6 +3144,13 @@ void game_init(const Scene *s, const unsigned char *blob)
                 memset(&kuribo[ik], 0, sizeof(Kuribo));
                 kuribo[ik].kind = WALK_BEGOBABY; kuribo[ik].pos = row_pos(r); kuribo[ik].up = up_at(kuribo[ik].pos, v3(0, 1, 0));
                 kuribo[ik].row = i; kuribo[ik].host = -2;
+                kuribo[ik++].state = KURIBO_DEAD;
+            }
+        } else if (!strcmp(s->types + 32 * r->type, "UnizoLauncher")) {
+            for (int f = 0; f < UZL_UNIZOS; f++) { /* UnizoLauncher::init: mUnizos (陸ウニゾー: UnizoLand, init(rIter)), makeActorDead */
+                memset(&kuribo[ik], 0, sizeof(Kuribo));
+                kuribo[ik].kind = WALK_UNIZO; kuribo[ik].dir = 1; kuribo[ik].pos = row_pos(r); kuribo[ik].up = up_at(kuribo[ik].pos, v3(0, 1, 0));
+                kuribo[ik].row = i; kuribo[ik].host = -3;
                 kuribo[ik++].state = KURIBO_DEAD;
             }
         } else if (r->type == t_circle || r->type == t_rail)
@@ -25920,7 +25929,8 @@ static void unizo_update(Kuribo *k, V3 to, float d)
             if (k->nrv == UZ_FIREDOWN && k->step == 34) unizo_pieces(k); /* sFireDownStarPiece */
         }
         if (k->act_frames <= 0 || w_bck_stopped(k) || ((k->nrv == UZ_FIREDOWN || k->nrv == UZ_JUMPDOWN) && k->step >= 50)) { /* sDamageFloorFrame */
-            k->state = KURIBO_DEAD; row_kill(k->row);
+            k->state = KURIBO_DEAD;
+            if (!k->host) row_kill(k->row); /* (a UnizoLauncher's: its row stays) */
             printf("unizo row %d: dead" "\n", k->row);
         }
         return;
@@ -26026,7 +26036,7 @@ static void unizo_update(Kuribo *k, V3 to, float d)
  * literally. setNerve: step -1, so the next frame runs the new nerve at step 0 ---- */
 static void w_nrv(Kuribo *k, int n) { k->nrv = n; k->step = -1; }
 static void w_snrv(Kuribo *k, int n) { k->snrv = n; k->sstep = -1; }
-static const char *walker_cls(const Kuribo *k) { return k->host ? (k->kind == WALK_BOMBTERESA ? "BombTeresa" : k->kind == WALK_BEGOBABY ? "BegomanBaby" : "BegomanSpike") : sc->types + 32 * sc->objs[k->row].type; }
+static const char *walker_cls(const Kuribo *k) { return k->host ? (k->kind == WALK_UNIZO ? "UnizoLand" : k->kind == WALK_BOMBTERESA ? "BombTeresa" : k->kind == WALK_BEGOBABY ? "BegomanBaby" : "BegomanSpike") : sc->types + 32 * sc->objs[k->row].type; }
 static int w_akey(const Kuribo *k); /* its obj_anim key */
 /* the class whose clips a walker plays: a launcher's bomb is a BombHei */
 static const char *walker_acls(const Kuribo *k) { return k->kind == WALK_BOMBHEI ? "BombHei" : walker_cls(k); }
@@ -36139,8 +36149,36 @@ static void walker_push_pass(void) /* ponytail: the first WP_MAX walkers with se
     }
 #endif
 }
+/* UnizoLauncher.cpp after Petari: no model; Wait until its step passes sUnizoInter 300, then Launch for a frame: the
+ * first dead one of its sUnizoNumber 4 UnizoLand (kuribo[].host -3, its row) is put at its place (z + its index) and
+ * appears (Unizo::appear: Wait, mJumpCount sJumpNow); back to Wait. row_step its count of frames.
+ * ponytail: its Body sensor (100, no attackSensor) is not registered */
+static void update_unizo_launchers(void)
+{
+    for (int i = 0; i < nkuribo; i++) {
+        Kuribo *k = &kuribo[i];
+        if (k->host != -3 || (i && kuribo[i - 1].host == -3 && kuribo[i - 1].row == k->row)) continue; /* its first Unizo: once a launcher */
+        const Row *r = &sc->objs[k->row];
+        if (!row_shown(k->row) || ++row_step[k->row] < 303) continue; /* Wait's steps 0 .. 301, Launch's 0 */
+        row_step[k->row] = 0;
+        for (int f = 0; f < UZL_UNIZOS && i + f < nkuribo; f++) {
+            Kuribo *u = &kuribo[i + f];
+            if (u->state != KURIBO_DEAD) continue;
+            int row = u->row;
+            memset(u, 0, sizeof *u);
+            u->kind = WALK_UNIZO; u->dir = 1; u->row = row; u->host = -3;
+            u->pos = row_pos(r); u->pos.z += (float)f; /* copyTransRotateScale, mPosition.z += i */
+            u->up = up_at(u->pos, v3(0, 1, 0));
+            u->jc = 1; u->step = -1; /* appear: UnizoNrvWait, mJumpCount sJumpNow */
+            u->state = KURIBO_WALK;
+            printf("unizo launcher row %d: unizo %d out\n", row, f);
+            break;
+        }
+    }
+}
 static void update_kuribo(void)
 {
+    update_unizo_launchers();
 #ifdef BH_TEST /* the first Bob-omb dropped 200 before Mario, 120 frames after he is free, and updated here from then
                 * on (its zone may not be streamed in: update_kuribo_one would wait for its ground) */
     static int bh_ti = -1;
@@ -62428,6 +62466,30 @@ void game_test_blaunch(unsigned frame)
         }
         return;
     }
+}
+/* walker test with -DUZL_TEST (IceVolcanoGalaxy/2, VolcanoPlanetZone): Mario held 800 off and 500 over the first
+ * UnizoLauncher from frame 300; a UnizoLand out every 303 frames; its first one broken at 1600: out again */
+void game_test_uzl(unsigned frame)
+{
+    for (int i = 0; i < nkuribo; i++) {
+        Kuribo *k = &kuribo[i];
+        if (k->host != -3) continue;
+        V3 p = row_pos(&sc->objs[k->row]), up = up_at(p, mario->up);
+        if (frame >= 300) { /* held in the air (its field is lava), the camera on the launcher from its side */
+            V3 side = vnorm(vtangent(v3(0.3f, 0.2f, 0.9f), up));
+            game_test_unclip(); test_nolost = 1;
+            mario->up = up; mario->pos = vadd(vadd(p, vmul(up, 500.0f)), vmul(side, 800.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            camera_set_override(1, vadd(vadd(p, vmul(up, 1200.0f)), vmul(side, 2400.0f)), p, up, 45.0f);
+        }
+        if (frame == 1600 && k->state != KURIBO_DEAD && !unizo_breaking(k)) { unizo_break(k); printf("uzl test f %u: unizo 0 broken%c", frame, 10); }
+        if (frame >= 300 && frame % 60 == 0) {
+            printf("uzl test f %u: row %d step %d, mario %.0f off, unizos", frame, k->row, row_step[k->row], vlen(vsub(mario->pos, p)));
+            for (int j = 0; j < UZL_UNIZOS; j++) printf(" [%d nrv %d %.0f off]", k[j].state != KURIBO_DEAD, k[j].nrv, vlen(vsub(k[j].pos, p)));
+            printf("%c", 10);
+        }
+        return;
+    }
+    if (frame == 300) printf("uzl test: no UnizoLauncher\n");
 }
 /* walker test with -DTRIROCK_TEST (SandClock): from frame 400 (Mario landed) Mario held over the first
  * SandUpDownTriRock's place until it streams in, then 1500 over it; its SW_B on 150 frames later (off after 20) */

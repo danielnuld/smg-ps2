@@ -58,7 +58,7 @@
 # statue: with packs, an explosion at each standing KoopaStatue in turn from frame 200 (-DSTATUE_TEST)
 # fat: with packs, star pieces shot at a TicoFat until it is full (-DFAT_TEST)
 # tako: with packs, HoneyBeeKingdom 1: TakoHei / KoteBug nerves (-DTAKO_TEST)
-# walker: with packs, Mario by a Kuribo, Takobo, Karikari, Butterfly in turn (-DWALKER_TEST)
+# walker: with packs, Mario by a Kuribo, Takobo, Karikari, Butterfly in turn (-DWALKER_TEST); XF=-DUZL_TEST (IceVolcanoGalaxy): by the UnizoLauncher
 # talk: with packs, Mario before the first SignBoard, then the first Tico: A opens their talk, A turns its pages (-DTALK_TEST;
 #   XF=-DTALK_CLS=3: the first Kinopio instead, its appear switch on, Mario put before it)
 #   XF="-DTALK_CLS=3 -DREACT_TEST": no talk, NPCActor's reactions on that talker: a trample, a spin, the pointer, a star piece
