@@ -4999,14 +4999,15 @@ void menu_sight(int on, float x, float y) /* (x, y): the pointer on the screen (
 static void sgt_draw(void) { if (sgt.on) { render_world_done(); lyt_update(sgt.l); lyt_draw(sgt.l); } }
 /* --- BombTimerLayout (Screen/BombTimerLayout.cpp: "BombTimer"): Appear, Wait, Danger (under sDangerTransFrame 600:
  * Danger and Blink), End (dead); its Counter the seconds left. Its hosts (Caretaker's tidy mission, CareTaker.cpp:
- * 113-546; TrickRabbitSnowCollect) are not ported yet: they move it with menu_bomb_timer_update */
+ * 113-546; TrickRabbitSnowCollect: trick.inc snc_nerve) move it with menu_bomb_timer_update */
 enum { BT_APPEAR, BT_WAIT, BT_DANGER, BT_END };
-static struct { LytInst *l; u8 alive, suspend; u32 frame, limit; Nrv n; } bt;
-static void bt_init(void) { memset(&bt, 0, sizeof bt); bt.l = lyt_new("BombTimer"); }
+static struct { LytInst *l; u8 alive, suspend; u32 frame, limit, danger; Nrv n; } bt;
+static void bt_init(void) { memset(&bt, 0, sizeof bt); bt.danger = 600; bt.l = lyt_new("BombTimer"); } /* sDangerTransFrame */
 static void bt_text(void) { lyt_set_number_rec(bt.l, "Counter", (int)((bt.limit - bt.frame + 59) / 60)); } /* updateTextBox */
 void menu_bomb_timer_appear(void) { if (bt.l) { bt.frame = 0; bt.alive = 1; bt.n.next = -1; nrv_set(&bt.n, BT_APPEAR); } }
 void menu_bomb_timer_limit(int frames) { bt.limit = (u32)frames; if (bt.l) bt_text(); } /* setTimeLimit */
 void menu_bomb_timer_suspend(int on) { bt.suspend = (u8)on; }                          /* suspend / resume */
+void menu_bomb_timer_danger(int frames) { bt.danger = (u32)frames; }                    /* mDangerTransFrame */
 void menu_bomb_timer_kill(void) { bt.alive = 0; }
 int menu_bomb_timer_rest(void) { return (int)(bt.limit - bt.frame); }                  /* getRestTime */
 int menu_bomb_timer_up(void) { return bt.frame >= bt.limit; }                          /* isReadyToTimeUp */
@@ -5028,7 +5029,7 @@ void menu_bomb_timer_update(void) /* LayoutActor::movement (with its host's scen
     case BT_WAIT:
         if (FIRST(&bt.n)) lyt_start(bt.l, "Wait", 0);
         bt_tick();
-        if (bt.limit - bt.frame < 600) nrv_set(&bt.n, BT_DANGER); /* mDangerTransFrame */
+        if (bt.limit - bt.frame < bt.danger) nrv_set(&bt.n, BT_DANGER); /* mDangerTransFrame */
         break;
     case BT_DANGER:
         if (FIRST(&bt.n)) { lyt_start(bt.l, "Danger", 0); lyt_start(bt.l, "Blink", 1); }
