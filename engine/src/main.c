@@ -2860,7 +2860,7 @@ int main(void)
             camera_pose(&eye, &watch, &up, &fovy);
             V3 r = vnorm(vcross(vsub(watch, eye), up));
             float e[3] = {eye.x, eye.y, eye.z}, rr[3] = {r.x, r.y, r.z};
-            se_listener(e, rr);
+            se_listener(e, rr, fovy);
         }
         me_update();
         se_update(steps);

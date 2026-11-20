@@ -20,7 +20,7 @@ u32 se_level(u32 id, const float *pos, u32 handle);   /* a level SE: kept while 
 void se_stop(u32 handle);
 void se_map_code(int code); /* the player's ground sound code (AudSoundObject::getMapCode), -1 none */
 void se_port(u32 handle, int port, u16 value);        /* a sequence port (JAISound::setPort) */
-void se_listener(const float eye[3], const float right[3]);
+void se_listener(const float eye[3], const float right[3], float fovy); /* fovy under 20: the far camera */
 void se_volpitch(u32 handle, float vol, float pitch); /* scale a playing sound's volume and pitch */
 /* a note of bank / program outside any sequence (me.c's channels): adsr 24 bytes of big-endian {mode, time, value}
  * points or NULL, release a direct release (0 none) -> handle, 0 none; it ends once released and faded */
