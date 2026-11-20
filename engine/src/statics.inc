@@ -1766,10 +1766,10 @@ static void st_qbox(Inst *in, StSt *g)
     if (a && !(g->on & 1)) { se_start(SE_OJ_Q_BOX_LIGHT_ON, &in->m[12]); g->n = 3; g->st = 0; printf("question box %d: on%c", in->row, 10); } /* startSwitchOn */
     if (b && !(g->on & 2)) { se_start(SE_OJ_Q_BOX_LIGHT_OFF, &in->m[12]); g->n = 4; g->st = 0; printf("question box %d: off%c", in->row, 10); } /* startSwitchOff */
     g->on = a | b << 1;
-    int st = g->st++;
+    int st = g->st; /* (st_objs_update steps it) */
     if (g->n == 1 || g->n == 2) { if (st == 0 || (in->anim && in->anim->speed != 0)) st_qbox_hold(in, g->n == 1 ? "on" : "off"); return; } /* (again after a rebind) */
     if (st == 0) { if (in->anim) { obj_play(in, g->n == 3 ? "on" : "off", 0, 0); in->anim->speed = 1.0f; } }
-    else if (!in->anim || in->anim->done) { g->n = g->n == 3 ? 1 : 2; g->st = 0; } /* isBckStopped */
+    else if (!in->anim || in->anim->done) { g->n = g->n == 3 ? 1 : 2; g->st = -1; } /* isBckStopped */
 }
 
 /* FlexibleSphere.cpp after Petari (FlexibleSandPlanetPartsA): idle until its SW_A is on (Wind effect), or without
