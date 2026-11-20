@@ -62500,18 +62500,21 @@ void game_test_blaunch(unsigned frame)
         return;
     }
 }
-/* walker test with -DUZL_TEST (IceVolcanoGalaxy, VolcanoPlanetZone): Mario 800 off the first UnizoLauncher from frame
- * 300; a UnizoLand out every 303 frames */
+/* walker test with -DUZL_TEST (IceVolcanoGalaxy/2, VolcanoPlanetZone): Mario held 800 off and 500 over the first
+ * UnizoLauncher from frame 300; a UnizoLand out every 303 frames; its first one broken at 1600: out again */
 void game_test_uzl(unsigned frame)
 {
     for (int i = 0; i < nkuribo; i++) {
         Kuribo *k = &kuribo[i];
         if (k->host != -3) continue;
         V3 p = row_pos(&sc->objs[k->row]), up = up_at(p, mario->up);
-        if (frame == 300) {
+        if (frame >= 300) { /* held in the air (its field is lava), the camera on the launcher from its side */
+            V3 side = vnorm(vtangent(v3(0.3f, 0.2f, 0.9f), up));
             game_test_unclip(); test_nolost = 1;
-            mario->up = up; mario->pos = vadd(vadd(p, vmul(up, 300.0f)), vmul(vnorm(vtangent(v3(0.3f, 0.2f, 0.9f), up)), 800.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            mario->up = up; mario->pos = vadd(vadd(p, vmul(up, 500.0f)), vmul(side, 800.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            camera_set_override(1, vadd(vadd(p, vmul(up, 1200.0f)), vmul(side, 2400.0f)), p, up, 45.0f);
         }
+        if (frame == 1600 && k->state != KURIBO_DEAD && !unizo_breaking(k)) { unizo_break(k); printf("uzl test f %u: unizo 0 broken%c", frame, 10); }
         if (frame >= 300 && frame % 60 == 0) {
             printf("uzl test f %u: row %d step %d, mario %.0f off, unizos", frame, k->row, row_step[k->row], vlen(vsub(mario->pos, p)));
             for (int j = 0; j < UZL_UNIZOS; j++) printf(" [%d nrv %d %.0f off]", k[j].state != KURIBO_DEAD, k[j].nrv, vlen(vsub(k[j].pos, p)));
