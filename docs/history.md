@@ -24,7 +24,7 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   (ponytail): SpotMarkLight, the foot prints (SW_B), the Light effect, the star's demo continued from the success
   demo (the port's own star demo follows it).
 - Caretaker's talk and its tidy-up mission, part of #732 (feat/732-caretaker-mission, 2026-11-19; written without the
-  emulator: **not run in PCSX2** until its PR says so): a Caretaker had no talk at all (no talk class). Now talk
+  emulator; its one run is at the note's end): a Caretaker had no talk at all (no talk class). Now talk
   class 14: every Caretaker talks (its balloon 150 up), with branchFuncComet / eventFuncComet (`care_branch` /
   `care_event`: the purple coins had; its TakeOutStar, forceKillPlayerByGroundRace, setMessageArg). The ones with
   arg0 neither -1 nor 1 (BombTimeAttackZone in BattleShipGalaxy, BombTimeAttack2Zone in CannonFleetGalaxy: 30 s,
@@ -35,10 +35,19 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   SW_A; its TakeOutStar by the talk's event: `care_takeout`, `care_took` lets its star out), AppearedStar;
   offPlayerControl (`care_ctrl_off`) and Mario's Watch (`care_puppet`). tools/slice.py: the mission Caretaker's
   PStar (morph_arcs) and its star's declarer (declare_stars) (**repack** BattleShipGalaxy, CannonFleetGalaxy). Test:
-  plain with `XF=-DCARE_TEST` (the talk skipped as Yes, a trash made dead every 30 frames; `=2`: none, the time runs
-  out): "caretaker row n: nerve k", "care test" lines. Left out: the talk camera's own calls, its rail, the clipping
-  calls, the emitters' forced delete; who turns SW_A on (the zone's switch logic on the trash's dead switches) was
-  not checked.
+  plain with `XF=-DCARE_TEST` (Mario put before it once he is free: its zone sleeps on SW 1011 until he is in it;
+  the talk skipped as Yes, an explosion at one trash every 30 frames; a digit in out/tv.txt picks the variant at
+  run time: 2 none, the time runs out; 3 the real talk answered Yes by the pointer; 4 No; a scene with only plain
+  Caretakers: Mario before the first, A tapped): "caretaker row n: nerve k", "care test" lines. Left out: its
+  rail, the clipping calls, the emitters' forced delete. SW_A (30) is the zone's GroupSwitchWatcher (arg0 15, SW_B
+  1: the 15 trash's dead switches 1 .. 15), already ported. Run of 2026-11-19 evening (one, before the last fix):
+  nerves 0 -> 2 -> 3 -> 4 -> 5, the timer at its limit, SW_B on; then "no GeneralPos": the names
+  バトルシップ・タイムアタック前位置 / ...後位置 are 51 bytes, the GPOS field keeps 47, so Mario stayed where the test
+  put him, missed and the scene began again. Fixed after it, **not run**: `scene_gpos` compares the 47 bytes kept;
+  also added after Petari and **not run**: startNPCTalkCamera's 1.3 distance at the talk's start and after the
+  mission (`tk_npc_camera`), endNPCTalkCamera at the first wipe, the timer still while a demo runs. Tidy, the trash,
+  SW_A, the talk after the mission, the TakeOutStar and the star, the Yes / No talk, a plain Caretaker's talk:
+  **not seen yet**.
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /
