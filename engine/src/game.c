@@ -49918,6 +49918,7 @@ static void hdo_update(void)
     }
 }
 static void hq_functor(int row, int part);
+static int astro_cast_hook(int row);
 static void dx_cast_hook(int row, int type, int part)
 {
     const char *cls = sc->types + 32 * sc->objs[row].type;
@@ -49936,6 +49937,7 @@ static void dx_cast_hook(int row, int type, int part)
     if (type == 0 && !strcmp(cls, "GrandStarReturnDemoStarter")) { gsr_appear(row); return; }
     if (type == 2 && !strcmp(cls, "HoneyQueen")) { hq_functor(row, part); return; }
     if (type == 2 && !strcmp(cls, "AstroCore")) { acore_start(); return; }
+    if (type == 2 && astro_cast_hook(row)) return;
     if (type == 3 && !strncmp(cls, "BlackHole", 9)) { /* registerDemoActionNerve: Disappear (update_hazards) */
         if (!row_turn[row]) { row_turn[row] = 1; row_step[row] = 0; }
         return;
@@ -50840,6 +50842,30 @@ static int astro_rotator_dead(const char *cls)
     if (strcmp(cls, "AstroRotateStepA") && strcmp(cls, "AstroRotateStepB") && strcmp(cls, "AstroDecoratePartsA")) return 0;
     return astro_opened_domes() < astro_revival_num(cls, -1);
 }
+/* The sounds of AstroMapObj::exeRevival (startDemo: Dead and isEnableRevival; AstroStarPlate by its dome, AstroRotateStepA
+ * / B) and of AstroCountDownPlate (startDemoStartCountDown: Revival's light, startDemoLastBattle: CountToZero), run by
+ * update_astro_objs. ponytail: the sounds alone (its note below); isEndRevival is the Revival BCK's frame count read
+ * off the disc (the clips are not in the pack): the plates' by dome, 179 for the steps */
+static struct { int row, step, len; } arev[8];
+static int narev, cdn_lit;
+static int astro_cast_hook(int row)
+{
+    static const short plate_len[6] = {209, 419, 269, 269, 389, 599};
+    const Row *r = &sc->objs[row];
+    const char *c = sc->types + 32 * r->type;
+    if (!strcmp(c, "AstroCountDownPlate")) {
+        if (!strcmp(demos[dx.cur].h->name, "ロゼッタカウントダウン開始デモ")) cdn_lit = 1; /* exeRevival: _1B4 */
+        else if (!strcmp(demos[dx.cur].h->name, "ロゼッタ最終決戦デモ")) { V3 p = row_pos(r); se_start(SE_OJ_CDN_PLATE_ONE_TO_ZERO, &p.x); } /* exeCountToZero */
+        return 1;
+    }
+    int plate = !strncmp(c, "AstroStarPlate", 14);
+    if (!plate && strcmp(c, "AstroRotateStepA") && strcmp(c, "AstroRotateStepB")) return 0;
+    if (astro_revival_num(c, r->arg[0]) != astro_opened_domes() + 1 || narev >= 8) return 1;
+    for (int k = 0; k < narev; k++) if (arev[k].row == row) return 1; /* (in Revival: not Dead) */
+    arev[narev].row = row; arev[narev].step = 0;
+    arev[narev++].len = plate ? plate_len[r->arg[0] >= 1 && r->arg[0] <= 6 ? r->arg[0] - 1 : 0] : 179;
+    return 1;
+}
 /* AstroMapObj::exeWait's machine SE (isPlayMachineSE: not in 状況説明[絵本表示], グランドスター帰還[２回目以降], パワースター帰還)
  * and AstroOverlookObj::control (the default game layout off while Mario is in an AstroOverlookArea).
  * ponytail: the Dead / Alive / Revival colours and poses (Revival BRK / BCK / BTK frame 0 or end: the Observatory's
@@ -51063,8 +51089,25 @@ int game_test_overlook(int put) /* tests: put Mario at the first AstroOverlookAr
 static void update_astro_objs(void)
 {
     static const Scene *seen;
-    static int t_over;
-    if (seen != sc) { seen = sc; t_over = scene_type(sc, "AstroOverlookObj"); astro_overlook = 0; }
+    static int t_over, t_cdn;
+    static u32 path_lv, cdn_lv;
+    if (seen != sc) { seen = sc; t_over = scene_type(sc, "AstroOverlookObj"); t_cdn = scene_type(sc, "AstroCountDownPlate"); astro_overlook = 0; narev = 0; cdn_lit = 0; }
+    for (int k = 0; k < narev; k++) { /* AstroMapObj::exeRevival */
+        const char *c = sc->types + 32 * sc->objs[arev[k].row].type;
+        Inst *in = row_inst(arev[k].row);
+        V3 p = row_pos(&sc->objs[arev[k].row]);
+        int plate = !strncmp(c, "AstroStarPlate", 14);
+        if (arev[k].step == 0) se_start(plate ? SE_OJ_ASTRO_PLATE_REVIVAL : SE_OJ_ASTRO_STEP_REVIVAL, &p.x);
+        if (!plate) { if (in) in->lv[0] = se_level(c[15] == 'A' ? SE_OJ_LV_ASTRO_ENGINE_1 : SE_OJ_LV_ASTRO_ENGINE_2, &in->m[12], in->lv[0]); }
+        else if (arev[k].step > 90) path_lv = se_level(SE_AT_LV_ASTRO_PATH_APPEAR, NULL, path_lv); /* isGreaterStep(sAstroPathAppearStep): startAtmosphereLevelSE */
+        if (++arev[k].step > arev[k].len) arev[k--] = arev[--narev]; /* isEndRevival: Alive */
+    }
+    for (u32 i = 0; t_cdn >= 0 && i < sc->nobjs; i++) /* AstroCountDownPlate: lit from its Revival, or Alive (isAlreadyRevival: 5 domes) */
+        if ((int)sc->objs[i].type == t_cdn && (cdn_lit || astro_opened_domes() >= 5)) {
+            V3 p = row_pos(&sc->objs[i]);
+            cdn_lv = se_level(SE_OJ_LV_CDN_PLATE_LIGHT, &p.x, cdn_lv);
+            break;
+        }
     astro_overlook = t_over >= 0 && area_obj("AstroOverlookAreaCylinder", mario->pos) >= 0;
     int machine = !(dx.on && ((!strcmp(demos[dx.cur].h->name, "ロゼッタ状況説明デモ") && dx.part == 6) /* 状況説明[絵本表示] */ ||
                               !strcmp(demos[dx.cur].h->name, "グランドスター帰還[２回目以降]") || !strcmp(demos[dx.cur].h->name, "パワースター帰還")));
