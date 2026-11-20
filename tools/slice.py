@@ -341,12 +341,13 @@ ASTRO_MODELS = {
                           "AstroDomeEntranceBedRoom", "AstroDomeEntranceMachine", "AstroDomeEntranceTower"),
     "AstroStarPlate": ("AstroStarPlateObservatory", "AstroStarPlateWell", "AstroStarPlateKitchen", "AstroStarPlateBedRoom",
                        "AstroStarPlateMachine", "AstroStarPlateTower")}
-POSE = {"NutShipFleetBridge": ("MoveA", {"move.kcl": "Move"})}
+POSE = {}  # (NutShipFleetBridge was one: it moves now, a PhantomShipBridge in game.c update_bridges)
+SKINNED_OBJ += ("NutShipFleetBridge",)  # PhantomShipBridge.cpp with mIsNutShipBridge: MoveA on its SW_A
 # collisions on a joint of a skinned model (createCollisionPartsFromLiveActor with getJointMtx): KCL "<class>#<joint>"
 # in that joint's space, the engine moves it with the joint (PhantomShipBridge.cpp: "Move" on joint Move)
 KCL_PARTS = {"SnowMan": {"headcol.kcl": "Head", "bodycol.kcl": "Body"},  # SnowMan::init: HeadCol / BodyCol on their joints (game.c update_snowmen)
              "MarblePlanet": {"watermelon.kcl": "WaterMelon"},  # MarblePlanet's WaterMelon collision (createCollisionPartsFromLiveActor), on once the core breaks
-             "PhantomShipBridge": {"move.kcl": "Move"}, "SkeletalFishBoss": dict([(f"backbone{i:02}.kcl", f"BackBone{i:02}") for i in range(1, 12)] + [("backfin.kcl", "BackFin"), ("leftfinjoint.kcl", "LeftFinJoint"), ("rightfinjoint.kcl", "RightFinJoint")]),  # SkeletalFishBoss::initCollision (sColInfo)
+             "PhantomShipBridge": {"move.kcl": "Move"}, "NutShipFleetBridge": {"move.kcl": "Move"}, "SkeletalFishBoss": dict([(f"backbone{i:02}.kcl", f"BackBone{i:02}") for i in range(1, 12)] + [("backfin.kcl", "BackFin"), ("leftfinjoint.kcl", "LeftFinJoint"), ("rightfinjoint.kcl", "RightFinJoint")]),  # SkeletalFishBoss::initCollision (sColInfo)
              "SkeletalFishBossHeadA": {"head.kcl": "Head", "jow.kcl": "Jow"},  # SkeletalFishBossHead: Head / Jow on their joints
              "DarknessRoomDoorA": {"open.kcl": "Open"},
              "TeresaMansionDoorA": {"open.kcl": "Open"}, "TeresaMansionDoorB": {"open.kcl": "Open"},
