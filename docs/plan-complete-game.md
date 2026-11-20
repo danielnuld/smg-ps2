@@ -129,12 +129,15 @@ No interim ISOs: Daniel tests at the end.
       [ ] MarioStick (no decompiled class sends ATYPE_BEE_FLOWER: nothing sticks).
 
 ## Phase 2: level objects (class_coverage.md, 2026-11-18: 988 placed classes, static 3, missing 0; it was static 222, missing 36)
-- [ ] Classes the coverage counted as ported that have no code (their names were only in game.c's isActionOk table;
+- [x] (2026-11-19: MarioLauncher, WaterRoad and SwingRope are in main; WaterRoad / SwingRope not run since their last rebase) Classes the coverage counted as ported that have no code (their names were only in game.c's isActionOk table;
   class_coverage.py now leaves that table out): MarioLauncher, the cannon Mario rides (10 placements, #566), WaterRoad
   (6, #567), SwingRope (6, #568: only its SwingRopePoint is in). The count says a class is named in the engine, not
   that it is whole: 233 placed classes are spelled once, most in a type table with their code beside it.
-- [ ] The three static ones: AstroChildRoom (5), TrampleStar (1, TrampleStar.cpp 677 lines), TrickRabbitFreeRunCollect (1).
-- [ ] Areas (not in out/census.json, so no count told of them): of AreaObjContainer's 67 managers 31 were named
+- [x] The three static ones: TrampleStar (trample_star.inc), TrickRabbitFreeRunCollect (#800, seen in PCSX2); AstroChildRoom is an AstroMapObj
+  (its Revival / Open nerves: #650). 2026-11-19: a scan of NameObjFactory found more that ran as generic map parts, now
+  in main and NOT run: UFOBase's six, SeesawMoveNut, NutShipFleetBridge, SwingLight, GravityLightA, SpaceShipStep,
+  MechaKoopaParts, the floaters, CrystalCageMoving, UnizoLauncher (#774 .. #798); the light volumes are #790.
+- [x] (2026-11-19: all in main, most not seen in play; the guidance cubes wait for Daniel's decision) Areas (not in out/census.json, so no count told of them): of AreaObjContainer's 67 managers 31 were named
   nowhere in the engine nor in the packs (2026-11-18). Written today, waiting for PCSX2 and a repack (slice.py LOGIC):
   ChangeBgmCube / BgmProhibitArea (#578), DarkMatterCube / ForbidWaterSearchCube (#575), HeavySteeringCube /
   ForbidTriangleJumpCube / ForbidJumpCube / DashChargeCylinder (#579), SoundEmitterCube / Sphere and
@@ -147,12 +150,13 @@ No interim ISOs: Daniel tests at the end.
   name begins with (IsManagerName), or the one its class names (getManagerName: PlayerSeCube / Sphere / Cylinder ->
   PlayerSeArea, in #580; CameraRepulsiveSphere / Cylinder, AudioEffect*, HazeCube...): ask the engine's area_obj
   with the placed names.
-- [ ] Sound (docs/sound-gaps.md, regenerated 2026-11-18 with the .inc files read): 404 of 1316 class SE names
-  missing, each a nerve or reaction the port lacks; Mario's keys done but for the Wii-only ones (#565, #575).
-- [ ] BombBird, BombBirdBomb, Karon, Kuribo, CocoNut carried on AreaMove / RailMove floors
-  (calcVelocityAreaOrRailMoveOnGround): Mario's is #581, theirs not looked at.
-- [ ] DharmaSambo (#524): dharma.inc written (branch feat/dharma-sambo), not yet run in PCSX2; needs SandClockGalaxy
-  and the effect pack repacked.
+- [ ] Sound (docs/sound-gaps.md, regenerated 2026-11-19): 9 of 1482 class SE names missing (it was 404 on
+  2026-11-18): the Observatory's revival and count down plate (#650), the file select's copy reject / broken file /
+  manual windows, SlingShooter's Toad lines; Mario's keys done. The new sounds are in no pack until the repack.
+- [x] BombBird, BombBirdBomb, Karon, Kuribo, CocoNut carried on AreaMove / RailMove floors
+  (calcVelocityAreaOrRailMoveOnGround): #622, in main, not run.
+- [x] DharmaSambo (#524, #770): seen in PCSX2 (its spin blowing parts off); SandClockGalaxy and the effect pack
+  wait for the repack.
 - [x] Gateway rabbits (Daniel: "found one, it did not respond"): the opening plays through as a player would
   (GATEWAY_TEST with XF=-DGW_FOLLOW: Mario walks after the bunny, into the bushes / pipes, onto the rabbits; 3 of 3
   caught, the tower demo starts). Fixed on the way, all against Petari: DemoRabbit::updateJump jumps whenever bound
