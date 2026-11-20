@@ -49722,6 +49722,31 @@ static void update_bgm_cubes(void)
  * AudEffector's special effect (types 1 and 3) is se_seq.c's se_special_fx: a few sounds at half volume.
  * ponytail: no reverb send (types 1, 3, 4: the SPU2's effect unit is not set up, and isUseFxMix is not in
  * sound.bin) and no cutoff (type 2: the voices have no filter) */
+/* PlayerActionGuidance::isInVolumePlayer(<cube>, on): Mario in one of those areas; with a SW_A it counts only while
+ * the switch is on (on 1: the Tamakoro cubes) or off (0: SpinGuidanceCube), and never with its SW_B on */
+static int guidance_in(const char *cls, int on)
+{
+    int i = area_obj(cls, mario->pos);
+    if (i < 0) return 0;
+    const Row *r = &sc->objs[i];
+    if (r->sw[SW_A] < 0) return 1;
+    if (r->sw[SW_B] >= 0 && sw_on(r, SW_B)) return 0;
+    return sw_on(r, SW_A) == on;
+}
+static void action_guidance(void) /* SpinGuidanceArea::init / TamakoroTutorial::init make the layouts */
+{
+    static u32 seq;
+    static int has_spin, has_ball;
+    if (seq != scene_seq) {
+        seq = scene_seq;
+        has_spin = scene_type(sc, "SpinGuidanceCube") >= 0;
+        has_ball = scene_type(sc, "TamakoroMoveGuidanceCube") >= 0 || scene_type(sc, "TamakoroJumpGuidanceCube") >= 0 ||
+                   scene_type(sc, "TamakoroWithTutorial") >= 0 || scene_type(sc, "TamakoroTutorial") >= 0;
+    }
+    if (!has_spin && !has_ball) return;
+    menu_action_guidance(has_spin && guidance_in("SpinGuidanceCube", 0), has_ball && guidance_in("TamakoroMoveGuidanceCube", 1),
+                         has_ball && guidance_in("TamakoroJumpGuidanceCube", 1), has_spin, has_ball);
+}
 static void update_audio_effect(void)
 {
     static const float volume[5] = {1.0f, 1.0f, 1.0f, 0.0f, 1.0f}; /* cAudEffectDataList's mVolume */
@@ -61181,6 +61206,7 @@ void game_update(void)
     opening_cam_on = opening_on;
     update_bgm_cubes(); /* ChangeBgmCube / BgmProhibitArea::movement */
     update_audio_effect(); /* AudioEffectArea, AudEffectDirector::movement */
+    action_guidance(); /* PlayerActionGuidance::control */
     { /* AudCameraWatcher::playAtmosphereSE: the camera in water (WaterAreaHolder::mCamInWater: getWaterAreaObj at
        * the camera). ponytail: no AudEffector (its cutoff 3 under water, 127 out), no setFarCamera */
         static u32 lv;

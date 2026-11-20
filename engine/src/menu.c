@@ -1541,6 +1541,87 @@ static void spg_update(void) /* control: the guidance's spine, then checkRequest
     lyt_update(spg.l);
 }
 
+/* --- PlayerActionGuidance after Petari (Screen/PlayerActionGuidance.cpp): the SpinGuidance layout (SpinGuidanceCube)
+ * and the BallGuidance one (TamakoroMove / JumpGuidanceCube, TamakoroTutorial), bottom right. game.c says each frame
+ * what Mario is in (isInVolumePlayer); the tutorial sets its state (mGuidanceState 0 raise, 1 raise held, 2 raise ok,
+ * 3 rotation, 4 the A button) and _36. WaitFocusIn hidden; Suspend sSuspendFrame 60; Fadein Appear; Display the wait
+ * clip till it stops or he is out; Fadeout End. The layouts are the disc's <name>Replace ones with their pictures
+ * redrawn for the pad (tools/padart.py). ponytail: _34 is never set in Petari either (left out) */
+enum { PAG_WAITFOCUSIN, PAG_FADEIN, PAG_DISPLAY, PAG_SUSPEND, PAG_FADEOUT };
+static struct { LytInst *spin, *ball, *cur; Nrv n; int state, prev, in, f36; } pag;
+static void pag_init(void)
+{
+    memset(&pag, 0, sizeof pag);
+    pag.n.next = -1; pag.state = pag.prev = 3;
+}
+static void pag_all(const char *anim) { if (pag.spin) lyt_start(pag.spin, anim, 0); if (pag.ball) lyt_start(pag.ball, anim, 0); } /* startAnimAllLayout */
+static void pag_wait_ball(void) /* startWaitAnimTamakoro */
+{
+    static const char *const an[5] = {"WaitRaise", "WaitRaiseHold", "RaiseOK", "WaitRotation", "WaitAButton"};
+    if (!pag.ball) return;
+    if (nrv_is(&pag.n, PAG_FADEIN)) lyt_start(pag.ball, "WaitRotation", 0);
+    if (pag.state >= 0 && pag.state < 5) lyt_start(pag.ball, an[pag.state], 0);
+}
+static void pag_wait_all(void) /* startWaitAnimAllLayout */
+{
+    if (pag.spin) lyt_start(pag.spin, "Wait", 0);
+    if (pag.ball && pag.cur == pag.ball) pag_wait_ball();
+}
+void menu_action_guidance_state(int state) { pag.state = state; pag.f36 = 1; } /* TamakoroTutorial: mGuidanceState, _36 */
+void menu_action_guidance(int spin, int move, int jump, int has_spin, int has_ball)
+{
+    if (has_spin && !pag.spin && (pag.spin = lyt_new("SpinGuidanceReplace"))) {} /* createSpinLayout / createTamakoroLayout (hidden till Fadein) */
+    if (has_ball && !pag.ball && (pag.ball = lyt_new("BallGuidanceReplace"))) {}
+    pag.prev = pag.state; /* control */
+    if (pag.spin && spin) { pag.cur = pag.spin; pag.in = 1; }
+    else if (pag.ball && (pag.f36 || move)) { pag.cur = pag.ball; pag.state = 3; pag.in = 1; }
+    else if (pag.ball && (pag.f36 || jump)) { pag.cur = pag.ball; pag.state = 4; pag.in = 1; }
+    else pag.in = 0;
+    pag.f36 = 0;
+}
+static void pag_update(void)
+{
+    if (!pag.spin && !pag.ball) return;
+    switch (nrv_begin(&pag.n)) {
+    case PAG_WAITFOCUSIN:
+        if (pag.in) nrv_set(&pag.n, PAG_SUSPEND);
+        break;
+    case PAG_FADEIN:
+        if (FIRST(&pag.n)) { pag_wait_all(); pag_all("Appear"); } /* (the wait clip at frame 0 under Appear) */
+        else if (pag.cur && lyt_stopped(pag.cur, 0)) nrv_set(&pag.n, PAG_DISPLAY);
+        break;
+    case PAG_DISPLAY:
+        if (FIRST(&pag.n)) {
+            pag_wait_all();
+            if (pag.spin) se_start(SE_SY_CS_NOTICE_USE_DPD, NULL); /* startCSSound(CS_NOTICE_USE_DPD, ..): no remote speaker */
+            if (pag.ball && pag.state == 0) se_start(SE_SY_CTRL_GUIDE_APPEAR, NULL);
+        }
+        if (pag.state == 0 && pag.cur) {
+            if (!FIRST(&pag.n) && lyt_frame(pag.cur, 0) == 0.0f) se_start(SE_SY_CTRL_GUIDE_CHANGE, NULL);
+            if (lyt_frame(pag.cur, 0) == 40.0f) se_start(SE_SY_CTRL_GUIDE_CHANGE2, NULL); /* sChangeSoundFrame */
+        }
+        if (pag.prev != pag.state) pag_wait_ball();
+        if ((pag.cur && lyt_stopped(pag.cur, 0)) || !pag.in) nrv_set(&pag.n, PAG_FADEOUT);
+        break;
+    case PAG_SUSPEND:
+        if (pag.n.step == 60) nrv_set(&pag.n, pag.in ? PAG_FADEIN : PAG_WAITFOCUSIN); /* sSuspendFrame */
+        break;
+    case PAG_FADEOUT:
+        if (FIRST(&pag.n)) pag_all("End");
+        else if (pag.cur && lyt_stopped(pag.cur, 0)) nrv_set(&pag.n, pag.in ? PAG_SUSPEND : PAG_WAITFOCUSIN);
+        break;
+    }
+    nrv_end(&pag.n);
+    if (pag.spin) lyt_update(pag.spin);
+    if (pag.ball) lyt_update(pag.ball);
+}
+static void pag_draw(void) /* (hideAllLayout out of Fadein / Display / Fadeout; showLayout(mCurrentLayout)) */
+{
+    int n = pag.n.next >= 0 ? pag.n.next : pag.n.cur;
+    if (!pag.cur || (n != PAG_FADEIN && n != PAG_DISPLAY && n != PAG_FADEOUT)) return;
+    render_world_done(); lyt_draw(pag.cur);
+}
+
 /* --- GamePauseSequence ----------------------------------------------------------------------------------------- */
 static char select_after[32]; /* MoviePlayingSequence (FinalBattle): the scenario select opened over the stage */
 static void subm_init(void);
@@ -1584,6 +1665,7 @@ void menu_init(const Scene *s)
     pb_init();
     sp_init();
     spg_init();
+    pag_init();
     memset(&ynl, 0, sizeof ynl);
     if ((ynl.l = lyt_new("SelectButton"))) yn_init(&ynl.yn, ynl.l);
     fs_init(s);
@@ -2272,6 +2354,7 @@ int menu_update(void)
     srl_update();
     pb_update();
     spg_update();
+    pag_update();
     ynl_update();
     if (sr.delay && --sr.delay == 0 && sr.l) { /* the clear's demo sequence: StageResultInformer, then the save */
         sr.alive = 1; sr.n.next = -1; nrv_set(&sr.n, SR_APPEARSTAR);
@@ -5819,6 +5902,7 @@ void menu_draw(void)
     sgt_draw(); /* MarioLauncherLayout */
     bt_draw(); /* BombTimerLayout */
     if (spg.l && !nrv_is(&spg.n, SPG_ENDWAIT)) { render_world_done(); lyt_draw(spg.l); } /* StarPointerGuidance */
+    pag_draw(); /* PlayerActionGuidance */
     if (mono.on) { render_world_done(); lyt_draw(mono.l); iab_draw(mono_ab()); }
     if (ynl.alive) { render_world_done(); lyt_draw(ynl.l); }
     pro_lyt_draw();
