@@ -172,6 +172,16 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   GravityLightA (GravityLight.cpp; KoopaBattleVs3Galaxy's six, each on a rail with SW_B 2 in its row): its rail
   mover starts at init and reads no switch: it no longer waits for SW_B (kind 117 in st_floater_rail). Its
   LightCylinder / light volume: #790.
+- SeesawMoveNut after Petari (feat/seesaw-move-nut, #791, 2026-11-19; **not run in PCSX2**, syntax check only).
+  SeesawMoveNutB ran as a generic rail mover. game.c `seesaw_nut` (seesaw kind 5, before its rotator in
+  update_seesaws): the one axis seesaw rotator (the port's, now with mAngularAccel: `accel`, forceRotateSeesaw1Axis,
+  and its Wait nerve: `off`) on a rail; Edge at init (the rail's coordinate 0 though it is drawn at the rail's point
+  nearest to its row: `coord` apart from row_coord until it moves), isEnableStart (Mario on the side that turns it
+  along the rail): Halfway: the coordinate moved |angular speed x arg0 x 0.01| a frame by the speed's sign,
+  SE_OJ_SEESAW_NUT_START, the level sounds ROT_L / M / H (0.001 / 0.1 / 0.2), at an end the rotator ended, a strong
+  rumble, the shake, SE_OJ_SEESAW_NUT_STOP; autoBackHome after 180 frames without Mario. update_railers skips it.
+  slice.py writes its inertia (RotateAccelType) whole to arg 3: **repack its galaxy**. Test: plain with
+  `XF=-DNUT_TEST`: "seesaw nut n: nerve .. coord .." every 60 frames.
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /

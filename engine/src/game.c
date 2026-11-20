@@ -1155,7 +1155,8 @@ static int nfollows;
 #define FOLLOW_N 16
 static struct { int row, nrv, step, n, slot[FOLLOW_N], alive; float angle; V3 x, y, z, off[FOLLOW_N], vel[FOLLOW_N]; } follows[MAX_FOLLOWS];
 #define MAX_SEESAWS 16 /* (IceMountainZone has twelve) */
-static struct { int row, nrv, step, hip; float vel, angle; Quat q; /* the two axis one's mRotateMtx; vel its mRotateSpeed */ } seesaws[MAX_SEESAWS];
+static struct { int row, nrv, step, hip; float vel, angle; Quat q; /* the two axis one's mRotateMtx; vel its mRotateSpeed */
+                float accel, prev, coord; int off, nut, cc, dir; u32 nlv[3]; /* mAngularAccel; SeesawMoveNut (seesaw_nut) */ } seesaws[MAX_SEESAWS];
 static int seesaw_of(int row);
 #define MAX_VINES 4
 #define VINE_PTS 256
@@ -6121,7 +6122,8 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->giver = strcmp(name, "DeadLeaves") == 0 ? 1 : strcmp(name, "Pompon2Plant") == 0 || strcmp(name, "Pompon4Plant") == 0 ? 2 : 0;
     ci->hipsw = strcmp(name, "HipDropSwitch") == 0 ? 1 : strcmp(name, "HipDropTimerSwitch") == 0 ? 2 :
                 strncmp(name, "PicketSwitch", 12) == 0 ? 3 : 0;
-    ci->seesaw = strcmp(name, "PhantomShipHandle") == 0 ? 1 : seesaw_se(name) ? 2 : strcmp(name, "LavaHomeSeesaw") == 0 ? 4 : 0;
+    ci->seesaw = strcmp(name, "PhantomShipHandle") == 0 ? 1 : seesaw_se(name) ? 2 : strcmp(name, "LavaHomeSeesaw") == 0 ? 4 :
+                 strncmp(name, "SeesawMoveNut", 13) == 0 ? 5 : 0;
     ci->bridge = strcmp(name, "PhantomShipBridge") == 0;
     ci->dossun = strcmp(name, "Dossun") == 0;
     ci->onimasu = strcmp(name, "Onimasu") == 0 || strcmp(name, "OnimasuPivot") == 0;
@@ -40083,6 +40085,88 @@ static void update_bridges(void)
     }
 }
 
+/* SeesawMoveNut.cpp after Petari (SeesawMoveNutB: the nut Mario walks along its bolt). A MapObjActor with the one
+ * axis seesaw rotator (no move sound) on a rail; mSpeed arg0 (100). Its rail coordinate starts at 0 though it is
+ * placed at the rail's point nearest to its row (calcNearestRailPos), so it starts in Edge with its rotator ended.
+ * Edge: Mario on it on the side that turns it along the rail's direction (isEnableStart: (his place off its front) x
+ * gravity . the rail's direction > 0): the rotator started, Halfway. Halfway: the rail's direction by the sign of the
+ * rotator's angular speed, |speed x mSpeed x 0.01| along it (moveCoordAndFollowTrans); SE_OJ_SEESAW_NUT_START as the
+ * speed leaves 0, the level sounds ROT_L / M / H at 0.001 / 0.1 / 0.2; at either end: the rotator ended, the rail's
+ * direction reversed, a strong rumble, the camera's shake, SE_OJ_SEESAW_NUT_STOP, Edge. autoBackHome: 180 frames
+ * without Mario on it (_CC): in Edge at the rail's end it starts again, and while slower than 0.5 its rotator is
+ * forced by -0.02 a frame (forceRotateSeesaw1Axis: mAngularAccel). The generic rail mover does not run it
+ * (update_railers). */
+static void seesaw_place(Inst *in) /* its rotator's matrix; SeesawMoveNut: at its rail's coordinate (in->railer is bound here) */
+{
+    seesaw_matrix(in);
+    if (in->seesaw == 5 && in->railer && row_coord) railer_place(in);
+}
+enum { NUT_NONE, NUT_HALFWAY, NUT_EDGE };
+static void nut_rotator(typeof(&seesaws[0]) o, int start) /* MapObjActorUtil::startRotator / endRotator */
+{
+    o->vel = 0; o->accel = 0; o->off = !start;
+    if (start) { o->nrv = SS_STAY; o->step = -1; o->hip = -1; } /* start(): update_seesaws */
+}
+static void nut_back_home(Inst *in, typeof(&seesaws[0]) o, int on, float len) /* autoBackHome */
+{
+    if (o->cc >= 180) {
+        if (o->nut == NUT_EDGE && o->coord == len) { nut_rotator(o, 1); o->nut = NUT_HALFWAY; return; }
+        if (fabsf(o->vel) < 0.5f) o->accel = -0.02f;
+    }
+    if (on) o->cc = 0; else o->cc++;
+}
+static int seesaw_nut(Inst *in, int i) /* its nerve, before its rotator's movement; 1: the rotator is ended (Wait) */
+{
+    int k = seesaw_of(in->row), row = in->row, on = mario_ground == i;
+    if (k < 0 || !in->railer || !row_coord) return 0;
+    typeof(&seesaws[0]) o = &seesaws[k];
+    const Row *r = &sc->objs[row];
+    const unsigned char *e = in->railer;
+    float len = railer_len(e);
+    if (o->nut == NUT_NONE) { /* init: the rail rider's coordinate 0 (isAtEdge): Edge, endRotator */
+        o->coord = 0.0f; o->dir = 1; o->nut = NUT_EDGE; nut_rotator(o, 0); /* (row_coord: where it is drawn, the nearest point) */
+    }
+#ifdef NUT_TEST /* plain build XF=-DNUT_TEST: its state every 60 frames */
+    if (game_frame % 60 == 0) printf("seesaw nut %d: nerve %d coord %d / %d dir %d, rotator %s nrv %d vel x1000 %d, cc %d, on %d%c", row, o->nut, (int)o->coord, (int)len, o->dir, o->off ? "ended" : "on", o->nrv, (int)(o->vel * 1000), o->cc, on, 10);
+#endif
+    if (o->nut == NUT_HALFWAY) { /* exeHalfway */
+        float w = o->vel, sp = r->arg[0] != -1 ? (float)r->arg[0] : 100.0f, old[16];
+        if (w > 0.0f) o->dir = 1; else if (w < 0.0f) o->dir = -1; /* setRailDirectionToEnd / ToStart */
+        float c = o->coord + fabsf(w * sp * 0.01f) * (float)o->dir;
+        c = c > len ? len : c < 0.0f ? 0.0f : c;
+        memcpy(old, in->m, 64);
+        o->coord = row_coord[row] = c; railer_place(in); /* moveCoordAndFollowTrans */
+        if (on && memcmp(old, in->m, 64)) carry(old, in);
+        nut_back_home(in, o, on, len);
+        if (o->prev == 0.0f && w != 0.0f) se_start(SE_OJ_SEESAW_NUT_START, &in->m[12]);
+        o->prev = w;
+        if (w == 0.0f) return o->off;
+        if (fabsf(w) >= 0.001f) o->nlv[0] = se_level(SE_OJ_LV_SEESAW_NUT_ROT_L, &in->m[12], o->nlv[0]);
+        if (fabsf(w) >= 0.1f) o->nlv[1] = se_level(SE_OJ_LV_SEESAW_NUT_ROT_M, &in->m[12], o->nlv[1]);
+        if (fabsf(w) >= 0.2f) o->nlv[2] = se_level(SE_OJ_LV_SEESAW_NUT_ROT_H, &in->m[12], o->nlv[2]);
+        if (c == 0.0f || c == len) { /* isAtEdge */
+            nut_rotator(o, 0);
+            o->dir = -o->dir; /* reverseRailDirection */
+            pad_rumble(RUMBLE_STRONG); camera_shake(SHAKE_NORMAL);
+            se_start(SE_OJ_SEESAW_NUT_STOP, &in->m[12]);
+            o->nut = NUT_EDGE;
+        }
+    } else { /* exeEdge */
+        int go = 0;
+        if (on) { /* isEnableStart */
+            const float *pts = (const float *)(e + 24);
+            u32 np = *(const u32 *)(e + 8);
+            float c = o->coord, c0 = c - 1.0f < 0.0f ? 0.0f : c - 1.0f, c1 = c + 1.0f > len ? len : c + 1.0f;
+            V3 rd = vmul(vsub(rail_at(pts, np, c1), rail_at(pts, np, c0)), (float)o->dir); /* getRailDirection */
+            V3 front = vnorm(v3(in->m[8], in->m[9], in->m[10])), d = vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14]));
+            d = vsub(d, vmul(front, vdot(d, front)));
+            if (vlen(d) > 1e-4f && vlen(rd) > 1e-4f) go = vdot(vcross(vnorm(d), v3(0.0f, -1.0f, 0.0f)), vnorm(rd)) > 0.0f; /* mGravity: a MapObjActor's default */
+        }
+        if (go) { nut_rotator(o, 1); o->cc = 0; o->nut = NUT_HALFWAY; }
+        else nut_back_home(in, o, on, len);
+    }
+    return o->off;
+}
 static void update_seesaws(void)
 {
     FOR_KIND(i, seesaw) {
@@ -40092,6 +40176,7 @@ static void update_seesaws(void)
         if (k < 0) continue;
         typeof(&seesaws[0]) o = &seesaws[k];
         const Row *r = &sc->objs[in->row];
+        if (in->seesaw == 5 && seesaw_nut(in, i)) continue; /* SeesawMoveNut: its rotator in Wait */
         int packed = r->arg[7] > 0 ? r->arg[7] : 0, acc = packed >> 4 & 15, stop = packed >> 12 & 0x3FFF;
         float vmax = r->arg[4] != -1 ? r->arg[4] * 0.01f : 0, limit = r->arg[5] > 0 ? (float)r->arg[5] : 0;
         if (r->arg[3] > 0) acc = r->arg[3]; /* RotateAccelType whole (slice.py map_parts) */
@@ -40110,7 +40195,7 @@ static void update_seesaws(void)
             float a = seesaw_angle(up, vmul(g, -1.0f));
             if (in->seesaw != 3 && limit > 0 && limit < a) { /* placed past its limit: turned back over it */
                 o->q = q_norm(q_mul(o->q, q_axis(ax, 1.05f * 0.0174533f * (a - limit))));
-                seesaw_matrix(in);
+                seesaw_place(in);
                 continue;
             }
         }
@@ -40140,7 +40225,7 @@ static void update_seesaws(void)
                 float sp = 0.0001f * stop;
                 o->q = q_lerp(o->q, qb, sp > 1 ? 1 : sp);
             }
-            seesaw_matrix(in);
+            seesaw_place(in);
             if (on) carry(old, in);
             continue;
         }
@@ -40175,7 +40260,7 @@ static void update_seesaws(void)
                     float d = o->vel;
                     if (o->nrv == SS_MOVESTART) d = 0.7f * (st <= 5 ? 1.0f : -1.0f) * seesaw_sign(o->vel); /* its dip under his landing: sGroundOnDownTime */
                     o->q = q_norm(q_mul(q_axis(ax, d * 0.0174533f), o->q));
-                    seesaw_matrix(in);
+                    seesaw_place(in);
                     if (on) carry(old, in);
                 }
             }
@@ -40184,12 +40269,15 @@ static void update_seesaws(void)
             continue;
         }
         if (o->nrv == SS_STAY) {
-            if (on) { o->nrv = SS_MOVESTART; o->step = -1; }
+            if (st == 0) o->accel = 0.0f;
+            if (on || o->accel != 0.0f) { o->nrv = SS_MOVESTART; o->step = -1; } /* (mAngularAccel: forceRotateSeesaw1Axis) */
             continue;
         }
         if (o->nrv == SS_MOVESTART && fabsf(o->vel) > 0.1f) { o->nrv = SS_MOVE; o->step = -1; continue; }
         if (o->nrv == SS_HIPDROP && st == 0) o->vel += sgn * 40.0f * dist / inertia; /* addForceHipDrop */
         /* rotate: updateVelocity */
+        float accel = o->accel;
+        o->vel += accel; o->accel = 0.0f; /* mAngularVelocity += mAngularAccel */
         if (on) o->vel += sgn * dist / inertia;
         if (o->nrv != SS_MOVESTART && st > 2) {
             V3 up0;
@@ -40202,7 +40290,7 @@ static void update_seesaws(void)
         o->vel = o->vel < -vmax ? -vmax : o->vel > vmax ? vmax : o->vel;
         int moving = o->nrv != SS_HIPDROP; /* exeMove's sound, after its rotate() */
         if (o->nrv == SS_HIPDROP) { if (!o->hip) { o->nrv = SS_MOVE; o->step = -1; } o->hip = 0; }
-        if (o->vel == 0) { o->nrv = SS_STAY; o->step = -1; continue; }
+        if (o->vel == 0 && accel == 0.0f) { o->nrv = SS_STAY; o->step = -1; continue; }
         if (limit > 0) { /* isGoingToReachTargetAngle */
             V3 nu = vadd(vmul(up, cosf(o->vel * 0.0174533f)), vmul(vcross(ax, up), sinf(o->vel * 0.0174533f)));
             if (seesaw_angle(nu, vmul(g, -1.0f)) >= limit) { o->vel *= -0.5f; limit = -1; }
@@ -40210,7 +40298,7 @@ static void update_seesaws(void)
         if (limit >= 0) { /* (not bounced back) */
             o->angle += o->vel;
             o->q = q_norm(q_mul(q_axis(ax, o->vel * 0.0174533f), o->q)); /* the turn about its Z, before mRotateMtx */
-            seesaw_matrix(in);
+            seesaw_place(in);
             if (on) carry(old, in);
         }
         if (moving && se && fabsf(o->vel) > se_speed) in->lv[0] = se_level(se, &in->m[12], in->lv[0]);
@@ -40578,6 +40666,7 @@ static void update_railers(void)
         int row = in->row, cond = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) ? r->arg[7] >> 8 & 15 : 0, stop = *(const int *)(e + 16); /* (an objinfo row: MoveConditionType unset, 0) */
         int fu = st_floater_rail(in); /* OceanFloaterLandParts: its SW_A written, not read; it runs in Move */
         if (fu >= 0 ? !fu : in->eyebeamer ? !eb_patrol(row) : st_turtle_moving(row) >= 0 ? !st_turtle_moving(row) : !mp_running(r, row)) continue;
+        if (in->seesaw == 5) continue; /* SeesawMoveNut: no rail mover, its nerve moves it (seesaw_nut) */
         if (in->gap == GAP_ELEVATOR && gap_st(row)->n != EV_MOVE) continue; /* BattleShipElevator::control: not in Wait */
         if (in->gap == GAP_UFOKINOKO && gap_st(row)->n != UK_MOVE) continue; /* UFOKinoko: startRailMover at startMove */
         if (rclouds && rc_rail_stop(r, row)) continue; /* RainCloud::control: no rail movement in End */
