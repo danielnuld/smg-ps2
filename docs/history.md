@@ -11,6 +11,13 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- PUT_SCRIPT, a test hook (test/put-script, 2026-11-19): with builds at 30 minutes, one ELF for many checks. A plain
+  build with `XF="-DPUT_TEST=X -DPUT_FILE -DPUT_SCRIPT"` reads the other lines of host:put.txt (out/put.txt; line 1
+  the class as before), frames counted from the put: `nth K` (the K-th row of the class), `up N`, `hold N` (held
+  there N frames), `again N` (put there again every N frames), `sw ID [T]` (the stage switch ID of the row's zone
+  on), `pad T MASK [LEN]` (s square, x cross, r R1, l L1, z R2), `stick T X Y LEN`. Test code only (game.c
+  put_test). Seen in PCSX2: OceanRingGalaxy/2 with FireworksA / up 600 / hold 3000 / sw 17 30 (`put script f 30:
+  switch 17 of zone 1 on`).
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /
