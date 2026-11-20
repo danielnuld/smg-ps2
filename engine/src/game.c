@@ -345,6 +345,7 @@ typedef struct {
     int zone;
     int row;         /* OBJS index */
     int breaks;      /* breakable (breakable()): a spin breaks it, then it drops its coins / star pieces */
+    const Model *ddm; /* what its DummyDisplayModel shows inside (ddm_model), NULL none */
     int collapse;    /* CollapsePlane: frames from standing on it to vanishing (arg0, default 140), 0 if not one */
     int hazard;      /* 1 SpaceMine (explodes on touch), 2 NeedlePlant (pricks on touch), 0 none */
     int item;        /* touch to take: ITEM_STAR, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN; 0 none */
@@ -1299,12 +1300,14 @@ static void zone_grow(const Inst *in);
  * item inside (arg7, DummyDisplayModel) is 0; HipDropRock (a hip drop only) a coin when arg0 is 0, arg1 star pieces
  * (default 6) when it is 1; the ItemBlocks 3 (their upper punch and items: ib_upper / update_item_blocks).
  * Returns 1 (spin or hip drop), 2 (hip drop only), 3 (an ItemBlock) or 0 for anything else. CrystalCageL takes 2 hits 20 frames apart (its star: star_pos);
- * BreakableCage(Rotate / L) breaks on a spin too (ponytail: in SMG only what Mario rides or throws breaks it)
+ * BreakableCage(Rotate / L), as BreakableTrash / BreakableFixation, are 5: no spin breaks them
  * PunchBox: a spin (not standing on it) or a shell: Break, hidden at step 5, its coins at 15; its SW_A: one star piece,
  * its burst. WoodBox (WoodBox.cpp): its items, dead switch, arg3 1 riddle SE and arg4 1-up at exeHit step 15
  * (update_wrecks), an explosion or a fire ball breaks it too, arg7 its power star (star_pos). CrystalCageL (CrystalCage.cpp):
  * its first hit REFLECTs Mario, cracks it (BVA frame 1) and wobbles it (cagel_draw); its break leaves the stump (frame
  * 2) on the map below and plays CrystalCageLBreak's clip */
+static const char *cur_comet(void);
+static const Model *ddm_model(const char *name, const Row *r); /* DummyDisplayModel (below) */
 static int breakable(const char *name, const Row *r, int *coins, int *pieces)
 {
     *coins = *pieces = 0;
@@ -1314,12 +1317,12 @@ static int breakable(const char *name, const Row *r, int *coins, int *pieces)
         return 1;
     }
     if (strcmp(name, "CrystalCageS") == 0 || strcmp(name, "CrystalCageM") == 0) {
-        *coins = r->arg[7] == 0;
+        *coins = r->arg[7] == 0 && strcmp(cur_comet(), "Dark"); /* (no DummyDisplayModel under the Dark comet: no coin) */
         return 1;
     }
-    if (strcmp(name, "CrystalCageL") == 0 || strcmp(name, "BreakableCage") == 0 || strcmp(name, "BreakableCageRotate") == 0 ||
-        strcmp(name, "BreakableCageL") == 0)
-        return 1;
+    if (strcmp(name, "CrystalCageL") == 0) return 1;
+    if (strcmp(name, "BreakableCage") == 0 || strcmp(name, "BreakableCageRotate") == 0 || strcmp(name, "BreakableCageL") == 0)
+        return 5; /* BreakableCage::receiveMsgPlayerAttack / EnemyAttack: a thrown shell (cage_jet_hit) or any enemy attack but fire (explosion_breaks) */
     if (strcmp(name, "TimerCoinBlock") == 0 || strcmp(name, "SplashCoinBlock") == 0 ||
         strcmp(name, "TimerPieceBlock") == 0 || strcmp(name, "SplashPieceBlock") == 0 || strcmp(name, "ItemBlockSwitch") == 0) {
         int n = name[0] == 'T' ? (name[5] == 'C' ? 10 : 20) : r->arg[0] >= 0 ? r->arg[0] : 8;
@@ -1457,7 +1460,8 @@ static int piece_next;
 static const Model *m_pieces[PIECE_COLOURS];
 static int piece_colour_next(void) { int k = piece_next; piece_next = (piece_next + 1) % PIECE_COLOURS; return k; }
 #define MAX_WRECKS 16           /* break models / broken objects left (break_inst, update_wrecks) */
-static struct { const Model *brk, *left; const char *bname; float m[16]; int t, coins, pieces, row, hide; V3 p, up; } wrecks[MAX_WRECKS]; /* hide: its left model gone at that t (0 never) */
+static int cage_dead_row = -1, cage_dead_t;
+static struct { const Model *brk, *left; const char *bname; float m[16]; int t, coins, pieces, row, hide; V3 p, up, lo; } wrecks[MAX_WRECKS]; /* hide: its left model gone at that t (0 never); lo: its left model that far from m (a cage's stump at _F8) */
 static int nwrecks;
 /* Coins popping out of what broke (Petari CoinHolder::appearCoin, Coin::appearMove / exeMove, update_pops): t its
  * nerve step, grav its gravity, gr / wl / rf with gn / wn / rn its binder's ground, wall and roof of the last move,
@@ -3178,7 +3182,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     notes_spawn();
     ncoins = ic; /* box coins and star pieces are appended as boxes break */
     npieces = is; pieces_base = 0;
-    nwrecks = 0;
+    nwrecks = 0; memset(wrecks, 0, sizeof wrecks); cage_dead_row = -1;
     ngst = 0;
     int t_super[3] = {scene_type(s, "SuperSpinDriver"), scene_type(s, "SuperSpinDriverPink"),
                       scene_type(s, "SuperSpinDriverGreen")}, t_spin = scene_type(s, "SpinDriver");
@@ -6385,6 +6389,7 @@ static void game_rebind_(void)
         in->anim_want = md->skin && !(plant_first && plant_first[i] >= 0) && !in->anim;
         int dc, dp;
         in->breaks = breakable(name, r, &dc, &dp);
+        in->ddm = in->breaks ? ddm_model(name, r) : NULL;
         in->collapse = strcmp(name, "CollapsePlane") == 0 ? (r->arg[0] > 0 ? r->arg[0] : 140) : 0;
         class_apply(in, class_of(r->type, name)); /* the class-name tests, once a class a rebind */
         in->invisible = strncmp(name, "InvisibleWall", 13) == 0 || strcmp(name, "IronCannonLauncherPoint") == 0 || strcmp(name, "ElectricBall") == 0 ||
@@ -15725,6 +15730,7 @@ static void update_candles(void)
  * a Unizo: 6 star pieces), melts SnowMen (update_snowmen). ponytail: Mario keeps his colours (no fire textures),
  * no fire throw / spin animations, no BGM_FIRE */
 static void kr_star(Kuribo *k, int fire);
+static int cage_jet_hit(V3 p, float rad);
 static int kr_jet(Kuribo *k), kr_pursuing(const Kuribo *k);
 static void kr_pieces(Kuribo *k);
 static int js_blow(Kuribo *k, V3 from);
@@ -16164,6 +16170,7 @@ static void update_jets(void)
             if (!gone && pg_jet_hit(p)) gone = 1; /* PenguinRacer in its race: isMsgJetTurtleAttack (race.inc) */
             if (!gone && st_jet_hit(p)) gone = 1; /* WaterfallCaveCover: isMsgJetTurtleAttack (statics.inc) */
             if (!gone && kiraira_shot(p, 60.0f, 1)) gone = 1; /* Kiraira: isMsgJetTurtleAttack (force-detonated) */
+            if (!gone && cage_jet_hit(p, 60.0f)) gone = 1; /* BreakableCage (its five kinds): isMsgJetTurtleAttack: tryBreak */
             hhp_blow(p, 60.0f); /* HammerHeadPackun: isMsgJetTurtleAttack */
             tbox_hit(p, 60.0f); /* TreasureBoxCracked: isMsgJetTurtleAttack */
             for (int k = 0; k < nkuribo; k++) { /* ACTMES_JET_TURTLE_ATTACK */
@@ -20502,7 +20509,11 @@ static void hs_flip(void)
         const char *name = sc->types + 32 * sc->objs[in->row].type;
         float r = !strcmp(name, "WoodBox") ? 120.0f : !strcmp(name, "PunchBox") ? 90.0f : !strcmp(name, "CrystalCageS") ? 130.0f : in->breaks == 3 ? 100.0f : 0.0f;
         if (r == 0.0f) continue;
-        float up = name[0] == 'C' ? 0.0f : r * (in->breaks == 3 ? 1.0f : in->s);
+        float up = r * (in->breaks == 3 ? 1.0f : in->s);
+        if (name[0] == 'C') { /* CrystalCage::exeWait (S): _E8 the foot of Mario's place on its Y from -40 to 140 */
+            up = vdot(vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14])), vnorm(v3(in->m[4], in->m[5], in->m[6])));
+            up = up < -40.0f ? -40.0f : up > 140.0f ? 140.0f : up;
+        }
         hs_add(vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), up)), in->breaks == 3 ? r : r * in->s, HS_MAPOBJ, in->row);
     }
 }
@@ -36755,8 +36766,15 @@ static void update_launched_pieces(void)
 /* What a WoodBox / CrystalCage(S / M) leaves (WoodBox::doHit / exeHit, CrystalCage::exeBreak): its break model's Break
  * clip (WoodBoxBreak, CrystalCageSBreak), its items at step 15 (the box; a cage pops its coin at once), then the
  * object itself on its BVA's broken frame for good (WoodBox without respawn, a cage with arg0 0), no collision */
+/* (cage_dead_row / cage_dead_t: CrystalCage::tryOnSwitchDead at step 10, a SuperSpinDriver inside: one pending) */
+static void cage_dead_flush(void)
+{
+    if (cage_dead_row >= 0 && sc->objs[cage_dead_row].sw[SW_DEAD] >= 0) sw_set(&sc->objs[cage_dead_row], SW_DEAD, 1);
+    cage_dead_row = -1;
+}
 static void update_wrecks(void)
 {
+    if (cage_dead_row >= 0 && --cage_dead_t <= 0) cage_dead_flush();
     for (int i = 0; i < nwrecks; i++) {
         if (wrecks[i].t < 0) continue;
         if (++wrecks[i].t == 16) { /* exeHit step 15 */
@@ -37871,6 +37889,45 @@ static void cagel_draw(const Inst *in)
     }
     inst_draw(in, md ? md : in->md, cm);
 }
+/* DummyDisplayModel.cpp after Petari: what a CrystalCageS / M (createDummyDisplayModelCrystalItem: fixed at
+ * (-30, 100, -30) / (0, 200, 0) of its base matrix) or a BreakableCage (createDummyDisplayModel: (0, 150, 0)) shows
+ * inside by its arg7 (getDummyDisplayModelId; cDummyDisplayModelInfoTable: its model, and the offset _4 its own
+ * matrix is moved back by); none for a coin under the Dark comet; killed at the break (its instance goes). The models
+ * are slice.py's "Ddm..." (static, at their mAnim's pose: Kinopio / SuperSpinDriver / StarPieceDummy Freeze; Kinopio
+ * at its arg6 ColorChange frame), the coin the scene's own.
+ * ponytail: a BreakableCage's coin does not turn (none placed), its star piece has no shadow, no LodCtrl for the
+ * Kinopio; 6 (KeySwitch: Teresa's) and 13 (GrandStar) are not made; 7 (a PowerStar) is star_wait's */
+static const struct { const char *md; float x, y, z; } ddm_info[15] = {
+    {"Coin", 0, 70, 0}, {"DdmKinopio", 0, 50, 0}, {"DdmSpinDriver", 0, 0, 0}, {"DdmSuperSpinDriver", 0, 0, 0},
+    {"DdmStarPiece", -30, 100, -30}, {"DdmTico", 0, 50, 0}, {NULL, 0, 0, 0}, {NULL, 0, 0, 0}, {"DdmKinokoOneUp", 0, 40, 0},
+    {"DdmKuribo", 0, 80, 0}, {"DdmBlueChip", 0, 0, 0}, {"DdmYellowChip", 0, 0, 0}, {"DdmStrayTico", 0, 50, 0}, {NULL, 0, 0, 0},
+    {"DdmKinokoLifeUp", 0, 40, 0}};
+static const Model *ddm_model(const char *name, const Row *r)
+{
+    int cage = !strcmp(name, "CrystalCageS") || !strcmp(name, "CrystalCageM"), k = r->arg[7];
+    char n[32];
+    if ((!cage && strncmp(name, "BreakableCage", 13)) || k < 0 || k > 14 || !ddm_info[k].md) return NULL;
+    if (k == 0 && !strcmp(cur_comet(), "Dark")) return NULL; /* tryCreateDummyModel: isGalaxyDarkCometAppearInCurrentStage */
+    if (k != 1) return scene_model(sc, k == 4 && name[0] == 'B' ? "DdmStarPieceR" : ddm_info[k].md); /* (BreakableCage::initModel: its Rotation clip) */
+    snprintf(n, sizeof n, "DdmKinopio~%d", r->arg[6] > 4 ? 4 : r->arg[6] > 0 ? (int)r->arg[6] : 0); /* getItemType: arg6 */
+    return scene_model(sc, n);
+}
+static V3 ddm_pos(const Inst *in, V3 *x, V3 *y, V3 *z) /* its place: the host's base matrix x its fixed position, less _4 */
+{
+    const Row *r = &sc->objs[in->row];
+    const char *name = sc->types + 32 * r->type;
+    V3 o = name[0] == 'B' ? v3(0, 150, 0) : name[11] == 'S' ? v3(-30, 100, -30) : v3(0, 200, 0);
+    *x = vnorm(v3(in->m[0], in->m[1], in->m[2])); *y = vnorm(v3(in->m[4], in->m[5], in->m[6])); *z = vnorm(v3(in->m[8], in->m[9], in->m[10]));
+    o = v3(o.x - ddm_info[r->arg[7]].x, o.y - ddm_info[r->arg[7]].y, o.z - ddm_info[r->arg[7]].z);
+    return vadd(v3(in->m[12], in->m[13], in->m[14]), vadd(vadd(vmul(*x, o.x), vmul(*y, o.y)), vmul(*z, o.z)));
+}
+static void ddm_draw(const Inst *in)
+{
+    V3 x, y, z, p = ddm_pos(in, &x, &y, &z);
+    float m[16] = {x.x, x.y, x.z, 0, y.x, y.y, y.z, 0, z.x, z.y, z.z, 0, p.x, p.y, p.z, 1};
+    if (sc->objs[in->row].arg[7] == 0) render_model(in->ddm, m, 0xF0, 0xD0, 0x30);
+    else render_model(in->ddm, m, 0x80, 0x80, 0x80);
+}
 static void break_inst(const Inst *in, int drops)
 {
     V3 p = v3(in->m[12], in->m[13], in->m[14]);
@@ -38011,7 +38068,18 @@ static void break_inst(const Inst *in, int drops)
         w->left = statue || (box ? r->arg[1] != 0 : r->arg[0] == -1) ? scene_model(sc, v) : NULL; /* (the cage: mIsBreakObjVisible, arg0 as a bool: unset leaves the stump) */
         w->t = 0; w->row = in->row; w->p = p; w->up = up;
         w->coins = box ? n : 0; w->pieces = box ? sp : 0;
-        if (cage) { pop_coins(p, up, n); scene_stop = 3; } /* appearCoinPop at once; stopScene(3) at step 2 */
+        if (cage) { /* appearCoinPop at its DummyDisplayModel's place, at once; stopScene(3) at step 2 */
+            V3 dx, dy, dz;
+            pop_coins(in->ddm ? ddm_pos(in, &dx, &dy, &dz) : p, up, n); scene_stop = 3;
+            if (w->left) { /* the stump at _F8 (initAfterPlacement: the map from 300 x scale up its Y to as far down, its own collision left out) */
+                V3 cu = vnorm(v3(in->m[4], in->m[5], in->m[6])), f8 = p;
+                int keep = kcl_off_row;
+                kcl_off_row = in->row;
+                if (!map_poly(vadd(p, vmul(cu, 300.0f * in->s)), vmul(cu, -600.0f * in->s), &f8, NULL)) f8 = p;
+                kcl_off_row = keep;
+                w->lo = vsub(f8, p);
+            }
+        }
         if (statue) { /* SimpleBreakableObj::setStateBreak: stopScene(5), startBreak: appearItem, the Break effect, its
                        * ModelObj's Break clip, its own BVA Break (stays: endBreak kills only the model) */
             pop_coins(p, up, n); drop_pieces(p, up, sp);
@@ -38021,6 +38089,10 @@ static void break_inst(const Inst *in, int drops)
             fx_named(name, "Break", in->m, NULL, NULL);
         } else fx_at(box ? FX_WOODBOXBREAK_BREAK : FX_CRYSTALCAGES_BREAK, p, up);
         if (box) row_dead[in->row] = 1; /* its dead switch at exeHit step 15 (update_wrecks) */
+        else if (cage && in->ddm && r->arg[7] == 3) { /* tryOnSwitchDead: at step 10 with a SuperSpinDriver inside (update_wrecks) */
+            cage_dead_flush();
+            row_dead[in->row] = 1; cage_dead_row = in->row; cage_dead_t = 10;
+        }
         else row_kill(in->row);
         printf("%s %d broken, %d coins, %d star pieces\n", name, in->row, n, sp);
         return;
@@ -38031,6 +38103,24 @@ static void break_inst(const Inst *in, int drops)
     if (in->breaks != 3) /* ItemBlocks stay */
         fx_at(strncmp(name, "CrystalCage", 11) == 0 ? FX_CRYSTALCAGES_BREAK : FX_PUNCHBOX_BREAK, p, up);
     printf("%s %d broken, %d coins, %d star pieces\n", name, in->row, n, sp);
+}
+/* BreakableCage::receiveMsgPlayerAttack: isMsgJetTurtleAttack on its body (300 x scale at its place; BreakableCageL
+ * 600, BreakableFixation 425) breaks it (tryBreak). 1 taken: broken by break_boxes (cage_jet_row: update_jets
+ * holds its own instance through the frame) */
+static int cage_jet_row = -1;
+static const Scene *cage_jet_sc;
+static int cage_jet_hit(V3 p, float rad)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        const char *name = sc->types + 32 * sc->objs[in->row].type;
+        if (in->breaks != 5 || row_dead[in->row] || !row_shown(in->row) || strncmp(name, "Breakable", 9)) continue;
+        float r = (!strcmp(name, "BreakableCageL") ? 600.0f : !strcmp(name, "BreakableFixation") ? 425.0f : 300.0f) * in->s;
+        if (vlen(vsub(p, v3(in->m[12], in->m[13], in->m[14]))) > rad + r) continue;
+        cage_jet_row = in->row; cage_jet_sc = sc;
+        return 1;
+    }
+    return 0;
 }
 
 static int woodbox_reached(const Inst *in, V3 at, float rad) /* its body sensor (120 x scale, as high up its Y) within rad */
@@ -38292,6 +38382,12 @@ static void break_boxes(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS));
     update_item_blocks();
+    if (cage_jet_row >= 0) { /* a thrown shell met a BreakableCage (cage_jet_hit) */
+        int row = cage_jet_row;
+        cage_jet_row = -1;
+        for (int i = 0; cage_jet_sc == sc && i < ninsts; i++)
+            if (insts[i].row == row && !row_dead[row]) { break_inst(&insts[i], 1); game_rebind(); return; }
+    }
     { /* BreakableCage::exeWait (CAGE_NORMAL: BreakableCageRotate): it turns arg0 x 0.01 degrees a frame about its Y */
         static const Scene *ts;
         static int tr;
@@ -61335,7 +61431,7 @@ void game_draw(void)
             mat_mul(cm, in->m, rot);
             inst_draw(in, in->md, cm);
         } else
-            inst_draw(in, in->md, in->m);
+            { inst_draw(in, in->md, in->m); if (in->ddm) ddm_draw(in); }
     }
     IT_MARK(-1);
 #ifdef BENCH
@@ -61355,7 +61451,12 @@ void game_draw(void)
     adds_draw();
     for (int i = 0; i < nwrecks; i++) { /* wrecks: the break model's clip until it stops, the broken object for good */
         typeof(&wrecks[0]) w = &wrecks[i];
-        if (w->left && !(w->hide && (w->t < 0 || w->t >= w->hide))) render_model(w->left, w->m, 0x80, 0x80, 0x80);
+        if (w->left && !(w->hide && (w->t < 0 || w->t >= w->hide))) {
+            float lm[16];
+            memcpy(lm, w->m, 64);
+            lm[12] += w->lo.x; lm[13] += w->lo.y; lm[14] += w->lo.z;
+            render_model(w->left, lm, 0x80, 0x80, 0x80);
+        }
         if (w->t < 0 || !w->brk) continue;
         if (!w->brk->skin) { if (w->t > 60) w->t = -1; else render_model(w->brk, w->m, 0x80, 0x80, 0x80); continue; }
         Anim *ba = obj_anim((int)sc->nobjs * 3 + i, w->brk, w->bname);
