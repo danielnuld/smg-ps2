@@ -23,6 +23,18 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   (Front / Rear / BreakStart), the head a star declarer; tools/jpa.py NAMED MechaKoopaPartsHead (**repack**
   FactoryGalaxy, resident.bin). Its twelve sounds were three lines of docs/sound-gaps.md. Not done: the demo's
   other casts' actions (MechaKoopaPartsCaterpillar's nerve at 白画面, ClockworkHandle's functor at 耳飛び).
+- TrickRabbitFreeRunCollect, part of #732 (feat/trick-rabbit-collect-class, 2026-11-19): SnowCapsuleGalaxy's only
+  star had no class. trick.inc `snc_*` (NPC/TrickRabbitSnowCollect.cpp: Wait, the start wipe and talk, WaitHideSnow,
+  Start with the timer and its counter sounds, the failed and the success demos, TakeOutStar, AppearPowerStar) and
+  `snr_*` (NPC/TrickRabbitSnow.cpp, its three TrickRabbitFreeRunChild rows: WaitSnow, StartHideSnow, Vanish to its
+  隠れ位置, HideSnow until its SW_A or the SnowFloor uncovers it (snow_floor.inc: ACTMES_ASK_HIDDEN_BY_SNOW /
+  NOTIFY_DISCOVER_SNOW), AppearFromSnow with its AppearSmoke, Runaway, BlowDamage, Caught, GiveUp). The timer is
+  BombTimerLayout (menu.c `menu_bomb_timer_*`; new `menu_bomb_timer_danger`: mDangerTransFrame, 20 s here), moved by
+  `snc_nerve` outside demos (a demo moves only its own actors). Test: plain with `XF=-DTRICK_TEST`
+  SnowCapsuleGalaxy/1 (`snc_test`; a digit in out/tv.txt picks the variant at run time: 2 = nothing caught, the time
+  up after 10 s): "snow rabbit collect: nerve n", "snow rabbit row n: nerve k", "trick test" lines. Left out
+  (ponytail): SpotMarkLight, the foot prints (SW_B), the Light effect, the star's demo continued from the success
+  demo (the port's own star demo follows it).
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /
