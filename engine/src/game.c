@@ -4016,8 +4016,9 @@ static void update_tsuki(void)
  * its eye (600) holds: Mario, the walkers, the other Kirairas, BeExploded: 10 frames later their own), SW_B on; Dead
  * 300 frames (its group turned to it, eyes open: ACTMES_GROUP_ATTACK), RecoverSign 120, Recover (SE_OJ_KIRAIRA_RECOVER)
  * then Wait / Stare (SW_B off); down, its body pushes Mario.
- * ponytail: its model is packed without clips: no Down / RevivalStart / Revival / Stop BCKs (hidden while Dead,
- * Recover 60 frames), no eye BTPs, no BRKs, no SearchLight; no chain (KirairaChain), its shadow. KirairaRail (driftOnRail): instead of the bob it runs its rail at arg0 (5) a frame (row_coord, row_rdir),
+ * Its BCKs (Stop, Down / RailDown, RevivalStart / RailRevivalStart, Revival / RailRevival: ki_bck) play once its
+ * model is packed skinned; Recover lasts the Revival clip's 18 frames.
+ * ponytail: no eye BTPs, no BRKs, no SearchLight; no chain (KirairaChain), its shadow. KirairaRail (driftOnRail): instead of the bob it runs its rail at arg0 (5) a frame (row_coord, row_rdir),
  * turning back within 50 of an end (SE_OJ_LV_KIRAIRA_CHAIN), and stays where it is while down */
 #define KIRA_DOWN 480
 static void hurt_mario(V3 from, float speed);
@@ -4166,6 +4167,16 @@ static void ki_open(const Inst *in, V3 p) /* openEyes (ponytail: the EyeOpen BTP
     row_turn[in->row] |= KI_EYES;
 }
 static void ki_close(const Inst *in) { row_turn[in->row] &= ~KI_EYES; } /* closeEyes: SearchLight deleted */
+/* startBck: its archive's clip (Kiraira's for a KirairaRail too: initModelManagerWithAnm("Kiraira")), when its model is
+ * packed skinned (slice.py SKINNED_OBJ) */
+static void ki_bck(const Inst *in, const char *clip)
+{
+    char n[40];
+    if (!in->anim) return;
+    snprintf(n, sizeof n, "kiraira/%s", clip);
+    in->anim->done = 0;
+    anim_play(in->anim, n, 1.0f, 0, 0);
+}
 static int turn_on_plane(V3 *dir, V3 to, V3 axis, float cosmax);
 static void walker_explosion(V3 from);
 static void mario_push_out(V3 c, float r);
@@ -4246,7 +4257,7 @@ static void update_kiraira(void)
             break;
         case KI_FACE:
             if (dm >= 2000.0f) ki_set(row, KI_WAIT); /* sEyeSensorOutRadius */
-            else if (ki_turn(in, up, to, 2.8f)) ki_set(row, KI_STARE); /* sTurnRate; its Stop BCK */
+            else if (ki_turn(in, up, to, 2.8f)) { ki_bck(in, "stop"); ki_set(row, KI_STARE); } /* sTurnRate; startBck Stop */
             else drift = 1;
             break;
         case KI_STARE:
@@ -4263,6 +4274,7 @@ static void update_kiraira(void)
             break;
         case KI_DEAD:
             if (st == 0 && r->sw[SW_B] >= 0) sw_set(r, SW_B, 1);
+            if (st == 0) ki_bck(in, in->kiraira == 2 ? "raildown" : "down");
             if (r->group >= 0) /* sendMsgToGroupMember(ACTMES_GROUP_ATTACK): the others turn to it and stare */
                 for (int j = 0; j < ninsts; j++) {
                     Inst *q = &insts[j];
@@ -4276,16 +4288,18 @@ static void update_kiraira(void)
             if (st == 300) ki_set(row, KI_RECOVERSIGN); /* sStepToRecoverSign */
             break;
         case KI_RECOVERSIGN:
+            if (st == 0) ki_bck(in, in->kiraira == 2 ? "railrevivalstart" : "revivalstart");
             if (st == 120) ki_set(row, KI_RECOVER); /* sStepToRecover */
             break;
         case KI_RECOVER:
             if (st == 0) {
+                ki_bck(in, in->kiraira == 2 ? "revival" : "railrevival"); /* (Petari: mIsRail plays Revival, the others RailRevival) */
                 se_start(SE_OJ_KIRAIRA_RECOVER, &p.x);
                 if (dm < 2000.0f) ki_open(in, p);
                 row_turn[row] &= ~KI_FORCED;
             }
             if (dm < 2000.0f) ki_turn(in, up, to, 20.0f);
-            if (st >= 60) ki_set(row, dm >= 2000.0f ? KI_WAIT : KI_STARE); /* ponytail: isBckStopped (Revival: no clips, 60 frames) */
+            if (st >= 18) ki_set(row, dm >= 2000.0f ? KI_WAIT : KI_STARE); /* isBckStopped: Revival / RailRevival, 18 frames both (by the step: a clip is not posed beyond update_obj_anims' reach) */
             break;
         }
         if (drift && rail) { /* driftOnRail (a down one stays where it is) */
@@ -54932,7 +54946,7 @@ static Anim *obj_anim(int row, const Model *md, const char *cls)
         if (anim_start(a, n, 0)) return oanim[k].a;
         snprintf(n, sizeof n, "%s/wait", cls);
         for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
-        if (!strncmp(cls, "MorphItemNeo", 12) || !strncmp(cls, "ScrewSwitch", 11) || !strcmp(cls, "QuarterRollGravityRoomArrow") || !strcmp(cls, "SnowMan") || !strcmp(cls, "SandCapsulePressGround") || !strcmp(cls, "Tsukidashikun")) return oanim[k].a; /* initModelManagerWithAnm: no clip until appear() / exeScrew / the arrow's switches */
+        if (!strncmp(cls, "MorphItemNeo", 12) || !strncmp(cls, "ScrewSwitch", 11) || !strcmp(cls, "QuarterRollGravityRoomArrow") || !strcmp(cls, "SnowMan") || !strcmp(cls, "SandCapsulePressGround") || !strcmp(cls, "Tsukidashikun") || !strncmp(cls, "Kiraira", 7)) return oanim[k].a; /* initModelManagerWithAnm: no clip until appear() / exeScrew / the arrow's switches / Kiraira's Stop */
         if (!anim_play(a, n, 1.0f, 1, 0)) { /* no wait clip: its first */
             size_t l = strlen(n) - 4;
             for (u32 c = 0; c < sc->nclips; c++)
@@ -62505,7 +62519,7 @@ void game_draw(void)
             continue;
         }
         if (in->kiraira) { /* drifting, facing Mario within 1500; hidden while Dead */
-            if ((row_turn[in->row] & 7) == 5) continue; /* KI_DEAD (ponytail: its Down BCK) */
+            if ((row_turn[in->row] & 7) == 5 && !in->anim) continue; /* KI_DEAD without its Down BCK (a pack sliced before Kiraira was skinned): hidden */
             V3 up, p = kiraira_pos(in, &up), fwd = v3(in->m[8], in->m[9], in->m[10]);
             float cm[16];
             basis_matrix(cm, p, up, fwd, 0); /* calcMtxFromGravityAndZAxis(mFront) */

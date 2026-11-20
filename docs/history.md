@@ -11,6 +11,15 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Kiraira's BCKs, part of #691 (feat/691-kiraira-clips, 2026-11-20; **not run in PCSX2, not sliced yet**). slice.py
+  SKINNED_OBJ gains Kiraira; game.c ki_bck plays its archive's clips where Kiraira.cpp does (Stop at the stare,
+  Down / RailDown at Dead, RevivalStart / RailRevivalStart at RecoverSign, Revival for a rail one and RailRevival
+  for the others at Recover, as Petari has them), a down one is drawn once it has its pose (it was hidden), and
+  Recover lasts the Revival clip's 18 frames (it was 60). obj_anim starts it with no clip. With the packs as they
+  are (the model unskinned) only the 18 frames change. To check at the slice: that a KirairaRail row's model is
+  skinned too and finds `kiraira/<clip>` (its class has no archive of its own). Left of #691: the eye BTPs, the
+  BRKs, SearchLight, KirairaChain, the shadow. **Release: slice_all.py OceanPhantomCaveGalaxy** (its only galaxy:
+  15 placed).
 - SurfingGuidance with the pad's pictures, part of #820 (feat/820-surf-guidance, 2026-11-20; **not run in PCSX2**,
   menus.bin not repacked yet). menu.c sfg_*: SurfingGuidance's eleven nerves on the TiltGuidanceReplace layout
   (Appear / End on channel 0, the lesson's clip on channel 1; SE_SY_CTRL_GUIDE_APPEAR, _CHANGE / _CHANGE2 at the

@@ -114,6 +114,7 @@ KOOPA_PARTS = ("KoopaThorn", "KoopaArmorBreak", "KoopaThornBreak", "KoopaFire", 
 SKINNED_OBJ += ("TripodBoss", "TripodBossGuardWall")  # TripodBoss: its StartDemo / EndDemo joints (Body, legs); the guard wall's 2ndDemo
 SKINNED_OBJ += ("HoneyQueenWing",)  # HoneyQueen::init: createModelObjNpc 羽 on its Center joint, startBck / startBtk HoneyQueenWing
 SKINNED_OBJ += ("TamakoroWithTutorial", "TamakoroTutorial", "ConcreteBlockBreak", "WaterfallCaveCoverBreak")  # Tamakoro.cpp: its Ring joint upright, its Tamakoro BVA; TamakoroTutorial: a SignBoard with its actions (game.c tamakoro.inc)
+SKINNED_OBJ += ("Kiraira",)  # Kiraira.cpp: Stop, Down / RailDown, RevivalStart / RailRevivalStart, Revival / RailRevival (game.c ki_bck)
 SKINNED_OBJ += ("Dodoryu", "DodoryuLeadHill", "DodoryuRabbit", "DodoryuHillA", "DodoryuHillB", "DodoryuHillC")  # Dodoryu.cpp: the boss, its DodoryuLeadHill / DodoryuRabbit / DodoryuHill pieces (Lead, Fade) (game.c dd_*)
 SKINNED_OBJ += ("SnakeFish",)  # (SkeletalFishBaby)
 # SkeletalFishBoss (Kingfin): its body, its PartsModels SkeletalFishBossHeadA / ScarFlash, its guards (and the demo ones), its break model (game.c sf_*)
