@@ -416,7 +416,7 @@ typedef struct {
     u8 stage;        /* its stage_se row + 1 (StageEffectDataTable.cpp's SEs by object name), 0 none */
     int press;       /* RailMoveObjPress (RGTowerPressGroundA, ReverseGravityRoomPressGroundA / B): ATYPE_MAP_OBJ_PRESS */
     int talkcls;     /* SignBoard 1, Tico 2, Kinopio 3, ..., TicoStarRing 7, TicoComet 8, HoneyBee 10, TicoShop 11: update_talkers */
-    int clipcls;     /* its Petari clipping ported (obj_clipped): NPCActor's default 1, SuperSpinDriver 2, LiveActor's default without a LodCtrl 3 (Banekiti); 0 never clipped */
+    int clipcls;     /* its Petari clipping ported (obj_clipped): NPCActor's default 1, SuperSpinDriver 2, LiveActor's default without a LodCtrl 3 (Banekiti), BigFan 4; 0 never clipped */
     u32 lv[2];       /* its level sounds' handles (Tico's wait / float) */
     const Model *md_bloom; /* its "<model>Bloom" model (PlanetMap::initBloomModel, createModelObjBloomModel) or NULL */
     int otamagma;    /* OtaKingMagma's collision (initCollisionParts "OtaKingMagma"): drawn with OtaKing (ota) */
@@ -6192,6 +6192,7 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->gap = gap_class(name);
     ci->clipcls = strcmp(name, "Tico") == 0 || strcmp(name, "TicoBaby") == 0 || lg_cls(name) ? 1 : /* NameObjFactory: Tico, LuigiNPC */
                   strcmp(name, "SuperSpinDriver") == 0 || strcmp(name, "SuperSpinDriverPink") == 0 || strcmp(name, "SuperSpinDriverGreen") == 0 ? 2 :
+                  ci->bigfan ? 4 : /* BigFan::init's sphere (obj_clipped) */
                   strcmp(name, "Banekiti") == 0 ? 3 : 0; /* Banekiti::init sets no clipping: LiveActor's (its 2D camera is 10000 away, beyond update_obj_anims' 8000) */
 }
 static const ClassInfo *class_of(int t, const char *name)
@@ -56136,6 +56137,11 @@ static int obj_clipped(const Inst *in)
                              * (ClippingActorInfo.cpp:7-16), a sphere of 300 about mPosition, far level 6 (10000) */
         float p[3] = {in->m[12], in->m[13], in->m[14]};
         return render_clip_judge(p, 300.0f, vg_of(in->row) & VG_IN ? 1e9f : 10000.0f); /* (its view group's cube: level 0) */
+    }
+    if (in->clipcls == 4) { /* BigFan::init (BigFan.cpp:40-43): a sphere of 400 + mWindLength about mPosition + front x mWindLength / 2, far level 6 */
+        float len = sc->objs[in->row].arg[0] != -1 ? (float)sc->objs[in->row].arg[0] : 4000.0f;
+        V3 c = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(vnorm(v3(in->m[8], in->m[9], in->m[10])), len * 0.5f));
+        return render_clip_judge(&c.x, 400.0f + len, vg_of(in->row) & VG_IN ? 1e9f : 10000.0f);
     }
     for (int i = 0; i < nlaunches; i++) { /* SuperSpinDriver */
         Launch *L = &launches[i];
