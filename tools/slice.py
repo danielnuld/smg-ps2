@@ -400,6 +400,7 @@ LOGIC = ("UnizoLauncher", "SoundEmitterCube", "SoundEmitterSphere", "QuakeEffect
          "RasterScrollCube", "DarkMatterCube", "ForbidWaterSearchCube",  # doDarkDamage; MarioSwim::checkUnderWaterFull (#575)
          "PrologueDirector", "PurpleCoinStarter", "ExterminationKuriboKeySwitch", "AstroOverlookObj", "AstroOverlookAreaCylinder", "CoinBox", "GhostPlayer",
          "BigBubbleMoveLimitterPlane", "BigBubbleMoveLimitterCylinder", "DodoryuClosedCylinder")  # BigBubbleMoveLimitter (game.c bgb_limit_pos)  # areas (areaobjinfo) travel as OBJS rows too
+LOGIC += ("SoundEmitter",)  # SoundEmitter.cpp: the soundinfo rows (game.c update_sound_emitters)
 
 
 def col(b, field, n, default=0):
@@ -533,7 +534,7 @@ def scene(fs, galaxy, scenario):
                     zones.append(dict(name=z["name"], pos=z["pos"], rot=z["rot"]))
         zid = zone_id.get(s, 0)
         for layer in act[s]:
-            for f in ("objinfo", "planetobjinfo", "areaobjinfo"):
+            for f in ("objinfo", "planetobjinfo", "areaobjinfo", "soundinfo"):  # soundinfo: the SoundEmitter rows (LOGIC)
                 for r in rows(files.get(f"{root}/jmp/placement/{layer}/{f}", b"")):
                     objs.append(dict(r, zone=zid, planet=f == "planetobjinfo"))
             for r in rows(files.get(f"{root}/jmp/childobj/{layer}/childobjinfo", b"")):
