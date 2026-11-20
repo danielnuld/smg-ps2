@@ -43,6 +43,8 @@ NOT_PLAYED = {
     "SE_SM_RABBIT_CHANGE_EFFECT": "Rabbit's rail behaviour (arg1 0: Finish) has no placed row",
     "SE_OJ_SMN_VOLC_COL_S_BREAK": "SubmarineVolcanoSmallColumn is placed nowhere",
     "SE_OJ_PLANT_MARIO_UP_START": "only stopped (Plant.cpp stopSound), never started",
+    "SE_OJ_CRYSTAL_CAGE_S_DAMAGE": "only CrystalCageL takes two hits (_C4 2), and it plays ..._L_DAMAGE",
+    "SE_OJ_SANDSTORM_BIND_END": "Sandstorm::exeStormEnd tests the member function's address (always true): ..._S_BIND_END",
 }
 
 
