@@ -1,6 +1,6 @@
 # Where the port stands (resume notes)
 
-Last updated 2026-11-19. Short on purpose: the state, the rules, how to run things, what is next. The notes of every
+Last updated 2026-11-20. Short on purpose: the state, the rules, how to run things, what is next. The notes of every
 fix and feature (cause, test mode, what was left out) are in `docs/history.md`: search it by PR number, class or test
 mode, do not read it whole. New notes go at the top of its first list.
 
@@ -18,6 +18,15 @@ mode, do not read it whole. New notes go at the top of its first list.
   lyt.py #685 / #733, the appear-SE flag #737) and wait for the full repack; their lines are in
   `D:/smg-ps2-wt/repack-todo.md`. Until then a PR that needs new packs is run on an overlay slice of its galaxy
   (`D:/smg-ps2-wt/lead-slice.sh`, `XF=-DPACKS_OVERLAY=wt-<name>`).
+- 2026-11-20 (code only, no emulator): a full repack and an ISO of main a59d2f3 are on nuld since 2026-11-19 night
+  and have never booted; the user's console test of it comes first. Merged after that ISO, none run: #810 #812
+  #814 (clipping under TeresaMario2DGalaxy's far camera), #815 (Observatory revival / count down plate sounds),
+  #816 (JetTurtle trample), #817 #818 (Bowser's grand star fanfares), #819 (AudEffector's special effect), #821
+  #822 (control guidance with pictures drawn for the pad: tools/padart.py, issue #820), #823 (Kiraira's BCKs).
+  The user wants changes gathered before ONE repack + ISO: the queue is the 2026-11-20 block of
+  `D:/smg-ps2-wt/repack-todo.md` (lyt.py for menus.bin and its size; OceanPhantomCaveGalaxy). Decided to wait
+  until after the release: the SPU2 reverb for AudioEffectCube, #663 (the map in the domes), #661 (comet filter).
+  BGM: nothing left by id (docs/sound-gaps.md's BGM lines rewritten); next in line: #684's classes.
 - Memory: the ELF's bss is the limit (the packs' region shrinks in 256 KB steps): `tools/memcheck.sh <elf>
   out/mem-baseline-plain.elf` after every plain build; per-class tables go to the scene's arena, not to statics.
 - The user tests each ISO on the console and reports with a capture; the Wii reference is the walkthrough
