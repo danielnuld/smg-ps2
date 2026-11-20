@@ -22,6 +22,32 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   plays by id, its source has no SE_ string: **sound packs**, every scenario). Check at the repack: the sound packs'
   sizes (ambient loops) and that soundinfo's l_ids (their own numbering, as areaobjinfo's) upset no link by l_id.
   Left out: 26's fifth startLevelSound argument, its clipping sphere.
+- CrystalCageMoving after Petari (feat/728-crystal-cage-moving, #728, 2026-11-19): the class had no code (1 placed:
+  MarioLancherLecture3Zone, BattleShipGalaxy; a mappartsinfo row, so it rode its rail and, wrongly, turned with the
+  generic rotator). statics.inc `st_ccm` (ST_CCM): WaitBig / BreakBig / WaitSmall / BreakSmall / BreakAll and the
+  demo's DemoTicoMove / Stop / Change; Mario in the MarioLauncher's flight (`ml_flying`) touching its Body (350, then
+  30 on its axis) is crashMario; the rail mover stops while isNerveTypeEnd (`st_rail_go`), no rotator; the Tico
+  inside (`st_ccm_draw`, scale 3 then 1) flies to the cage's first place and changes; the demo 脱出スピドラ出現 from
+  its part 1 (クリスタル破壊), its action nerve at チコ出現 (`st_cast_hook`). tools/slice.py: SKINNED_OBJ
+  CrystalCageMoving (Wait / CoreWait, the BreakOutside / BreakInside effects), EXTRA Tico (**repack**
+  BattleShipGalaxy). Test: plain with `XF=-DST_CCM_TEST` ("crystal cage moving", "ccm test" lines). Left out: the
+  Tico's ColorChange frame and draw order, the star pointer.
+- UnizoLauncher after Petari (feat/768-unizo-launcher, #768, 2026-11-19): the class had no code and its row was not
+  packed (1 placed: VolcanoPlanetZone, IceVolcanoGalaxy / SkullSharkGalaxy). `update_unizo_launchers`: Wait until its
+  step passes 300, then the first dead one of its four UnizoLand (hosted WALK_UNIZO walkers, `host` -3, dead at
+  first; `walker_cls` UnizoLand) is put at its place (z + its index) and appears; a hosted Unizo's death leaves the
+  row alive. tools/slice.py: LOGIC UnizoLauncher, EXTRA UnizoLand / UnizoLandBreak (**repack** IceVolcanoGalaxy,
+  SkullSharkGalaxy). Test: `walker` with `XF=-DUZL_TEST` ("unizo launcher row", "uzl test" lines). Left out: its
+  Body sensor (100, it attacks nothing).
+- Mario's doPointWarpRecovery (feat/mario-marks-6, #772, 2026-11-19): Mario::doRecovery without a PullBackCylinder
+  met (`rec.s12` clear: a PullBackCube, a PullBackCylinder with arg0 1, the PullBack floor code 16) returned without
+  doing anything. Now MarioWarp's mode 3 (`m_point_warp_recovery` / `pwr_update`): 引き戻し in the bubble for 40
+  frames, calcAxis' arc of 0.4 pi each side (max(radius / 25, 120) frames, sine eased) blended into the straight way
+  to 160 up the last safe place's normal (`m_last_safety_n`: getLastSafetyTrans' pNormal), the burst and 落下 at
+  close, the 引き戻し event camera. tools/slice.py packs PullBackCube rows (they were dropped: **repack**, every
+  galaxy). Test: `pullback` with `XF=-DPWR_TEST` (HeavensDoorGalaxy/1: he is put 1500 up and 1000 ahead and
+  doRecovery called; "pwr test" lines, "point warp recovery: done"). Left out: 引き戻し浮遊's volume by the flight's
+  middle (full volume), MarioActor::_A6E and the binder off (_F44), _934 / _EA4.
 - Per-class tables out of bss, 4 (perf/tables-arena-4, #729, 2026-11-19; the rule: the note of #630 below):
   ocean_ring.inc's tube buffers (`or_alloc`: `or_pos` with an OceanRing / OceanRingAndFlag / WaterRoad / TrampleStar
   placed, `or_uv`, `or_tri` and or_mesh's `or_c1` / `or_c2` with one of the first three; 66 KB), snow_move's `xs` /
