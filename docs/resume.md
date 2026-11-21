@@ -27,6 +27,14 @@ mode, do not read it whole. New notes go at the top of its first list.
   `D:/smg-ps2-wt/repack-todo.md` (lyt.py for menus.bin and its size; OceanPhantomCaveGalaxy). Decided to wait
   until after the release: the SPU2 reverb for AudioEffectCube, #663 (the map in the domes), #661 (comet filter).
   BGM: nothing left by id (docs/sound-gaps.md's BGM lines rewritten); next in line: #684's classes.
+- 2026-11-20 night: the user's console test of the 2026-11-19 ISO froze in EggStarGalaxy/2 after launch 13 (#825:
+  TicoFat's goods bound to a Skin a zone swap freed; fixed in #826, seen in PCSX2). A new ISO of main c790638 is on
+  nuld since 22:51 (3,588,990,976 B, udpfs restarted): #826 and the ten PRs of 2026-11-20, after a partial repack
+  (`release.sh OceanPhantomCaveGalaxy`: menus.bin with the guidance pictures, 1553 KB; the other scenarios' sound
+  packs are still the 2026-11-19 ones). It has not booted anywhere: the user's console test comes first. The
+  console's log: `python tools/udptty.py out/console/udptty-<date>.log` while they play. A "TLB Miss" line in
+  PCSX2's emulog is a freeze on the console: grep every run for it. PCSX2 is shared with other sessions: take the
+  directory lock `D:/smg-ps2-wt/pcsx2.lock` (mkdir / rmdir) around every run.
 - Memory: the ELF's bss is the limit (the packs' region shrinks in 256 KB steps): `tools/memcheck.sh <elf>
   out/mem-baseline-plain.elf` after every plain build; per-class tables go to the scene's arena, not to statics.
 - The user tests each ISO on the console and reports with a capture; the Wii reference is the walkthrough
