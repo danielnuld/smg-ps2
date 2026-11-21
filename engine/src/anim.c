@@ -531,6 +531,10 @@ void anim_pose(Anim *a)
 void anim_skin(Anim *a)
 {
     u32 c0 = cy_();
+    if (!a->skin || !a->skin->drw || !a->skin->joints) { /* #825: a skin of a pack swapped out (the console stops on its NULL) */
+        printf("anim: stale skin %p (anim %p, clip %d), from %p\n", (void *)a->skin, (void *)a, a->clip_id, __builtin_return_address(0));
+        return;
+    }
     anim_skin_(a);
     a->skin_stale = 0;
     prof_skin += cy_() - c0;

@@ -173,13 +173,31 @@ static sceCdRMode cd_mode = {5, SCECdSpinNom, SCECdSecS2048, 0};
 
 /* whole sectors from `lsn` into `dst` (64-aligned, PACK_ALLOC long); wait: block until they are in */
 static u32 cd_seq; /* reads started (disc_read_async: a later read means an earlier one is in) */
+static u32 cd_lsn, cd_secs; /* the read going (cd_wait's log and time) */
+/* sceCdSync(0) that does not trust the drive: on the console (Neutrino over udpfs) a read now and then never ends,
+ * and waiting for it froze the picture with the sound looping (#825; the movies' reads: mv_done). 1: the read is in;
+ * 0: still going after 2 s and 1 s more every 256 KB (a tenth of the speed seen there), broken: to be asked again */
+static int cd_wait(void)
+{
+    u32 last = cycles(), ms = 0, limit = 2000 + cd_secs * 8;
+    while (sceCdSync(1)) {
+        u32 d = (cycles() - last) / 294912u; /* (the counter wraps every 14.5 s: whole ms taken as they pass) */
+        ms += d; last += d * 294912u;
+        if (ms <= limit) continue;
+        printf("cd: read %u + %u stuck for %u ms, broken\n", cd_lsn, cd_secs, ms);
+        sceCdBreak();
+        sceCdSync(0);
+        return 0;
+    }
+    return 1;
+}
 static int cd_start(u32 lsn, u32 sectors, void *dst) /* a read begun; one refused (drive not ready, a command still
                                                         * held) is asked again, logged; 0: never taken */
 {
     for (int tries = 0;; tries++) {
-        sceCdSync(0); /* one read at a time: audio.c's may still be going */
+        cd_wait(); /* one read at a time: audio.c's may still be going (one that never ends is broken: its sound skips) */
         cd_seq++;
-        if (sceCdRead(lsn, sectors, dst, &cd_mode)) return 1;
+        if (sceCdRead(lsn, sectors, dst, &cd_mode)) { cd_lsn = lsn; cd_secs = sectors; return 1; }
         printf("cd: read %u + %u refused, again (%d)\n", lsn, sectors, tries);
         if (tries == 300) return 0;
     }
@@ -201,7 +219,7 @@ static int cd_read(u32 lsn, u32 sectors, void *dst, int wait)
     for (int tries = 0; tries < 30; tries++) {
         if (!cd_start(lsn, sectors, dst)) return 0;
         if (!wait) return 1;
-        sceCdSync(0);
+        if (!cd_wait()) continue;
         if (cd_failed(lsn, sectors)) continue;
         InvalidDCache(dst, (u8 *)dst + sectors * SECTOR - 1);
         return 1;
@@ -516,6 +534,7 @@ static struct {
     u8 *cur;
     u32 size, off, bytes;
     u32 flight;       /* DISC: bytes of the asynchronous read in progress (0 none) */
+    u32 t0;           /* DISC: when it was asked (cycles) */
 } pend;
 
 static void chain_of(int zone, unsigned char *full)
@@ -531,7 +550,7 @@ static void chain_of(int zone, unsigned char *full)
 static void pend_cancel(void)
 {
 #ifdef DISC
-    if (pend.flight) sceCdSync(0); /* the read in progress must land before its buffer goes */
+    if (pend.flight) cd_wait(); /* the read in progress must land (or be broken) before its buffer goes */
 #endif
     if (pend.f.f) pack_close(&pend.f);
     if (pend.cur) pk_free(pend.cur);
@@ -682,13 +701,21 @@ static int pend_step(u32 budget)
         }
 #ifdef DISC
         if (pend.flight) { /* the asynchronous read: still going, or in */
-            if (!all && sceCdSync(1))
-                return 0;
-            sceCdSync(0);
-            if (cd_failed(pend.f.base + pend.off / SECTOR, PACK_ALLOC(pend.flight) / SECTOR)) {
+            /* one that never ends (#825) is broken and asked again: polled after 2 s (32 KB a read), waited by cd_wait */
+            int stuck = 0;
+            if (!all && sceCdSync(1)) {
+                if (cycles() - pend.t0 < 2u * 294912000u) return 0;
+                printf("packs: zone read %u + %u stuck, again\n", pend.f.base + pend.off / SECTOR, PACK_ALLOC(pend.flight) / SECTOR);
+                sceCdBreak();
+                sceCdSync(0);
+                stuck = 1;
+            } else if (!cd_wait()) stuck = 1;
+            if (stuck || cd_failed(pend.f.base + pend.off / SECTOR, PACK_ALLOC(pend.flight) / SECTOR)) {
                 if (!cd_read(pend.f.base + pend.off / SECTOR, PACK_ALLOC(pend.flight) / SECTOR, pend.cur + pend.off, 0))
                     render_fatal("packs: read error" "\n");
-                continue; /* polled again */
+                pend.t0 = cycles();
+                if (!all) return 0; /* polled again next frame */
+                continue;
             }
             InvalidDCache(pend.cur + pend.off, pend.cur + pend.off + PACK_ALLOC(pend.flight) - 1);
             pend.off += pend.flight;
@@ -702,6 +729,7 @@ static int pend_step(u32 budget)
                 render_fatal("packs: read error" "\n");
             }
             pend.flight = n;
+            pend.t0 = cycles();
             return 0;
         }
         if (pend.off == pend.size) {
@@ -2819,6 +2847,18 @@ int main(void)
 #elif defined(ZONE_TEST)
         if (frame == 120)
             printf("zone test: launch star %d\n", game_test_spindriver(0));
+#endif
+#ifdef LAUNCH_N_TEST /* XF=-DLAUNCH_N_TEST=k (plain): Mario shot from launch star k (the log's "launch k") at frame
+                     * LAUNCH_AT (1200: after the opening flight), his place logged every 30 frames of it (#825) */
+#ifndef LAUNCH_AT
+#define LAUNCH_AT 1200
+#endif
+        if (frame == LAUNCH_AT) printf("launch test: launch star %d\n", game_test_launch(LAUNCH_N_TEST));
+        if (frame > LAUNCH_AT && frame <= LAUNCH_AT + 900 && frame % 30 == 0) {
+            char d[128];
+            game_debug(d, sizeof d);
+            printf("launch test f %u: launch %d %s\n", frame, game_launch_state(), d);
+        }
 #endif
 #ifdef ZONE_TEST
         { /* per 60 frames: frames longer than 20 ms (missed vsync) and the worst logic / draw / GS of the window */

@@ -11,6 +11,21 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- The console's freeze in EggStarGalaxy/2 after launch 13 (#825, fix/825-cd-stuck-read, 2026-11-20; run in PCSX2).
+  Reported from the PS2 with the ISO of 2026-11-19: the hungry Luma's mission, the flight to the third planet, a
+  still picture and the sound looping, every time. The console's log (out/console/udptty-2026-11-20.log) ends just
+  after Mario lands (a flight's time is in 60 Hz steps: 500 is 250 frames), after the swap that brings
+  ReverseGravityTowerZone in full. Cause: TicoFat's goods (TicoFatGoodsStarPiece, an Anim from keep_anim) stayed
+  bound to the Skin of the scene's models before the swap; pend_commit makes the zone models and their Skins anew,
+  and anim_skin_ read `drw` through freed memory: NULL. PCSX2 logs "TLB Miss, pc anim_skin_" and goes on, the
+  console stops there. Fix: game.c `fat_models` (the goods' and the star ring's model and skin again once a rebind,
+  by class_seq) and `keep_rebind` for the other kept Anims with the same life (the Creeper's leaf, HoneyQueen's
+  wing, the leak pipe's ice step); anim.c anim_skin leaves out and logs a skin with no tables ("anim: stale skin")
+  instead of reading through it. With it, main.c `cd_wait`: the blocking disc reads and the zone prefetch break a
+  read that never ends and ask again (2 s and 1 s more every 256 KB), as the movies' reads did (not this freeze's
+  cause; not run on the console). Test: plain with `XF=-DLAUNCH_N_TEST=13` EggStarGalaxy/2 (Mario shot from launch
+  star 13 at frame 1200): 50 TLB misses at the swap before, "stale: 0, TLB: 0" after (out/console/emu-825-*.log).
+  Not audited: the other Anims bound outside game_rebind_ (anim_bind has 75 callers). Engine only, no repack.
 - Kiraira's BCKs, part of #691 (feat/691-kiraira-clips, 2026-11-20; **not run in PCSX2, not sliced yet**). slice.py
   SKINNED_OBJ gains Kiraira; game.c ki_bck plays its archive's clips where Kiraira.cpp does (Stop at the stare,
   Down / RailDown at Dead, RevivalStart / RailRevivalStart at RecoverSign, Revival for a rail one and RailRevival
