@@ -2715,6 +2715,7 @@ static V3 m_2C4;
 static int m_3AA; /* updateGravityVec's _3AA: frames left of the binder offset's blend after a sudden gravity turn */
 static int m_334, m_flip1A; /* its _334 (frames the gravity is held), Mario _10._1A (drop off at the next move) */
 static V3 m_30C;           /* its _30C: the head at the turn */
+static V3 m_headv;         /* mHeadVec as the gravity turns it (Mario.cpp:662-768: eased to -gravity, not there at once) */
 static V3 carry_d;         /* (below: the carried move, _184) */
 static void m_upd_2C4(const Player *m)
 {
@@ -24869,9 +24870,14 @@ static void m_check_head_point(Player *m)
  * (2 / 3 pi or more, or outside 2D), else x 0.75; the 2D stick cleared, _10.turning, the binder offset blended over 15
  * frames (_3AA); for the next 15 frames (_334) the gravity is held, and high off the ground (over 160) he is pushed
  * along it by his head's turn. As Bee a turn of pi / 6 blends his drawn matrix over 8. ponytail: _F74 (a camera cut
- * resets the ground too) and _2E0 (the air walk's direction, not kept here) */
+ * resets the ground too) and _2E0 (the air walk's direction, not kept here)
+ * The head (m_headv) turns to the new up by mRotateHeadVecSpeedByGravityL / M / S a frame (against it: L, in the 15
+ * frames of _334 from M to L; within 0.99: S), so the push is a few units a frame. It was the whole turn at once
+ * (the up taken for the head): 80 for a quarter turn, 160 for a half, straight through a face: on the console Mario
+ * sank into a point of BlueStarZone's star planet and swung about its axis (2026-11-20) */
 static void m_gravity_turn(Player *m, V3 up0, int zero)
 {
+    if (m->launch >= 0 || vlen(m_headv) < 0.5f) m_headv = m->up;
     if (m->launch >= 0) { m_334 = 0; return; } /* doRush: no updateGravityVec; endRush's (true, ..) resets _334 */
     float ang = zero ? 0.0f : ang_abs(up0, m->up); /* (the angle is 0 when _24C or the new gravity is zero) */
     if (zero & 1) m2.t10 = 1;                      /* isNearZero(gravity): _10.turning */
@@ -24882,7 +24888,7 @@ static void m_gravity_turn(Player *m, V3 up0, int zero)
         if (!m->jumping) m_flip1A = 1;
         else { if (m->jump_kind == 11) m->jump_kind = 0; m_anim("ショートジャンプ"); reset_ground = 1; }
         m_334 = 15;
-        m_30C = up0;                                        /* mHeadVec */
+        m_30C = m_headv;                                    /* mHeadVec */
         V3 jv = vadd(m->hvel, vmul(up0, m->vup));
         if (ang >= 3.1415927f * (2.0f / 3.0f) || !m2.on) jv = vmul(vtangent(jv, up0), 0.5f); /* cutGravityElementFromJumpVec */
         else jv = vmul(jv, 0.75f);                          /* (killed along the old gravity and put back, x 0.75) */
@@ -24894,11 +24900,19 @@ static void m_gravity_turn(Player *m, V3 up0, int zero)
     if (reset_ground) m->ground_n = m->up;                  /* setGroundNorm(-gravity) */
     if (m_334) {
         if (m->height > 160.0f) {                           /* mVerticalSpeed */
-            V3 d = vsub(vmul(m_30C, 80.0f), vmul(m->up, 80.0f));
+            V3 d = vsub(vmul(m_30C, 80.0f), vmul(m_headv, 80.0f));
             m->pos = vadd(m->pos, vmul(m->up, vdot(d, m->up))); /* push2(_240 x the part along it) */
-            m_30C = m->up;
+            m_30C = m_headv;
         }
         m_334--;
+    }
+    { /* Mario::updateHeadVec's turn by the gravity (the frame's end: the push above reads last frame's head) */
+        float c = vdot(m->up, m_headv), k = m_334 / 15.0f;
+        float sp = c < 0.0f ? (m_334 ? k * MC.mRotateHeadVecSpeedByGravityM + (1.0f - k) * MC.mRotateHeadVecSpeedByGravityL : MC.mRotateHeadVecSpeedByGravityL)
+                 : c < 0.99f ? MC.mRotateHeadVecSpeedByGravityM : MC.mRotateHeadVecSpeedByGravityS;
+        V3 nh;
+        if (!blend_sphere(m_headv, m->up, &nh, sp)) nh = rot_toward(m_headv, m->up, m->face, sp); /* vecRotAxis about mFrontVec */
+        m_headv = vlen(nh) > 1e-3f ? vnorm(nh) : m->up;
     }
 }
 /* Mario::tryFreeJump(v, true): the jump kind 0, digital, his jump vector v */
@@ -63565,6 +63579,36 @@ void game_test_groom(int frame)
     if (frame % 20 == 0)
         printf("groom f %d: phase %d at %d %d %d up %.2f %.2f %.2f grounded %d wall %d%s\n", frame, phase, (int)lp.x, (int)lp.y, (int)lp.z, lu.x, lu.y, lu.z,
                mario->grounded, mario->wall, phase && lp.y > 0 && mario->grounded ? " ok" : "");
+}
+#endif
+
+#ifdef STARTIP_TEST
+/* XF=-DSTARTIP_TEST=k (plain build, EggStarGalaxy/2): Mario put on BlueStarZone's star planet by its point at world
+ * y -12740 z -20342 (frame 1000: the zone streams in; again at 1300) and walked over the point's edge. The planet's
+ * faces are at x 14005 / 14495, the point's round wall 280 from its axis. k 1: from the wall over the edge onto the
+ * +X face; 2: round the point along the wall; 3: from the +X face over the edge onto the wall. "inside": between the
+ * faces and under 240 from the axis (the console report of 2026-11-20: he sank into the point and swung about its axis) */
+void game_test_startip(int frame)
+{
+    static const V3 ax = {14250, -12740, -20342}, rd = {0, 0.863f, 0.505f};
+    if (frame < 1000) return;
+    test_nolost = 1;
+    if (frame == 1000 || frame == 1300) {
+        mario->pos = STARTIP_TEST == 3 ? vadd(v3(14495 + 80, ax.y, ax.z), vmul(rd, 120.0f)) : vadd(v3(14155, ax.y, ax.z), vmul(rd, 340.0f));
+        mario->up = up_at(mario->pos, v3(0, 1, 0)); mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
+        if (frame == 1000) camera_start_pos_end();
+    }
+    V3 l = vsub(mario->pos, ax), rv = v3(0, l.y, l.z);
+    float r = vlen(rv);
+    if (frame > 1360) {
+        V3 to = STARTIP_TEST == 1 ? vadd(v3(14800, ax.y, ax.z), vmul(rd, 100.0f))
+              : STARTIP_TEST == 2 ? vadd(v3(14155, ax.y, ax.z), vmul(rd, -400.0f))
+              : vadd(v3(14250, ax.y, ax.z), vmul(rd, 600.0f));
+        test_walk_to(to, 50.0f);
+    }
+    if (frame % 10 == 0)
+        printf("startip f %d: x %d r %d up %.2f %.2f %.2f grounded %d wall %d%s\n", frame, (int)mario->pos.x, (int)r, mario->up.x, mario->up.y, mario->up.z,
+               mario->grounded, mario->wall, mario->pos.x > 14025 && mario->pos.x < 14475 && r < 240.0f ? " INSIDE" : "");
 }
 #endif
 
