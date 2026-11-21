@@ -1636,6 +1636,19 @@ static struct { int row; unsigned last; Anim *a; } oanim[MAX_OBJ_ANIM];
 static Anim *keep_pool;
 static int keep_n, keep_max;
 static Anim *keep_anim(void) { return keep_n < keep_max ? &keep_pool[keep_n++] : NULL; }
+static u32 class_seq;
+/* A kept Anim outlives the rebinds, its Skin does not when its model came with a zone's pack: a zone swap makes the
+ * scene's models and Skins anew (main.c pend_commit) and the Anim read through freed memory (the console stopped on
+ * its NULL: TicoFat's goods in EggStarGalaxy/2, #825). Bound again once a rebind (*seq: class_seq + 1 of its skin):
+ * 1 bound again (its clip to be started again), 0 as it was, -1 its model has no skin now (not to be used) */
+static int keep_rebind(Anim *a, u32 *seq, const Model *md)
+{
+    if (!a || *seq == class_seq + 1) return 0;
+    if (!md || !md->skin) return -1;
+    *seq = class_seq + 1;
+    anim_bind(a, md->skin);
+    return 1;
+}
 #define LEAK_ICE_ANIMS 4 /* WaterLeakPipe's IceStepNoSlip clips (update_leakpipes: LEAK_ICE) */
 static Anim *shop_ga[2]; /* TicoShop's goods (shop_goods_draw) */
 static int ninsts;
@@ -1644,7 +1657,7 @@ static int ninsts;
  * game_rebind_ (a field cleared since only makes the list a superset: the loop's own test stays), loops that do not
  * rebind. Past 64 instances the list gives up for the walk over all */
 static u32 inst_seq;
-static u32 class_seq; /* game_rebind counts the rebinds: class_of's cache made again */
+/* (class_seq, above: game_rebind counts the rebinds: class_of's cache made again) */
 typedef struct { u32 seq; int n; short ix[64]; } InstList;
 #define KIND_CAT_(a, b) a##b
 #define KIND_CAT(a, b) KIND_CAT_(a, b)
@@ -15280,7 +15293,27 @@ static struct {
     Anim *goods; const Model *gmd; /* _94 / _98: one pose for both (the same clip, started together) */
     const char *gal; /* TicoGalaxy: mGalaxyName (getExclamationGalaxyNameFromIndex(_1EC)), NULL for a TicoFat */
     int ring_tk, ring_row, ring_yes; Anim *ring; const Model *ring_md; float ring_m[16]; /* TicoGalaxy's TicoStarRing (mStarRing) */
+    u32 mseq; /* class_seq + 1 of the rebind gmd / ring_md and their Anims' skins are of (fat_models) */
 } fats[MAX_FATS];
+/* The goods' and the star ring's models and skins again after a rebind: a zone swap makes the scene's models and
+ * their Skins anew (main.c pend_commit), and an Anim still bound to the old Skin read through freed memory: the
+ * console stopped on its NULL in EggStarGalaxy/2 right after the swap that follows launch 13 (#825) */
+static void fat_models(int k)
+{
+    typeof(&fats[0]) f = &fats[k];
+    if (f->mseq == class_seq + 1) return;
+    f->mseq = class_seq + 1;
+    if (f->goods) {
+        f->gmd = scene_model(sc, "TicoFatGoodsStarPiece");
+        if (f->gmd && f->gmd->skin) anim_bind(f->goods, f->gmd->skin); /* (updateGoods starts its clip again) */
+        else f->gmd = NULL;
+    }
+    if (f->ring) {
+        f->ring_md = scene_model(sc, "Tico~5");
+        if (f->ring_md && f->ring_md->skin) { anim_bind(f->ring, f->ring_md->skin); anim_play(f->ring, "tico/wait", 1.0f, 1, 0); }
+        else f->ring_md = NULL;
+    }
+}
 enum { TF_PREP, TF_WAIT, TF_POINT, TF_EAT, TF_CHEM, TF_TEST, TF_FULLNESS, TF_DEMO, TF_FLY, TF_WIPEOUT, TF_WIPEIN, TF_INFO,
        TF_AFTER, TF_META, TF_GONE, TF_RING, TF_RINGMETA, TF_HIDDEN };
 static const char *fat_size(const char *base, float scale) /* getActionName */
@@ -15393,6 +15426,7 @@ static void fat_ring_appear(int k)
 static void fat_ring_update(int k, Inst *in)
 {
     typeof(&fats[0]) f = &fats[k];
+    fat_models(k);
     f->t++;
     f->lv = se_level(SE_SM_LV_TICO_WAIT, &f->ring_m[12], f->lv); /* Tico::control */
     f->lv2 = se_level(SE_SM_LV_TICO_FLOAT, &f->ring_m[12], f->lv2);
@@ -15439,6 +15473,7 @@ static int fat_ring_draw(const Inst *in) /* the TicoGalaxy's row drawn as its Ti
         if (fats[k].row != in->row) continue;
         if (fats[k].nrv == TF_HIDDEN) return 1;
         if (fats[k].nrv != TF_RING && fats[k].nrv != TF_RINGMETA) return 0;
+        fat_models(k);
         if (fats[k].ring && fats[k].ring_md) {
             anim_update(fats[k].ring);
             use_row_light(in->row, v3(fats[k].ring_m[12], fats[k].ring_m[13], fats[k].ring_m[14]), LIGHT_STRONG);
@@ -15550,7 +15585,8 @@ static void update_ticofat(void)
         if (!f->eat || !f->left || player_mode == PM_INVINCIBLE) f->g174 = 0;
         if (f->g174 > 0 && !f->cam) { f->cam = 1; fat_cam_param(k); } /* startGlobalEventCamera(デブチコカメラ, 120) */
         else if (f->g174 <= 0 && f->cam) { f->cam = 0; camera_prog_end(120); }
-        if (f->goods) { /* updateGoods: tryStartBck by isNearPlayer(2000) */
+        fat_models(k);
+        if (f->goods && f->gmd) { /* updateGoods: tryStartBck by isNearPlayer(2000) */
             V3 d = vsub(mario->pos, v3(f->m0[12], f->m0[13], f->m0[14]));
             anim_play(f->goods, vlen(d) < 2000.0f ? "ticofatgoodsstarpiece/ticofatgoodsstarpiece" : "ticofatgoodsstarpiece/ticofatgoodsstarpiecefar", 1.0f, 1, 0);
         }
@@ -15738,6 +15774,8 @@ static void fat_goods_draw(const Inst *in, const float m[16]) /* its goods at St
 {
     for (int k = 0; k < nfats; k++) {
         if (fats[k].row != in->row || !fats[k].goods || in->anim->skin->njoints < 9) continue;
+        fat_models(k);
+        if (!fats[k].gmd) continue;
         anim_update(fats[k].goods);
         for (int j = 5; j <= 8; j += 3) {
             float w[16];
@@ -27485,7 +27523,7 @@ static struct {
     u32 lvu, lvd, upse;
 } *creepers; /* (creeper_init: row_table) */
 static int ncreepers, creeper_ride = -1, creeper_test_sq;
-static Anim *cr_leaf_anim;
+static Anim *cr_leaf_anim; static u32 cr_leaf_seq;
 #define CR_G v3(0, -1, 0)
 
 static void cr_axis(CrPoint *p) /* makeAxisUpFront / makeAxisUpSide on its up */
@@ -27686,6 +27724,8 @@ static void update_creepers(void)
         anim_bind(cr_leaf_anim, m_crleaf->skin);
         anim_start(cr_leaf_anim, "creeperleaf/wait", 0);
     }
+    { int rb = keep_rebind(cr_leaf_anim, &cr_leaf_seq, m_crleaf); /* (a zone swap: its skin anew) */
+      if (rb > 0) anim_start(cr_leaf_anim, "creeperleaf/wait", 0); else if (rb < 0) cr_leaf_anim = NULL; }
     if (cr_leaf_anim) anim_update(cr_leaf_anim);
     for (int k = 0; k < ncreepers; k++) {
         typeof(&creepers[0]) o = &creepers[k];
@@ -27776,7 +27816,7 @@ static void draw_creepers(void)
             render_model(m_crflower, m, 0x80, 0x80, 0x80);
         }
         if (m_crleaf) {
-            if (cr_leaf_anim) draw_skin(m_crleaf, o->leaf_m, cr_leaf_anim);
+            if (cr_leaf_anim && cr_leaf_seq == class_seq + 1) draw_skin(m_crleaf, o->leaf_m, cr_leaf_anim);
             else render_model(m_crleaf, o->leaf_m, 0x80, 0x80, 0x80);
         }
     }
@@ -43146,6 +43186,7 @@ static void update_spmothers(void)
  * (st 1 Appear, 2 Break) and their clips. ponytail: four steps' clips at once (the fifth shown without its clip) */
 #define LEAK_ICE 4
 static struct { int row, st; Anim *a; } leak_ice[LEAK_ICE];
+static u32 leak_seq[LEAK_ICE]; /* keep_rebind */
 static const Scene *leak_sc;
 static int leak_ice_of(int row, int make)
 {
@@ -43167,6 +43208,7 @@ static void leak_step_clip(int k, const char *clip) /* IceStepNoSlip: startBck S
     const Model *md = scene_model(sc, "IceStepNoSlip");
     if (!md || !md->skin) return;
     if (!leak_ice[k].a && (leak_ice[k].a = keep_anim())) anim_bind(leak_ice[k].a, md->skin);
+    keep_rebind(leak_ice[k].a, &leak_seq[k], md);
     if (leak_ice[k].a) anim_play(leak_ice[k].a, clip, 1.0f, 0, 0);
 }
 static void update_leakpipes(void)
@@ -43225,6 +43267,10 @@ static void update_leakpipes(void)
             se_start(SE_OJ_ICE_FLOOR_MELT, &top.x);
             row_turn[row] = 0; row_step[row] = 0;
         }
+        if (k >= 0 && leak_ice[k].a) { /* a zone swap: its skin anew. ponytail: the step in its bind pose until its next clip, a breaking one gone */
+            int rb = keep_rebind(leak_ice[k].a, &leak_seq[k], scene_model(sc, "IceStepNoSlip"));
+            if (rb > 0 && leak_ice[k].st == 2) { leak_ice[k].st = 0; k = -1; } else if (rb < 0) leak_ice[k].a = NULL;
+        }
         if (k >= 0 && leak_ice[k].a) anim_update(leak_ice[k].a);
         if (k >= 0 && leak_ice[k].st == 2 && (!leak_ice[k].a || leak_ice[k].a->done)) { leak_ice[k].st = 0; k = -1; } /* exeBreak: isBckStopped, kill */
         if (si >= 0) { /* the step's collision on its place while it lives */
@@ -43242,7 +43288,7 @@ static void draw_leak_steps(void)
         float m[16];
         if (!in || in->leakpipe != 1) continue;
         leak_top(in, m);
-        if (leak_ice[k].a && md->skin) draw_skin(md, m, leak_ice[k].a);
+        if (leak_ice[k].a && md->skin && leak_seq[k] == class_seq + 1) draw_skin(md, m, leak_ice[k].a);
         else render_model(md, m, 0x80, 0x80, 0x80);
     }
 }
@@ -52348,6 +52394,13 @@ static void draw_queen_wing(void) /* ModelObj 羽 at her Center joint (joint 1) 
     Inst *in = hq.row >= 0 && hq.wing ? row_inst(hq.row) : NULL;
     if (!in || !row_shown(hq.row) || in->invisible || !in->anim || in->anim->skin != in->md->skin || in->md->skin->njoints < 2) return;
     float m[16];
+    static u32 wseq;
+    if (wseq != class_seq + 1) { /* (a zone swap: its model and skin anew) */
+        hq.wmd = scene_model(sc, "HoneyQueenWing");
+        int rb = keep_rebind(hq.wing, &wseq, hq.wmd);
+        if (rb < 0) return;
+        if (rb > 0) anim_start(hq.wing, "honeyqueenwing/honeyqueenwing", 0);
+    }
     mat_mul(m, in->m, in->anim->world[1]);
     anim_update(hq.wing);
     draw_skin(hq.wmd, m, hq.wing);

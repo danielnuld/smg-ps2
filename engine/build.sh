@@ -32,6 +32,7 @@
 #   the ride, A at 500 (-DSWR_TEST_A=n), again after each jump; =2: the camera on the rope from its side (#568)
 # XF=-DWATERROAD_TEST (plain, OceanRingGalaxy/3): the WaterRoad's demo started at frame 1000, the whole road shown 300 frames
 #   once it waits, then Mario put in its foot: the ride, a swing 60 frames in (#567)
+# XF=-DLAUNCH_N_TEST=k (plain, any galaxy): Mario shot from launch star k at frame 1200 (-DLAUNCH_AT=n), the flight logged (#825)
 # overview: with packs, the camera orbits the whole galaxy (-DOVERVIEW_TEST; for pictures and videos)
 # rail: with packs, Mario dropped onto the first rail-moving map part at frame 120 (-DRAIL_TEST)
 # rotor: with packs, Mario dropped onto the first rotating map part at frame 120 (-DROTOR_TEST)
