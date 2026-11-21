@@ -11,6 +11,19 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Mario sinking into a point of BlueStarZone's star planet (#828, fix/star-tip, 2026-11-20; run in PCSX2). The
+  console (ISO of main c790638), the end of EggStarGalaxy/2: walking on a point of the star he "glitched": its log has
+  him grounded on the point's round wall (280 from its axis), "gravity turned 90 (grounded 1)", "89 (grounded 0)",
+  then a turn of 160-179 degrees every 16 frames with his place by the axis, between the planet's two faces: inside,
+  swinging about the axis the wall's SegmentGravity pulls to. Cause: m_gravity_turn's push by the head's turn
+  (updateGravityVec's _334 / _30C / push2) took his up for mHeadVec, so a turn was pushed whole in one frame (80 for
+  a quarter, 160 for a half) and through a face. Fix: `m_headv`, the head eased to the new up as Mario.cpp:662-768
+  does (mRotateHeadVecSpeedByGravityL against it, M to L over _334's 15 frames, S within 0.99); the push reads it.
+  Test: plain with `XF=-DSTARTIP_TEST=k` EggStarGalaxy/2 (Mario put by the point at frames 1000 and 1300; 1 wall to
+  face, 2 round the point, 3 face to wall): k 3 put 48 over the face after a swing inside went through it ("turned
+  91", x 14575 to 14435, INSIDE for good) before, lands and walks over the edge onto the wall after; k 1 fine
+  before; k 2 not run; the console's own steps (a drop off the edge, a turn in the air) not replayed. Route EggStar 1
+  star at f 4281 as before, no TLB miss. Engine only.
 - The console's freeze in EggStarGalaxy/2 after launch 13 (#825, fix/825-cd-stuck-read, 2026-11-20; run in PCSX2).
   Reported from the PS2 with the ISO of 2026-11-19: the hungry Luma's mission, the flight to the third planet, a
   still picture and the sound looping, every time. The console's log (out/console/udptty-2026-11-20.log) ends just

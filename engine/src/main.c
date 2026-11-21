@@ -1740,6 +1740,9 @@ int main(void)
 #ifdef GROOM_TEST
         { void game_test_groom(int frame); game_test_groom((int)frame); }
 #endif
+#ifdef STARTIP_TEST
+        { void game_test_startip(int frame); game_test_startip((int)frame); }
+#endif
 #ifdef CAMROLL_TEST
         { void game_test_camroll(int frame); game_test_camroll((int)frame); }
 #endif
